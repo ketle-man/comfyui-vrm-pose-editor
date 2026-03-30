@@ -60,6 +60,20 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 - **VRM ファイル**: `@pixiv/three-vrm` の HumanBone を使用してボーンを認識します。
 - **GLB / GLTF ファイル**: 骨格（Bone）ベースのモデルであればそのまま動作します。
 
+### デフォルトモデルの設定
+
+ノード起動時に自動で読み込まれるモデルを設定できます。
+`js/` フォルダに以下のいずれかのファイル名でモデルを配置してください：
+
+| ファイル名 | 形式 |
+|---|---|
+| `model.glb` | GLB |
+| `model.vrm` | VRM |
+| `model.gltf` | GLTF |
+
+優先順位は `model.glb` → `model.vrm` → `model.gltf` の順です。
+いずれも存在しない場合はモデルなしで起動します。
+
 ### 背景画像
 
 **BG** ボタンで PNG / JPG などの画像ファイルを読み込むと、Three.js シーン内の背景板（PlaneGeometry）として表示されます。
@@ -101,7 +115,7 @@ VROID Studio エクスポートや Blender 製モデルで暗く見える場合�
 - **フロントエンド**: JavaScript + [Three.js r160](https://threejs.org/) + [@pixiv/three-vrm 2.1.0](https://github.com/pixiv/three-vrm)（esm.sh 経由）
 - **バックエンド**: Python（Base64 PNG → PIL → Torch Tensor 変換）
 - **キャプチャ解像度**: 600 × 600 px
-- **デフォルトモデル**: `js/model.glb`（独自の GLB ファイルに差し替え可能）
+- **デフォルトモデル**: `js/model.glb` / `js/model.vrm` / `js/model.gltf` のいずれかを配置（優先順に検索）
 
 ---
 

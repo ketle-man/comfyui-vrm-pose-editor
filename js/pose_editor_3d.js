@@ -514,15 +514,15 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
         return keys;
     }
 
-    loader.load(baseUrl + "model.glb", (gltf) => {
-        clearModel();
-        const model = gltf.scene;
-        loadedModel = model;
-        scene.add(model);
-        const displayScale = placeModel(model);
-        setupModel(model, displayScale);
-        onMorphKeysReady(collectGltfMorphKeys(model));
-    }, undefined, (err) => { console.error("[PoseEditor3D] GLB load error:", err); });
+    (function tryLoadDefaultModel(exts) {
+        if (exts.length === 0) return;
+        const [ext, ...rest] = exts;
+        const url = baseUrl + "model." + ext;
+        fetch(url, { method: "HEAD" }).then(res => {
+            if (!res.ok) { tryLoadDefaultModel(rest); return; }
+            loadVRM(url, undefined);
+        }).catch(() => tryLoadDefaultModel(rest));
+    })(["glb", "vrm", "gltf"]);
 
     function loadVRM(url, onComplete) {
         loader.load(url, (gltf) => {
