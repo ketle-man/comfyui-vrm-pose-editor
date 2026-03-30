@@ -1,0 +1,9 @@
+# モデルファイル（容量大のため除外）
+*.vrm
+*.glb
+*.glb_off
+*.gltf
+
+# Python
+__pycache__/
+*.pyc
