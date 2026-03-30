@@ -25,6 +25,14 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 ## インストール
 
+### Option A: ComfyUI Manager（推奨）
+
+1. ComfyUI Manager を開き、**「カスタムノードを管理」** をクリックします。
+2. 検索欄に `comfyui-vrm-pose-editor` と入力します。
+3. **Install** をクリックして ComfyUI を再起動します。
+
+### Option B: 手動インストール
+
 1. `3dpose_custom_cm` フォルダを `ComfyUI/custom_nodes/` 以下に配置します。
 2. ComfyUI を再起動します。
 3. ノードメニューで **"3D Pose Editor"**（カテゴリ: `3D Pose`）を追加します。
