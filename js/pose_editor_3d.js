@@ -1,10 +1,8 @@
 import { app } from "../../scripts/app.js";
-import * as THREE from 'https://esm.sh/three@0.160.0';
-import { GLTFLoader } from 'https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader';
-import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls';
-import { VRMLoaderPlugin, VRMUtils } from 'https://esm.sh/@pixiv/three-vrm@2.1.0';
-
-console.log("[PoseEditor3D] Script loaded from:", import.meta.url);
+import * as THREE from './vendor/three.module.js';
+import { GLTFLoader } from './vendor/GLTFLoader.js';
+import { OrbitControls } from './vendor/OrbitControls.js';
+import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 
 app.registerExtension({
     name: "Comfy.3DPoseEditor",
@@ -125,6 +123,11 @@ app.registerExtension({
             bgInput.addEventListener("change", (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
+                if (file.size > 50 * 1024 * 1024) {
+                    alert(`File too large: ${(file.size/1024/1024).toFixed(1)} MB (max 50 MB)`);
+                    bgInput.value = "";
+                    return;
+                }
                 if (bgObjectUrl) URL.revokeObjectURL(bgObjectUrl);
                 bgObjectUrl = URL.createObjectURL(file);
                 bgBtn.style.background = "#2a8a5a";
@@ -271,10 +274,17 @@ app.registerExtension({
             resetBtn.onclick = () => editor.resetPose();
             cameraResetBtn.onclick = () => editor.resetCamera();
 
+            const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
             vrmInput.addEventListener("change", (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                vrmLabel.textContent = file.name;
+                if (file.size > MAX_FILE_SIZE) {
+                    alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+                    vrmInput.value = "";
+                    return;
+                }
+                vrmLabel.textContent = file.name.slice(0, 20) + (file.name.length > 20 ? "…" : "");
                 vrmBtn.textContent = "⏳";
                 vrmBtn.style.background = "#888";
                 const url = URL.createObjectURL(file);
@@ -285,6 +295,12 @@ app.registerExtension({
                 });
                 vrmInput.value = "";
             });
+
+
+            // ---- ノード削除時のクリーンアップ ----
+            node.onRemoved = function () {
+                editor.dispose();
+            };
 
             return ret;
         };
@@ -570,7 +586,6 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
             }
 
             onMorphKeysReady(collectVrmExpressionKeys(vrm));
-            console.log("[PoseEditor3D] VRM loaded:", vrm);
             if (onComplete) onComplete();
         }, undefined, (err) => {
             console.error("[PoseEditor3D] VRM load error:", err);
@@ -607,7 +622,7 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
         }
     });
 
-    window.addEventListener('mousemove', (e) => {
+    function handleMouseMove(e) {
         if (!isDragging || !draggedBone) return;
         const dx = e.clientX - prevClientX;
         const dy = e.clientY - prevClientY;
@@ -619,13 +634,16 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
             draggedBone.rotation.y += dx * DRAG_SENSITIVITY;
             draggedBone.rotation.x += dy * DRAG_SENSITIVITY;
         }
-    });
+    }
 
-    window.addEventListener('mouseup', () => {
+    function handleMouseUp() {
         isDragging = false;
         draggedBone = null;
         orbit.enabled = true;
-    });
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
 
     // ---- アニメーションループ ----
     function animate() {
@@ -720,6 +738,15 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                     mats.forEach(m => { if (m) m.needsUpdate = true; });
                 }
             });
+        },
+        _handleMouseMove: handleMouseMove,
+        _handleMouseUp:   handleMouseUp,
+        dispose() {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup',   handleMouseUp);
+            clearBgImage();
+            renderer.dispose();
+            gizmoRenderer.dispose();
         },
     };
 }

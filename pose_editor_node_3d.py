@@ -47,13 +47,19 @@ class PoseEditor3DNode:
             bg_pil = Image.fromarray(bg_np).convert("RGBA")
 
         # ---- image_data デコード ----
+        PNG_MAGIC = b'\x89PNG'
+        JPEG_MAGIC = b'\xff\xd8\xff'
+
         pose_pil = None
         if image_data and image_data.strip():
             try:
                 data = image_data
                 if "," in data:
                     data = data.split(",", 1)[1]
-                pose_pil = Image.open(io.BytesIO(base64.b64decode(data))).convert("RGBA")
+                raw = base64.b64decode(data)
+                if not (raw[:4] == PNG_MAGIC or raw[:3] == JPEG_MAGIC):
+                    raise ValueError("Invalid image magic number — expected PNG or JPEG")
+                pose_pil = Image.open(io.BytesIO(raw)).convert("RGBA")
             except Exception as e:
                 print(f"[PoseEditor3D] 画像デコードエラー: {e}")
 
