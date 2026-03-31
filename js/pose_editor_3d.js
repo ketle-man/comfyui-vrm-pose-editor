@@ -4,6 +4,10 @@ import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 
+// ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
+// { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
+const _nodeModelCache = {};
+
 app.registerExtension({
     name: "Comfy.3DPoseEditor",
 
@@ -47,6 +51,14 @@ app.registerExtension({
             vrmInput.style.display = "none";
             vrmBtn.onclick = () => vrmInput.click();
 
+            const savePoseBtn = makeSmallButton("💾", "#4a7a4a", "Save pose as JSON");
+            const loadPoseBtn = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
+            const poseInput = document.createElement("input");
+            poseInput.type = "file";
+            poseInput.accept = ".json,.vroidpose";
+            poseInput.style.display = "none";
+            loadPoseBtn.onclick = () => poseInput.click();
+
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
             ccBtn.onclick = () => {
@@ -79,8 +91,11 @@ app.registerExtension({
             btnRow.appendChild(ccBtn);
             btnRow.appendChild(bgBtn);
             btnRow.appendChild(bgClearBtn);
+            btnRow.appendChild(savePoseBtn);
+            btnRow.appendChild(loadPoseBtn);
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(bgInput);
+            btnRow.appendChild(poseInput);
             btnRow.appendChild(vrmLabel);
             container.appendChild(btnRow);
 
@@ -173,13 +188,43 @@ app.registerExtension({
                 updateNodeSize();
             };
 
+            // ---- コントロールポイントサイズパネル ----
+            const cpPanel = document.createElement("div");
+            cpPanel.style.cssText = "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;display:flex;align-items:center;gap:6px;";
+
+            const cpLabel = document.createElement("span");
+            cpLabel.textContent = "Point Size";
+            cpLabel.style.cssText = "font-size:11px;color:#ccc;font-weight:bold;white-space:nowrap;";
+
+            const cpSlider = document.createElement("input");
+            cpSlider.type = "range";
+            cpSlider.min = "0.2"; cpSlider.max = "3.0"; cpSlider.step = "0.1";
+            cpSlider.value = "1.0";
+            cpSlider.style.cssText = "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;";
+
+            const cpValLabel = document.createElement("span");
+            cpValLabel.textContent = "1.0";
+            cpValLabel.style.cssText = "font-size:10px;color:#aaa;width:24px;text-align:right;flex-shrink:0;";
+
+            cpSlider.addEventListener("input", () => {
+                const v = parseFloat(cpSlider.value);
+                cpValLabel.textContent = v.toFixed(1);
+                editor.setPointSize(v);
+            });
+            cpSlider.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+            cpPanel.appendChild(cpLabel);
+            cpPanel.appendChild(cpSlider);
+            cpPanel.appendChild(cpValLabel);
+            container.appendChild(cpPanel);
+
             morphPanel.appendChild(morphHeader);
             morphPanel.appendChild(morphBody);
             container.appendChild(morphPanel);
 
             // ノードサイズ動的更新
             function updateNodeSize() {
-                const baseH  = 520;
+                const baseH  = 556; // +36px for cpPanel
                 const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 172) : 0;
                 node.size = [430, baseH + morphH];
                 node.setDirtyCanvas(true, true);
@@ -243,20 +288,34 @@ app.registerExtension({
                 setValue(v) {},
                 computeSize() {
                     const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 172) : 0;
-                    return [410, 460 + morphH];
+                    return [410, 496 + morphH];
                 },
             });
 
-            node.size = [430, 520];
+            node.size = [430, 556];
             node.resizable = false;
             node.onResize = function () {
                 const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 172) : 0;
-                this.size = [430, 520 + morphH];
+                this.size = [430, 556 + morphH];
             };
 
             // ---- 3Dエディタ初期化 ----
             const baseUrl = new URL(".", import.meta.url).href;
             const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, rebuildMorphSliders);
+
+            // タブ切り替えによるノード再作成時にキャッシュから復元
+            const cachedModel = _nodeModelCache[node.id];
+            if (cachedModel) {
+                if (!cachedModel.isDefault && cachedModel.buffer) {
+                    const url = URL.createObjectURL(new Blob([cachedModel.buffer]));
+                    editor.loadVRMFromBuffer(cachedModel.buffer, url, () => {
+                        URL.revokeObjectURL(url);
+                        vrmBtn.textContent = "VRM";
+                        vrmBtn.style.background = "#7a5a9a";
+                    });
+                }
+                // デフォルトモデルの場合はinitPoseEditor3D内で自動ロードされるので何もしない
+            }
 
             captureBtn.onclick = () => {
                 const dataUrl = editor.capture();
@@ -284,22 +343,95 @@ app.registerExtension({
                     vrmInput.value = "";
                     return;
                 }
+                loadVrmFile(file);
+                vrmInput.value = "";
+            });
+
+            function loadVrmFile(file) {
                 vrmLabel.textContent = file.name.slice(0, 20) + (file.name.length > 20 ? "…" : "");
                 vrmBtn.textContent = "⏳";
                 vrmBtn.style.background = "#888";
-                const url = URL.createObjectURL(file);
-                editor.loadVRM(url, () => {
-                    URL.revokeObjectURL(url);
-                    vrmBtn.textContent = "VRM";
-                    vrmBtn.style.background = "#7a5a9a";
-                });
-                vrmInput.value = "";
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const buffer = e.target.result;
+                    // キャッシュに保存（タブ切り替えによる再作成時に復元）
+                    _nodeModelCache[node.id] = { buffer, isDefault: false };
+                    const url = URL.createObjectURL(new Blob([buffer]));
+                    editor.loadVRMFromBuffer(buffer, url, () => {
+                        URL.revokeObjectURL(url);
+                        vrmBtn.textContent = "VRM";
+                        vrmBtn.style.background = "#7a5a9a";
+                    });
+                };
+                reader.readAsArrayBuffer(file);
+            }
+
+            // ---- ポーズJSON 保存 ----
+            savePoseBtn.onclick = () => {
+                const json = editor.exportPose();
+                if (!json) return;
+                const blob = new Blob([json], { type: "application/json" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "pose.json";
+                a.click();
+                URL.revokeObjectURL(a.href);
+            };
+
+            // ---- ポーズJSON 読み込み ----
+            function loadPoseFile(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        editor.importPose(e.target.result);
+                    } catch (err) {
+                        alert("Invalid pose JSON: " + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            poseInput.addEventListener("change", (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                loadPoseFile(file);
+                poseInput.value = "";
+            });
+
+            // ---- canvas へのファイルドロップ ----
+            cvsWrapper.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "copy";
+                cvsWrapper.style.outline = "2px solid #4a90d9";
+            });
+            cvsWrapper.addEventListener("dragleave", (e) => {
+                e.stopPropagation();
+                cvsWrapper.style.outline = "";
+            });
+            cvsWrapper.addEventListener("drop", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                cvsWrapper.style.outline = "";
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+                const ext = file.name.split(".").pop().toLowerCase();
+                if (ext === "json" || ext === "vroidpose") {
+                    loadPoseFile(file);
+                } else if (["vrm", "glb", "gltf"].includes(ext)) {
+                    if (file.size > MAX_FILE_SIZE) {
+                        alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+                        return;
+                    }
+                    loadVrmFile(file);
+                }
             });
 
 
             // ---- ノード削除時のクリーンアップ ----
             node.onRemoved = function () {
                 editor.dispose();
+                delete _nodeModelCache[node.id];
             };
 
             return ret;
@@ -430,6 +562,7 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
     let loadedModel = null;
     let currentVRM = null;
     let initialPoses = new Map();
+    let pointSize = 1.0; // コントロールポイントサイズ倍率
 
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -438,11 +571,12 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
         model.traverse((obj) => {
             if (obj.isBone) {
                 initialPoses.set(obj, { rot: obj.rotation.clone(), pos: obj.position.clone() });
-                const geo = new THREE.SphereGeometry(0.02 / displayScale, 16, 16);
+                const geo = new THREE.SphereGeometry(0.02 * pointSize / displayScale, 16, 16);
                 const mat = new THREE.MeshBasicMaterial({ color: 0x0055ff, transparent: true, opacity: 0.7, depthTest: false });
                 const hitbox = new THREE.Mesh(geo, mat);
                 hitbox.userData.isHitbox = true;
                 hitbox.userData.bone = obj;
+                hitbox.userData.baseRadius = 0.02 / displayScale;
                 obj.add(hitbox);
                 interactableBones.push(hitbox);
             }
@@ -520,6 +654,8 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
         const url = baseUrl + "model." + ext;
         fetch(url, { method: "HEAD" }).then(res => {
             if (!res.ok) { tryLoadDefaultModel(rest); return; }
+            lastLoadedUrl = url;
+            lastLoadedIsDefault = true;
             loadVRM(url, undefined);
         }).catch(() => tryLoadDefaultModel(rest));
     })(["glb", "vrm", "gltf"]);
@@ -572,12 +708,13 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                     const boneNode = humanoid.getNormalizedBoneNode(boneName);
                     if (!boneNode) continue;
                     initialPoses.set(boneNode, { rot: boneNode.rotation.clone(), pos: boneNode.position.clone() });
-                    const geo = new THREE.SphereGeometry(0.02 / displayScale, 16, 16);
+                    const geo = new THREE.SphereGeometry(0.02 * pointSize / displayScale, 16, 16);
                     const mat = new THREE.MeshBasicMaterial({ color: 0x0055ff, transparent: true, opacity: 0.7, depthTest: false });
                     const hitbox = new THREE.Mesh(geo, mat);
                     hitbox.userData.isHitbox = true;
                     hitbox.userData.bone = boneNode;
                     hitbox.userData.boneName = boneName;
+                    hitbox.userData.baseRadius = 0.02 / displayScale;
                     boneNode.add(hitbox);
                     interactableBones.push(hitbox);
                 }
@@ -645,9 +782,37 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
+    // ---- WebGLコンテキストロスト対策 ----
+    let lastLoadedBuffer = null; // ユーザー読み込みファイルのArrayBuffer
+    let lastLoadedUrl = null;    // デフォルトモデルのURL（fetch可能）
+    let lastLoadedIsDefault = true;
+
+    function reloadLastModel() {
+        console.log(`[PoseEditor3D] reloadLastModel isDefault=${lastLoadedIsDefault} hasBuffer=${!!lastLoadedBuffer} url=${lastLoadedUrl}`);
+        if (!lastLoadedIsDefault && lastLoadedBuffer) {
+            const url = URL.createObjectURL(new Blob([lastLoadedBuffer]));
+            loadVRM(url, () => URL.revokeObjectURL(url));
+        } else if (lastLoadedIsDefault && lastLoadedUrl) {
+            loadVRM(lastLoadedUrl, undefined);
+        }
+    }
+
+    canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+    }, false);
+
+    canvas.addEventListener('webglcontextrestored', () => {
+        renderer.setSize(canvas.width, canvas.height, false);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        reloadLastModel();
+    }, false);
+
     // ---- アニメーションループ ----
+    let animFrameId = null;
+
     function animate() {
-        requestAnimationFrame(animate);
+        animFrameId = requestAnimationFrame(animate);
+        if (renderer.getContext().isContextLost()) return;
         if (currentVRM) currentVRM.update(1 / 60);
         orbit.update();
         renderer.render(scene, camera);
@@ -660,6 +825,15 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
         gizmoRenderer.render(gizmoScene, gizmoCamera);
     }
     animate();
+
+    // ---- タブ再表示時にレンダリングを再開 ----
+    function onVisibilityChange() {
+        if (document.visibilityState === 'visible') {
+            if (animFrameId === null) animate();
+        }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
 
     // ---- 背景PlaneGeometry管理 ----
     let bgMesh = null;
@@ -728,6 +902,102 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
             orbit.update();
         },
         loadVRM,
+        loadVRMFromBuffer(buffer, url, onComplete) {
+            lastLoadedBuffer = buffer;
+            lastLoadedIsDefault = false;
+            loadVRM(url, onComplete);
+        },
+        setPointSize(scale) {
+            pointSize = scale;
+            interactableBones.forEach(h => {
+                const base = h.userData.baseRadius ?? 0.02;
+                h.geometry.dispose();
+                h.geometry = new THREE.SphereGeometry(base * scale, 16, 16);
+            });
+        },
+        exportPose() {
+            if (!loadedModel) return null;
+            const data = {};
+            interactableBones.forEach(h => {
+                const bone = h.userData.bone;
+                const key = h.userData.boneName ?? bone.name;
+                if (!key) return;
+                data[key] = { x: bone.rotation.x, y: bone.rotation.y, z: bone.rotation.z };
+            });
+            return JSON.stringify({ version: 1, bones: data }, null, 2);
+        },
+        importPose(jsonStr) {
+            const parsed = JSON.parse(jsonStr);
+
+            // ---- .vroidpose形式 ----
+            if (parsed.BoneDefinition) {
+                const VROID_TO_VRM = {
+                    'Hips':           'hips',
+                    'Spine':          'spine',
+                    'Chest':          'chest',
+                    'UpperChest':     'upperChest',
+                    'Neck':           'neck',
+                    'Head':           'head',
+                    'LeftShoulder':   'leftShoulder',
+                    'LeftUpperArm':   'leftUpperArm',
+                    'LeftLowerArm':   'leftLowerArm',
+                    'LeftHand':       'leftHand',
+                    'RightShoulder':  'rightShoulder',
+                    'RightUpperArm':  'rightUpperArm',
+                    'RightLowerArm':  'rightLowerArm',
+                    'RightHand':      'rightHand',
+                    'LeftUpperLeg':   'leftUpperLeg',
+                    'LeftLowerLeg':   'leftLowerLeg',
+                    'LeftFoot':       'leftFoot',
+                    'LeftToes':       'leftToes',
+                    'RightUpperLeg':  'rightUpperLeg',
+                    'RightLowerLeg':  'rightLowerLeg',
+                    'RightFoot':      'rightFoot',
+                    'RightToes':      'rightToes',
+                };
+                const bd = parsed.BoneDefinition;
+                const q = new THREE.Quaternion();
+                const boneMap = {};
+                interactableBones.forEach(h => {
+                    const key = h.userData.boneName ?? h.userData.bone.name;
+                    if (key) boneMap[key] = h.userData.bone;
+                });
+                for (const [vroidKey, vrmKey] of Object.entries(VROID_TO_VRM)) {
+                    if (!bd[vroidKey] || !boneMap[vrmKey]) continue;
+                    const r = bd[vroidKey];
+                    // Unity左手系 → Three.js右手系 + VRM0 rotateVRM0
+                    q.set(r.x, -r.y, -r.z, r.w);
+                    boneMap[vrmKey].rotation.setFromQuaternion(q);
+                }
+                return;
+            }
+
+            // ---- gaoo.json形式（クォータニオン {rotation:[x,y,z,w]}） ----
+            const isQuatFormat = Object.values(parsed).some(v => Array.isArray(v?.rotation));
+            if (isQuatFormat) {
+                const q = new THREE.Quaternion();
+                interactableBones.forEach(h => {
+                    const bone = h.userData.bone;
+                    const key = h.userData.boneName ?? bone.name;
+                    if (!key || !parsed[key]?.rotation) return;
+                    const r = parsed[key].rotation;
+                    q.set(r[0], r[1], r[2], r[3]);
+                    bone.rotation.setFromQuaternion(q);
+                });
+                return;
+            }
+
+            // ---- 自前exportPose形式（オイラー角 {x,y,z}） ----
+            const bones = parsed.bones ?? parsed;
+            interactableBones.forEach(h => {
+                const bone = h.userData.bone;
+                const key = h.userData.boneName ?? bone.name;
+                if (!key || !bones[key]) return;
+                bone.rotation.x = bones[key].x ?? 0;
+                bone.rotation.y = bones[key].y ?? 0;
+                bone.rotation.z = bones[key].z ?? 0;
+            });
+        },
         setColorCorrect(enabled) {
             renderer.outputColorSpace    = enabled ? THREE.SRGBColorSpace       : THREE.LinearSRGBColorSpace;
             renderer.toneMapping         = enabled ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
@@ -744,6 +1014,8 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
         dispose() {
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup',   handleMouseUp);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            if (animFrameId !== null) { cancelAnimationFrame(animFrameId); animFrameId = null; }
             clearBgImage();
             renderer.dispose();
             gizmoRenderer.dispose();
