@@ -117,7 +117,7 @@ VROID Studio エクスポートや Blender 製モデルで暗く見える場合�
 | フォーマット | 説明 |
 |---|---|
 | `.json`（自前形式） | 💾 ボタンで保存したファイル |
-| `.vroidpose` | VRoid Studio のポーズファイル（体幹・腕・脚のみ、手指は非対応） |
+| `.vroidpose` | VRoid Studio のポーズファイル（体幹・腕・脚対応、手指は非対応） |
 
 > キャンバスへのドロップは `.json` / `.vroidpose` のほか、`.vrm` / `.glb` / `.gltf` にも対応しています。
 

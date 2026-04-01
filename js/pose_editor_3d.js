@@ -955,8 +955,13 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                     'RightFoot':      'rightFoot',
                     'RightToes':      'rightToes',
                 };
+                // VRoidのrest poseとVRM normalized rest poseのずれを補正するX軸オフセット（度数）
+                const BONE_CORRECTION_X = {
+                    Spine: 10, Chest: -18, UpperChest: -9, Neck: 15, Head: 0,
+                    LeftUpperLeg: 2, RightUpperLeg: 2,
+                    LeftShoulder: 16, RightShoulder: 16,
+                };
                 const bd = parsed.BoneDefinition;
-                const q = new THREE.Quaternion();
                 const boneMap = {};
                 interactableBones.forEach(h => {
                     const key = h.userData.boneName ?? h.userData.bone.name;
@@ -965,9 +970,22 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                 for (const [vroidKey, vrmKey] of Object.entries(VROID_TO_VRM)) {
                     if (!bd[vroidKey] || !boneMap[vrmKey]) continue;
                     const r = bd[vroidKey];
-                    // Unity左手系 → Three.js右手系 + VRM0 rotateVRM0
-                    q.set(r.x, -r.y, -r.z, r.w);
-                    boneMap[vrmKey].rotation.setFromQuaternion(q);
+                    // Unity左手系 → Three.js右手系
+                    const base = new THREE.Quaternion(r.x, r.y, -r.z, -r.w).normalize();
+                    const corrDeg = BONE_CORRECTION_X[vroidKey];
+                    if (corrDeg) {
+                        const corr = new THREE.Quaternion().setFromEuler(
+                            new THREE.Euler(THREE.MathUtils.degToRad(corrDeg), 0, 0)
+                        );
+                        corr.premultiply(base);
+                        boneMap[vrmKey].quaternion.copy(corr);
+                    } else {
+                        boneMap[vrmKey].quaternion.copy(base);
+                    }
+                }
+                if (currentVRM) {
+                    currentVRM.humanoid.update();
+                    currentVRM.scene.updateMatrixWorld(true);
                 }
                 return;
             }
