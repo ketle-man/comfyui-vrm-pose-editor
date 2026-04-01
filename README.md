@@ -121,6 +121,12 @@ VROID Studio エクスポートや Blender 製モデルで暗く見える場合�
 
 > キャンバスへのドロップは `.json` / `.vroidpose` のほか、`.vrm` / `.glb` / `.gltf` にも対応しています。
 
+#### VRM0 / VRM1 間のポーズ互換
+
+💾 で保存するポーズ JSON は **version 2 形式**（クォータニオン + `vrmVersion` タグ）です。  
+VRM0 で保存したポーズを VRM1 モデルに読み込む場合（またはその逆）、クォータニオンの座標系変換を自動で適用します。  
+旧形式（version 1、オイラー角）のファイルも引き続き読み込み可能です。
+
 ### コントロールポイントサイズ
 
 **Point Size** スライダーでボーンの操作点（青い球）のサイズを 0.2〜3.0 の範囲で変更できます。
@@ -145,6 +151,10 @@ VROID Studio エクスポートや Blender 製モデルで暗く見える場合�
 - **バックエンド**: Python（Base64 PNG → PIL → Torch Tensor 変換）
 - **キャプチャ解像度**: 600 × 600 px
 - **デフォルトモデル**: `js/model.glb` / `js/model.vrm` / `js/model.gltf` のいずれかを配置（優先順に検索）
+- **ポーズ JSON**: version 2 形式（クォータニオン + `vrmVersion` タグ、VRM0/VRM1 間互換）
+- **VRM0 クォータニオン変換**: Unity 左手系 → Three.js 右手系 `(x, y, -z, -w)`
+- **VRM1 クォータニオン変換**: `(x, -y, -z, w)`（VRM1 は `BONE_CORRECTION_X` 不要）
+- **カメラ初期位置**: VRM0 ロード時は Z=-5（正面が Z 負方向）、VRM1/GLB は Z=+5 に自動切り替え
 
 ---
 

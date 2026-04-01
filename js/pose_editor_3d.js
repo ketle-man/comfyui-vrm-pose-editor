@@ -678,11 +678,20 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
 
             clearModel();
             currentVRM = vrm;
-            VRMUtils.rotateVRM0(vrm);
+            // rotateVRM0は使わない（normalized bone座標系を素のまま使うため）
             const model = vrm.scene;
             loadedModel = model;
             scene.add(model);
             const displayScale = placeModel(model);
+
+            // VRM0はrotateVRM0なしだとZ軸負方向が正面 → カメラをZ軸負方向から見る
+            // VRM1はZ軸正方向が正面 → カメラをZ軸正方向から見る（従来通り）
+            const isVrm0 = vrm.meta?.metaVersion === '0';
+            const camZ = isVrm0 ? -5 : 5;
+            camera.position.set(0, 1, camZ);
+            camera.lookAt(0, 1, 0);
+            orbit.target.set(0, 1, 0);
+            orbit.update();
 
             const humanoid = vrm.humanoid;
             if (humanoid) {
@@ -896,7 +905,9 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
             });
         },
         resetCamera() {
-            camera.position.set(0, 1, 5);
+            const isVrm0 = currentVRM?.meta?.metaVersion === '0';
+            const camZ = isVrm0 ? -5 : 5;
+            camera.position.set(0, 1, camZ);
             camera.up.set(0, 1, 0);
             orbit.target.set(0, 1, 0);
             orbit.update();
@@ -922,9 +933,11 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                 const bone = h.userData.bone;
                 const key = h.userData.boneName ?? bone.name;
                 if (!key) return;
-                data[key] = { x: bone.rotation.x, y: bone.rotation.y, z: bone.rotation.z };
+                const q = bone.quaternion;
+                data[key] = { qx: q.x, qy: q.y, qz: q.z, qw: q.w };
             });
-            return JSON.stringify({ version: 1, bones: data }, null, 2);
+            const vrmVer = currentVRM?.meta?.metaVersion ?? null;
+            return JSON.stringify({ version: 2, vrmVersion: vrmVer, bones: data }, null, 2);
         },
         importPose(jsonStr) {
             const parsed = JSON.parse(jsonStr);
@@ -962,25 +975,37 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                     LeftShoulder: 16, RightShoulder: 16,
                 };
                 const bd = parsed.BoneDefinition;
+                // boneMapはVRM以外（GLB等）のフォールバック用
                 const boneMap = {};
                 interactableBones.forEach(h => {
                     const key = h.userData.boneName ?? h.userData.bone.name;
                     if (key) boneMap[key] = h.userData.bone;
                 });
+                const isVrm0 = currentVRM?.meta?.metaVersion === '0';
+                // VRM1ではBONE_CORRECTION_Xは不要（normalized boneのrest poseが異なる）
+                const activeBoneCorrection = isVrm0 ? BONE_CORRECTION_X : {};
                 for (const [vroidKey, vrmKey] of Object.entries(VROID_TO_VRM)) {
-                    if (!bd[vroidKey] || !boneMap[vrmKey]) continue;
                     const r = bd[vroidKey];
-                    // Unity左手系 → Three.js右手系
-                    const base = new THREE.Quaternion(r.x, r.y, -r.z, -r.w).normalize();
-                    const corrDeg = BONE_CORRECTION_X[vroidKey];
+                    if (!r) continue;
+                    // VRMモデルの場合はgetNormalizedBoneNodeで直接取得
+                    const node = currentVRM
+                        ? currentVRM.humanoid.getNormalizedBoneNode(vrmKey)
+                        : boneMap[vrmKey];
+                    if (!node) continue;
+                    // Unity左手系 → Three.js右手系の変換
+                    // VRM0: (x, y, -z, -w) / VRM1: (x, -y, -z, w)
+                    const base = isVrm0
+                        ? new THREE.Quaternion( r.x,  r.y, -r.z, -r.w).normalize()
+                        : new THREE.Quaternion( r.x, -r.y, -r.z,  r.w).normalize();
+                    const corrDeg = activeBoneCorrection[vroidKey];
                     if (corrDeg) {
                         const corr = new THREE.Quaternion().setFromEuler(
                             new THREE.Euler(THREE.MathUtils.degToRad(corrDeg), 0, 0)
                         );
                         corr.premultiply(base);
-                        boneMap[vrmKey].quaternion.copy(corr);
+                        node.quaternion.copy(corr);
                     } else {
-                        boneMap[vrmKey].quaternion.copy(base);
+                        node.quaternion.copy(base);
                     }
                 }
                 if (currentVRM) {
@@ -1005,7 +1030,32 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                 return;
             }
 
-            // ---- 自前exportPose形式（オイラー角 {x,y,z}） ----
+            // ---- 自前exportPose形式 version2（クォータニオン + vrmVersionタグ） ----
+            if (parsed.version === 2 && parsed.bones) {
+                const savedVrmVer = parsed.vrmVersion;
+                const curVrmVer   = currentVRM?.meta?.metaVersion ?? null;
+                const needConvert = savedVrmVer !== null && curVrmVer !== null && savedVrmVer !== curVrmVer;
+                const q = new THREE.Quaternion();
+                interactableBones.forEach(h => {
+                    const bone = h.userData.bone;
+                    const key  = h.userData.boneName ?? bone.name;
+                    const bd   = parsed.bones[key];
+                    if (!key || !bd) return;
+                    q.set(bd.qx, bd.qy, bd.qz, bd.qw);
+                    if (needConvert) {
+                        // VRM0↔VRM1間の変換: Y軸とWを反転
+                        q.set(q.x, -q.y, q.z, -q.w).normalize();
+                    }
+                    bone.quaternion.copy(q);
+                });
+                if (currentVRM) {
+                    currentVRM.humanoid.update();
+                    currentVRM.scene.updateMatrixWorld(true);
+                }
+                return;
+            }
+
+            // ---- 自前exportPose旧形式（オイラー角 version1） ----
             const bones = parsed.bones ?? parsed;
             interactableBones.forEach(h => {
                 const bone = h.userData.bone;
