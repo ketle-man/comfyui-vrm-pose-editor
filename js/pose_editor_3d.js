@@ -32,6 +32,7 @@ app.registerExtension({
                     const w = node.widgets?.find(w => w.name === name);
                     if (w) { w.computeSize = () => [0, -4]; w.hidden = true; }
                 }
+                updateNodeSize(); // ウィジェット非表示完了後にサイズを再計算
             };
             setTimeout(hideWidgets, 0);
             setTimeout(hideWidgets, 100);
@@ -49,6 +50,7 @@ app.registerExtension({
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
             const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
+            const camModeBtn     = makeSmallButton("OT",         "#444",    "Camera: Perspective (click to toggle Orthographic)");
 
             const vrmBtn = makeSmallButton("VRM", "#7a5a9a", "Load VRM/GLB/GLTF file");
             const vrmInput = document.createElement("input");
@@ -87,12 +89,13 @@ app.registerExtension({
             bgClearBtn.style.padding = "4px 7px";
 
             const vrmLabel = document.createElement("span");
-            vrmLabel.style.cssText = "font-size:10px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;";
+            vrmLabel.style.cssText = "font-size:10px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;";
             vrmLabel.textContent = "default model";
 
             btnRow.appendChild(captureBtn);
             btnRow.appendChild(resetBtn);
             btnRow.appendChild(cameraResetBtn);
+            btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
             btnRow.appendChild(ccBtn);
             btnRow.appendChild(bgBtn);
@@ -127,8 +130,69 @@ app.registerExtension({
                 `position:absolute;top:6px;right:6px;width:${GIZMO_SIZE}px;height:${GIZMO_SIZE}px;` +
                 "border-radius:50%;cursor:pointer;background:rgba(40,40,40,0.6);";
 
+            // ---- アスペクト比フレームオーバーレイ（2D Canvas） ----
+            const overlayCvs = document.createElement("canvas");
+            overlayCvs.width = CVS_DISPLAY; overlayCvs.height = CVS_DISPLAY;
+            overlayCvs.style.cssText =
+                `position:absolute;top:0;left:0;width:${CVS_DISPLAY}px;height:${CVS_DISPLAY}px;` +
+                "pointer-events:none;border-radius:6px;";
+
+            // output_size_mode / custom_width / custom_height ウィジェットを読んでフレーム矩形を計算
+            // 戻り値: { x, y, w, h } — すべてCVS_DISPLAY座標系（ピクセル）
+            function getFrameRect() {
+                const modeW  = node.widgets?.find(w => w.name === "output_size_mode");
+                const cwW    = node.widgets?.find(w => w.name === "custom_width");
+                const chW    = node.widgets?.find(w => w.name === "custom_height");
+                const mode   = modeW?.value  ?? "Standard";
+                const cw     = cwW?.value    ?? 600;
+                const ch     = chW?.value    ?? 600;
+
+                let ar; // 縦横比 (width / height)
+                if (mode === "Custom") {
+                    ar = cw / ch;
+                } else {
+                    ar = 1; // Standard / Background は正方形扱い
+                }
+
+                // CVS_DISPLAY × CVS_DISPLAY の中に ar を letterbox 配置
+                let fw, fh;
+                if (ar >= 1) {
+                    fw = CVS_DISPLAY;
+                    fh = Math.round(CVS_DISPLAY / ar);
+                } else {
+                    fh = CVS_DISPLAY;
+                    fw = Math.round(CVS_DISPLAY * ar);
+                }
+                const fx = Math.round((CVS_DISPLAY - fw) / 2);
+                const fy = Math.round((CVS_DISPLAY - fh) / 2);
+                return { x: fx, y: fy, w: fw, h: fh };
+            }
+
+            // オーバーレイ（黒帯）を描画
+            function drawOverlay() {
+                const ctx = overlayCvs.getContext("2d");
+                ctx.clearRect(0, 0, CVS_DISPLAY, CVS_DISPLAY);
+                const { x, y, w, h } = getFrameRect();
+                // フレーム外を半透明黒で塗る
+                ctx.fillStyle = "rgba(0,0,0,0.75)";
+                // 上
+                if (y > 0)            ctx.fillRect(0, 0, CVS_DISPLAY, y);
+                // 下
+                if (y + h < CVS_DISPLAY) ctx.fillRect(0, y + h, CVS_DISPLAY, CVS_DISPLAY - (y + h));
+                // 左
+                if (x > 0)            ctx.fillRect(0, y, x, h);
+                // 右
+                if (x + w < CVS_DISPLAY) ctx.fillRect(x + w, y, CVS_DISPLAY - (x + w), h);
+                // フレーム枠線
+                ctx.strokeStyle = "rgba(255,255,255,0.4)";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+            }
+            drawOverlay();
+
             cvsWrapper.appendChild(cvs);
             cvsWrapper.appendChild(gizmoCvs);
+            cvsWrapper.appendChild(overlayCvs);
             container.appendChild(cvsWrapper);
 
             // 背景画像ファイル選択処理
@@ -183,7 +247,7 @@ app.registerExtension({
             const morphBody = document.createElement("div");
             morphBody.style.cssText =
                 "display:none;flex-direction:column;gap:3px;padding:4px 2px;" +
-                "max-height:160px;overflow-y:auto;";
+                "max-height:140px;overflow-y:auto;box-sizing:border-box;";
 
             let morphOpen = false;
             morphHeader.onclick = () => {
@@ -230,10 +294,15 @@ app.registerExtension({
 
             // ノードサイズ動的更新
             function updateNodeSize() {
-                const baseH  = 556; // +36px for cpPanel
-                const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 172) : 0;
-                node.size = [430, baseH + morphH];
-                node.setDirtyCanvas(true, true);
+                if (node.computeSize) {
+                    const sz = node.computeSize();
+                    node.size = [430, sz[1] + 16]; // DOM要素のはみ出しを防ぐため余白を追加
+                    node.setDirtyCanvas(true, true);
+                } else {
+                    const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 140) : 0;
+                    node.size = [430, 520 + morphH];
+                    node.setDirtyCanvas(true, true);
+                }
             }
 
             // シェイプキースライダーを再構築する関数（editorから呼ばれる）
@@ -289,21 +358,25 @@ app.registerExtension({
             }
 
             // ---- DOM ウィジェット登録（メイン） ----
-            node.addDOMWidget("pose_editor_3d_widget", "pose_editor_3d", container, {
+            const domWidget = node.addDOMWidget("pose_editor_3d_widget", "pose_editor_3d", container, {
                 getValue() { return node.widgets?.find(w => w.name === "image_data")?.value ?? ""; },
                 setValue(v) {},
-                computeSize() {
-                    const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 172) : 0;
-                    return [410, 496 + morphH];
-                },
             });
+            domWidget.computeSize = function() {
+                const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
+                return [430, 520 + morphH];
+            };
 
-            node.size = [430, 556];
             node.resizable = false;
             node.onResize = function () {
-                const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 172) : 0;
-                this.size = [430, 556 + morphH];
+                if (this.computeSize) {
+                    const sz = this.computeSize();
+                    this.size = [430, sz[1] + 16];
+                }
             };
+
+            // 初期サイズ設定
+            updateNodeSize();
 
             // ---- 3Dエディタ初期化 ----
             const baseUrl = new URL(".", import.meta.url).href;
@@ -324,8 +397,21 @@ app.registerExtension({
                 // デフォルトモデルの場合はinitPoseEditor3D内で自動ロードされるので何もしない
             }
 
+            // output_size_mode / custom_width / custom_height の変更を監視してオーバーレイを更新
+            for (const wName of ["output_size_mode", "custom_width", "custom_height"]) {
+                const wgt = node.widgets?.find(w => w.name === wName);
+                if (wgt) {
+                    const origCallback = wgt.callback;
+                    wgt.callback = function(...args) {
+                        origCallback?.apply(this, args);
+                        drawOverlay();
+                    };
+                }
+            }
+
             captureBtn.onclick = () => {
-                const dataUrl = editor.capture();
+                const frame = getFrameRect();
+                const dataUrl = editor.capture(frame, CVS_DISPLAY);
                 const w = node.widgets?.find(w => w.name === "image_data");
                 if (w) w.value = dataUrl;
 
@@ -339,6 +425,16 @@ app.registerExtension({
 
             resetBtn.onclick = () => editor.resetPose();
             cameraResetBtn.onclick = () => editor.resetCamera();
+            camModeBtn.onclick = () => {
+                const toOrtho = camModeBtn.dataset.mode !== "ortho";
+                editor.switchCamera(toOrtho);
+                camModeBtn.dataset.mode     = toOrtho ? "ortho" : "persp";
+                camModeBtn.textContent      = toOrtho ? "PR" : "OT";
+                camModeBtn.style.background = toOrtho ? "#4a7aaa" : "#444";
+                camModeBtn.title            = toOrtho
+                    ? "Camera: Orthographic (click to switch to Perspective)"
+                    : "Camera: Perspective (click to toggle Orthographic)";
+            };
 
             const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -355,7 +451,7 @@ app.registerExtension({
             });
 
             function loadVrmFile(file) {
-                vrmLabel.textContent = file.name.slice(0, 20) + (file.name.length > 20 ? "…" : "");
+                vrmLabel.textContent = file.name.slice(0, 32) + (file.name.length > 32 ? "…" : "");
                 vrmBtn.textContent = "⏳";
                 vrmBtn.style.background = "#888";
                 const reader = new FileReader();
@@ -473,16 +569,48 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
     renderer.toneMappingExposure = 1.0;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-    camera.position.set(0, 1, 5);
-    camera.lookAt(0, 1, 0);
+    const perspCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    perspCamera.position.set(0, 1, 5);
+    perspCamera.lookAt(0, 1, 0);
+
+    const orthoCamera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 1000);
+    orthoCamera.position.set(0, 1, 5);
+    orthoCamera.lookAt(0, 1, 0);
+
+    let isOrtho = false;
+    let camera = perspCamera;
+
+    // Perspective ↔ Orthographic 切り替え
+    // Ortho のサイズは「現在のカメラ距離 × tan(fov/2)」で Perspective と同じ高さに合わせる
+    function switchCamera(toOrtho) {
+        const dist = camera.position.distanceTo(orbit.target);
+        if (toOrtho) {
+            const halfH = dist * Math.tan((perspCamera.fov / 2) * Math.PI / 180);
+            orthoCamera.left   = -halfH;
+            orthoCamera.right  =  halfH;
+            orthoCamera.top    =  halfH;
+            orthoCamera.bottom = -halfH;
+            orthoCamera.updateProjectionMatrix();
+            orthoCamera.position.copy(perspCamera.position);
+            orthoCamera.quaternion.copy(perspCamera.quaternion);
+            orthoCamera.up.copy(perspCamera.up);
+        } else {
+            perspCamera.position.copy(orthoCamera.position);
+            perspCamera.quaternion.copy(orthoCamera.quaternion);
+            perspCamera.up.copy(orthoCamera.up);
+        }
+        isOrtho = toOrtho;
+        camera = toOrtho ? orthoCamera : perspCamera;
+        orbit.object = camera;
+        orbit.update();
+    }
 
     scene.add(new THREE.AmbientLight(0xffffff, 1.5));
     const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
     dirLight.position.set(1, 2, 3);
     scene.add(dirLight);
 
-    const orbit = new OrbitControls(camera, renderer.domElement);
+    const orbit = new OrbitControls(perspCamera, renderer.domElement);
     orbit.enableRotate = true;
     orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     orbit.target.set(0, 1, 0);
@@ -905,7 +1033,7 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
             // カメラのフラスタムに合わせてPlaneのサイズを決定
             // PerspectiveCamera: Z=-50に置き、その距離でのフラスタム幅に合わせる
             const dist = 50;
-            const fovRad = (camera.fov * Math.PI) / 180;
+            const fovRad = (perspCamera.fov * Math.PI) / 180;
             const planeH = 2 * dist * Math.tan(fovRad / 2);
             const planeW = planeH * (iw / ih);
 
@@ -939,11 +1067,26 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
         loadBgImage,
         clearBgImage,
 
-        capture() {
+        capture(frameRect, displaySize) {
             interactableBones.forEach(h => h.visible = false);
             if (currentVRM) currentVRM.update(0);
             renderer.render(scene, camera);
-            const data = canvas.toDataURL("image/png");
+
+            // frameRect はディスプレイ座標系 (displaySize px) なので
+            // 実キャンバスピクセル座標に変換してクロップ
+            const scaleX = canvas.width  / (displaySize ?? canvas.width);
+            const scaleY = canvas.height / (displaySize ?? canvas.height);
+            const sx = Math.round((frameRect?.x ?? 0) * scaleX);
+            const sy = Math.round((frameRect?.y ?? 0) * scaleY);
+            const sw = Math.round((frameRect?.w ?? canvas.width)  * scaleX);
+            const sh = Math.round((frameRect?.h ?? canvas.height) * scaleY);
+
+            const crop = document.createElement("canvas");
+            crop.width  = sw;
+            crop.height = sh;
+            crop.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+            const data = crop.toDataURL("image/png");
+
             interactableBones.forEach(h => h.visible = true);
             return data;
         },
@@ -956,11 +1099,16 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
         resetCamera() {
             const isVrm0 = currentVRM?.meta?.metaVersion === '0';
             const camZ = isVrm0 ? -5 : 5;
-            camera.position.set(0, 1, camZ);
-            camera.up.set(0, 1, 0);
+            perspCamera.position.set(0, 1, camZ);
+            perspCamera.up.set(0, 1, 0);
+            orthoCamera.position.set(0, 1, camZ);
+            orthoCamera.up.set(0, 1, 0);
             orbit.target.set(0, 1, 0);
+            // Ortho なら再度サイズ合わせ
+            if (isOrtho) switchCamera(true);
             orbit.update();
         },
+        switchCamera,
         loadVRM,
         loadVRMFromBuffer(buffer, url, onComplete) {
             lastLoadedBuffer = buffer;

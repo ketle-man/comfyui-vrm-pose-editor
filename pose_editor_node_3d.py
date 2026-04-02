@@ -64,6 +64,8 @@ class PoseEditor3DNode:
                 print(f"[PoseEditor3D] 画像デコードエラー: {e}")
 
         # ---- 出力サイズ決定 ----
+        # JSがアスペクト比フレーム内をクロップした画像を送ってくるので
+        # ここではサイズ指定にリサイズするだけでよい
         if output_size_mode == "Background" and bg_pil is not None:
             out_w, out_h = bg_pil.size
         elif output_size_mode == "Custom":
@@ -77,7 +79,6 @@ class PoseEditor3DNode:
                 out_w, out_h = 600, 600
 
         # ---- 合成 ----
-        # 3D版もデフォルトは薄いグレーの背景
         result = Image.new("RGBA", (out_w, out_h), (224, 224, 224, 255))
 
         # 背景画像がある場合は重ねる
@@ -85,7 +86,7 @@ class PoseEditor3DNode:
             bg_resized = bg_pil.resize((out_w, out_h), Image.LANCZOS) if bg_pil.size != (out_w, out_h) else bg_pil
             result.paste(bg_resized, (0, 0))
 
-        # 3Dキャプチャ画像を重ねる（アルファ合成）
+        # 3Dキャプチャ画像を重ねる（JSでクロップ済み・アスペクト比保証済み）
         if pose_pil is not None:
             pose_resized = pose_pil.resize((out_w, out_h), Image.LANCZOS) if pose_pil.size != (out_w, out_h) else pose_pil
             result.paste(pose_resized, (0, 0), pose_resized)

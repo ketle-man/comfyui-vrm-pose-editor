@@ -7,6 +7,8 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 ![three-vrm](https://img.shields.io/badge/@pixiv/three--vrm-2.1.0-ff69b4)
 ![ComfyUI](https://img.shields.io/badge/ComfyUI-Custom%20Node-blue)
 
+![screenshot](docs/screenshot_workflow.png)
+
 ---
 
 ## 機能一覧
@@ -16,6 +18,7 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 | 📸 Capture | 現在のポーズを PNG としてノード出力に送信 |
 | RP | ポーズをリセット |
 | RC | カメラをリセット |
+| OT / PR | カメラを Orthographic / Perspective に切り替え |
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
 | BG | 背景画像をローカルから読み込む |
@@ -129,6 +132,16 @@ VROID Studio エクスポートや Blender 製モデルで暗く見える場合�
 VRM0 で保存したポーズを VRM1 モデルに読み込む場合（またはその逆）、クォータニオンの座標系変換を自動で適用します。  
 旧形式（version 1、オイラー角）のファイルも引き続き読み込み可能です。
 
+### カメラモード切り替え（OT / PR）
+
+**OT** ボタンで Orthographic（平行投影）カメラに切り替えます。切り替え後は **PR** ボタンで Perspective（透視投影）に戻ります。
+切り替え時に現在の視点・距離を引き継ぐため、違和感なく行き来できます。
+
+### アスペクト比フレーム
+
+`output_size_mode` が **Custom** のとき、指定した `custom_width` / `custom_height` の縦横比に合わせたフレームがビュワー内にリアルタイム表示されます。
+フレーム外は黒帯で暗転し、**Capture** 時はフレーム内のみをクロップして出力するため、モデルがストレッチされません。
+
 ### コントロールポイントサイズ
 
 **Point Size** スライダーでボーンの操作点（青い球）のサイズを 0.2〜3.0 の範囲で変更できます。
@@ -151,7 +164,8 @@ VRM0 で保存したポーズを VRM1 モデルに読み込む場合（または
 
 - **フロントエンド**: JavaScript + [Three.js r160](https://threejs.org/) + [@pixiv/three-vrm 2.1.0](https://github.com/pixiv/three-vrm)（esm.sh 経由）
 - **バックエンド**: Python（Base64 PNG → PIL → Torch Tensor 変換）
-- **キャプチャ解像度**: 600 × 600 px
+- **キャプチャ**: 出力縦横比に合わせたフレーム内をクロップして出力（モデルのストレッチなし）
+- **カメラ**: Perspective（FOV 45°）/ Orthographic 切り替え対応
 - **デフォルトモデル**: `js/model.glb` / `js/model.vrm` / `js/model.gltf` のいずれかを配置（優先順に検索）
 - **ポーズ JSON**: version 2 形式（クォータニオン + `vrmVersion` タグ、VRM0/VRM1 間互換）
 - **VRM0 クォータニオン変換**: Unity 左手系 → Three.js 右手系 `(x, y, -z, -w)`
