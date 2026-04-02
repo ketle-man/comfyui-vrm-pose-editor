@@ -22,7 +22,13 @@ app.registerExtension({
             node.show_preview = false;
 
             const hideWidgets = () => {
-                for (const name of ["image_data", "output_size_mode", "custom_width", "custom_height", "preview"]) {
+                // Comfy.VueNodes.Enabled=true のモダンノードではComfyUIがパラメータをUI上に表示するため非表示にする
+                // クラシックノード（false）では表示したままにする
+                const isModern = app.ui?.settings?.getSettingValue?.("Comfy.VueNodes.Enabled", false);
+                const toHide = isModern
+                    ? ["image_data", "output_size_mode", "custom_width", "custom_height", "preview"]
+                    : ["image_data", "preview"];
+                for (const name of toHide) {
                     const w = node.widgets?.find(w => w.name === name);
                     if (w) { w.computeSize = () => [0, -4]; w.hidden = true; }
                 }
@@ -301,7 +307,8 @@ app.registerExtension({
 
             // ---- 3Dエディタ初期化 ----
             const baseUrl = new URL(".", import.meta.url).href;
-            const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, rebuildMorphSliders);
+            const isModern = app.ui?.settings?.getSettingValue?.("Comfy.VueNodes.Enabled", false);
+            const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, rebuildMorphSliders, isModern);
 
             // タブ切り替えによるノード再作成時にキャッシュから復元
             const cachedModel = _nodeModelCache[node.id];
@@ -454,7 +461,7 @@ function makeSmallButton(label, bg, title = "") {
 }
 
 // ---- Three.js エディタ本体 ----
-function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
+function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isModern) {
 
     // -- メインレンダラー --
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -480,6 +487,48 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
     orbit.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     orbit.target.set(0, 1, 0);
     orbit.update();
+
+    // ---- Node2.0時のみイベント制御 ----
+    if (isModern) {
+        // wheel/contextmenu がComfyUIキャンバスに伝播しないよう阻止
+        renderer.domElement.addEventListener("wheel",       (e) => { e.stopPropagation(); }, { passive: false });
+        renderer.domElement.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); });
+
+        // Alt+左ドラッグ → ズーム
+        // 通常の左ドラッグ=ROTATE、Ctrl+左ドラッグ=PAN はOrbitControls既定のまま
+        let altDrag = false;
+        let altDragLastY = 0;
+        renderer.domElement.addEventListener("pointerdown", (e) => {
+            e.stopPropagation();
+            if (e.button === 0 && e.altKey) {
+                // コントロールポイント上ではAltズームを起動しない
+                updateMouse(e);
+                raycaster.setFromCamera(mouse, camera);
+                if (raycaster.intersectObjects(interactableBones).length > 0) return;
+                altDrag = true;
+                altDragLastY = e.clientY;
+                orbit.enableRotate = false;
+                orbit.enablePan    = false;
+            }
+        });
+        renderer.domElement.addEventListener("pointermove", (e) => {
+            e.stopPropagation();
+            if (!altDrag) return;
+            const dy = e.clientY - altDragLastY;
+            altDragLastY = e.clientY;
+            const dir = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
+            camera.position.addScaledVector(dir, dy * 0.01);
+            orbit.update();
+        });
+        function endAltDrag() {
+            if (!altDrag) return;
+            altDrag = false;
+            orbit.enableRotate = true;
+            orbit.enablePan    = true;
+        }
+        window.addEventListener("pointerup", endAltDrag);
+        window.addEventListener("keyup", (e) => { if (e.key === "Alt") endAltDrag(); });
+    }
 
     // -- ギズモレンダラー --
     const gizmoRenderer = new THREE.WebGLRenderer({ canvas: gizmoCanvas, antialias: true, alpha: true });
@@ -982,8 +1031,13 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                     if (key) boneMap[key] = h.userData.bone;
                 });
                 const isVrm0 = currentVRM?.meta?.metaVersion === '0';
-                // VRM1ではBONE_CORRECTION_Xは不要（normalized boneのrest poseが異なる）
-                const activeBoneCorrection = isVrm0 ? BONE_CORRECTION_X : {};
+                // VRM1用の補正値（VRM0とrest poseが異なるため別途調整）
+                const BONE_CORRECTION_X_VRM1 = {
+                    Spine: -10, Chest: 18, UpperChest: 9, Neck: -15, Head: 0,
+                    LeftUpperLeg: -2, RightUpperLeg: -2,
+                    LeftShoulder: -16, RightShoulder: -16,
+                };
+                const activeBoneCorrection = isVrm0 ? BONE_CORRECTION_X : BONE_CORRECTION_X_VRM1;
                 for (const [vroidKey, vrmKey] of Object.entries(VROID_TO_VRM)) {
                     const r = bd[vroidKey];
                     if (!r) continue;
@@ -993,16 +1047,17 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady) {
                         : boneMap[vrmKey];
                     if (!node) continue;
                     // Unity左手系 → Three.js右手系の変換
-                    // VRM0: (x, y, -z, -w) / VRM1: (x, -y, -z, w)
-                    const base = isVrm0
-                        ? new THREE.Quaternion( r.x,  r.y, -r.z, -r.w).normalize()
-                        : new THREE.Quaternion( r.x, -r.y, -r.z,  r.w).normalize();
+                    // VRM0式で変換後、VRM1の場合はVRM0→VRM1変換(x,-y,z,-w)を適用
+                    const base = new THREE.Quaternion(r.x, r.y, -r.z, -r.w).normalize();
+                    if (!isVrm0) {
+                        base.set(base.x, -base.y, base.z, -base.w).normalize();
+                    }
                     const corrDeg = activeBoneCorrection[vroidKey];
                     if (corrDeg) {
                         const corr = new THREE.Quaternion().setFromEuler(
                             new THREE.Euler(THREE.MathUtils.degToRad(corrDeg), 0, 0)
                         );
-                        corr.premultiply(base);
+                        corr.premultiply(base); // base * corr
                         node.quaternion.copy(corr);
                     } else {
                         node.quaternion.copy(base);

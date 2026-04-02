@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-vrm-pose-editor"
 description = "ComfyUI custom node for interactive 3D pose editing with VRM / GLB / GLTF support"
-version = "0.2.2"
+version = "0.2.3"
 license = {file = "LICENSE"}
 
 [project.urls]
