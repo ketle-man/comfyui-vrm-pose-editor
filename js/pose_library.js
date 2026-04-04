@@ -1,12 +1,12 @@
 /**
  * Pose Library UI
- * - poses/ フォルダ固定（サーバー側で解決）
- * - サブディレクトリによるフィルタリング
- * - .json / .vroidpose サムネイル一覧
- * - お気に入り / メモ / 検索（名前のみ）
- * - poses/ へのポーズ保存（p_HHMMSS.json）
- * - ファイル名変更
- * - VRMによるサムネイル自動生成（正面向き固定）
+ * - Fixed folder: poses/ (resolved server-side)
+ * - Subdirectory filtering
+ * - .json / .vroidpose thumbnail grid
+ * - Favorites / Memo / Name search
+ * - Save pose to poses/ (p_HHMMSS.json)
+ * - File rename
+ * - Auto thumbnail generation via VRM (front / back camera)
  */
 
 import * as THREE from './vendor/three.module.js';
@@ -47,7 +47,7 @@ function buildModal(editor, vrmBuffer) {
                "background:#16213e;border-bottom:1px solid #333;flex-shrink:0;",
     });
     const titleEl  = el("span", { style: "font-size:15px;font-weight:bold;color:#e0e0ff;flex:1;" }, "📚 Pose Library");
-    const reloadBtn = mkBtn("↺", "#2a4a7a", "ポーズ一覧を再読み込み");
+    const reloadBtn = mkBtn("↺", "#2a4a7a", "Reload pose list");
     reloadBtn.style.padding = "3px 9px";
     const closeBtn = el("button", {
         style: "background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;padding:4px 8px;",
@@ -61,17 +61,17 @@ function buildModal(editor, vrmBuffer) {
                "background:#1a1a2e;border-bottom:1px solid #2a2a4a;flex-shrink:0;flex-wrap:wrap;",
     });
 
-    // サブディレクトリ（フォルダ）フィルター
+    // Subdirectory (folder) filter
     const subdirSel = el("select", {
         style: "background:#111;border:1px solid #444;color:#ddd;padding:5px 7px;" +
                "border-radius:4px;font-size:12px;cursor:pointer;",
     });
-    const allOpt = el("option", { value: "" }, "📁 すべて");
+    const allOpt = el("option", { value: "" }, "📁 All");
     subdirSel.appendChild(allOpt);
 
-    // 検索（名前のみ）
+    // Search by name
     const searchInput = el("input", {
-        type: "text", placeholder: "名前で検索…",
+        type: "text", placeholder: "Search by name…",
         style: "flex:1;min-width:120px;background:#111;border:1px solid #444;color:#ddd;" +
                "padding:5px 8px;border-radius:4px;font-size:12px;",
     });
@@ -81,22 +81,22 @@ function buildModal(editor, vrmBuffer) {
         style: "background:#111;border:1px solid #444;color:#ddd;padding:5px 6px;" +
                "border-radius:4px;font-size:12px;cursor:pointer;",
     });
-    [["all","すべて"],["favorite","⭐ お気に入り"],["json",".json"],["vroidpose",".vroidpose"]]
+    [["all","All"],["favorite","⭐ Favorites"],["json",".json"],["vroidpose",".vroidpose"]]
         .forEach(([v,t]) => filterSel.appendChild(el("option", { value: v }, t)));
 
-    // サムネイルサイズ
+    // Thumbnail size
     const sizeSel = el("select", {
         style: "background:#111;border:1px solid #444;color:#ddd;padding:5px 6px;" +
                "border-radius:4px;font-size:12px;cursor:pointer;",
     });
-    [["s","小"],["m","中"],["l","大"]].forEach(([v,t]) => {
+    [["s","S"],["m","M"],["l","L"]].forEach(([v,t]) => {
         const o = el("option", { value: v }, t);
         if (v === "m") o.selected = true;
         sizeSel.appendChild(o);
     });
 
-    // ポーズ保存ボタン
-    const savePoseBtn = mkBtn("💾 保存", "#4a7a4a", "現在のポーズを poses/ に保存");
+    // Save pose button
+    const savePoseBtn = mkBtn("💾 Save", "#4a7a4a", "Save current pose to poses/");
 
     toolbar.append(subdirSel, searchInput, filterSel, sizeSel, savePoseBtn);
 
@@ -156,17 +156,17 @@ function buildModal(editor, vrmBuffer) {
     }
 
     async function loadPoses() {
-        statusMsg.textContent = "読み込み中…";
+        statusMsg.textContent = "Loading…";
         grid.innerHTML = "";
         try {
             const params = currentSubdir ? `?subdir=${encodeURIComponent(currentSubdir)}` : "";
             const data   = await apiFetch("/pose_library/list" + params);
             allPoses     = data.poses ?? [];
             statusPath.textContent = data.poses_dir ?? "";
-            statusMsg.textContent  = `${allPoses.length} 件`;
+            statusMsg.textContent  = `${allPoses.length} poses`;
             renderGrid();
         } catch (e) {
-            statusMsg.textContent = `エラー: ${e.message}`;
+            statusMsg.textContent = `Error: ${e.message}`;
             console.error("[PoseLibrary]", e);
         }
     }
@@ -224,20 +224,20 @@ function buildModal(editor, vrmBuffer) {
     reloadBtn.addEventListener("click",  reload);
 
     // ----------------------------------------------------------------
-    // ポーズ保存
+    // Save pose
     // ----------------------------------------------------------------
     savePoseBtn.addEventListener("click", async () => {
         const poseJson = editor.exportPose?.();
-        if (!poseJson) { alert("ポーズデータがありません。"); return; }
+        if (!poseJson) { alert("No pose data available."); return; }
         try {
             const data = await apiFetch("/pose_library/save_pose", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ json: poseJson, subdir: currentSubdir }),
             });
-            statusMsg.textContent = `保存: ${data.name}`;
+            statusMsg.textContent = `Saved: ${data.name}`;
             await loadPoses();
-            // 新しく追加されたカードにサムネイル生成
+            // Generate thumbnail for the newly saved pose
             if (vrmBuffer) {
                 const newPose = allPoses.find(p => p.path === data.path);
                 if (newPose) {
@@ -247,12 +247,12 @@ function buildModal(editor, vrmBuffer) {
                 }
             }
         } catch (e) {
-            alert("保存に失敗しました: " + e.message);
+            alert("Failed to save: " + e.message);
         }
     });
 
     // ----------------------------------------------------------------
-    // グリッド描画
+    // Grid render
     // ----------------------------------------------------------------
     function renderGrid() {
         grid.innerHTML = "";
@@ -261,18 +261,18 @@ function buildModal(editor, vrmBuffer) {
             const empty = el("div", {
                 style: "color:#555;font-size:13px;padding:30px;grid-column:1/-1;text-align:center;",
             }, allPoses.length === 0
-                ? "poses/ フォルダにポーズファイルがありません。"
-                : "条件に一致するポーズがありません。");
+                ? "No pose files found in poses/ folder."
+                : "No poses match the current filter.");
             grid.appendChild(empty);
-            statusMsg.textContent = "0 件";
+            statusMsg.textContent = "0 poses";
             return;
         }
-        statusMsg.textContent = `${poses.length} 件`;
+        statusMsg.textContent = `${poses.length} poses`;
         for (const pose of poses) grid.appendChild(buildCard(pose));
     }
 
     // ----------------------------------------------------------------
-    // カード
+    // Card
     // ----------------------------------------------------------------
     function buildCard(pose) {
         const px = getCardPx(sizeSel.value);
@@ -319,7 +319,7 @@ function buildModal(editor, vrmBuffer) {
             style: "position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.55);" +
                    "border:none;color:#ffd700;font-size:14px;cursor:pointer;" +
                    "border-radius:3px;padding:1px 4px;line-height:1;z-index:2;",
-            title: "お気に入り",
+            title: "Favorite",
         }, pose.favorite ? "⭐" : "☆");
         starBtn.addEventListener("click", async e => {
             e.stopPropagation();
@@ -354,7 +354,7 @@ function buildModal(editor, vrmBuffer) {
                 card.style.borderColor = "#28a745";
                 setTimeout(() => { card.style.borderColor = "transparent"; }, 700);
             } catch (e) {
-                alert("ポーズの適用に失敗しました: " + e.message);
+                alert("Failed to apply pose: " + e.message);
             }
         });
 
@@ -402,20 +402,26 @@ function buildModal(editor, vrmBuffer) {
         };
 
         menu.appendChild(menuItem(
-            pose.favorite ? "⭐ お気に入り解除" : "☆ お気に入りに追加",
+            pose.favorite ? "⭐ Remove from Favorites" : "☆ Add to Favorites",
             async () => {
                 pose.favorite = !pose.favorite;
                 await patchMeta(pose.id, { favorite: pose.favorite });
                 renderGrid();
             }
         ));
-        menu.appendChild(menuItem("📝 メモを編集",      () => showMemoDlg(pose)));
-        menu.appendChild(menuItem("✏️ ファイル名変更",   () => showRenameDlg(pose)));
+        menu.appendChild(menuItem("📝 Edit Memo",    () => showMemoDlg(pose)));
+        menu.appendChild(menuItem("✏️ Rename File",  () => showRenameDlg(pose)));
 
         if (vrmBuffer) {
-            menu.appendChild(menuItem("🖼 サムネイルを再生成", async () => {
-                const dataUrl = await generateThumbnail(pose, vrmBuffer);
-                if (!dataUrl) { alert("サムネイル生成に失敗しました。"); return; }
+            menu.appendChild(menuItem("🖼 Regenerate Thumbnail (Front)", async () => {
+                const dataUrl = await generateThumbnail(pose, vrmBuffer, false);
+                if (!dataUrl) { alert("Thumbnail generation failed."); return; }
+                await saveThumbnail(pose.id, dataUrl);
+                setThumbImg(`/pose_library/thumbnail/${pose.id}?t=` + Date.now());
+            }));
+            menu.appendChild(menuItem("🖼 Regenerate Thumbnail (Back)", async () => {
+                const dataUrl = await generateThumbnail(pose, vrmBuffer, true);
+                if (!dataUrl) { alert("Thumbnail generation failed."); return; }
                 await saveThumbnail(pose.id, dataUrl);
                 setThumbImg(`/pose_library/thumbnail/${pose.id}?t=` + Date.now());
             }));
@@ -429,23 +435,23 @@ function buildModal(editor, vrmBuffer) {
     }
 
     // ----------------------------------------------------------------
-    // メモ編集ダイアログ
+    // Memo edit dialog
     // ----------------------------------------------------------------
     function showMemoDlg(pose) {
-        const dlg  = miniDlg("📝 メモを編集", () => dlg.remove());
+        const dlg  = miniDlg("📝 Edit Memo", () => dlg.remove());
         const body = dlg.querySelector(".plb-dlg-body");
         const wrap = el("div", { style: "padding:12px;display:flex;flex-direction:column;gap:8px;" });
 
         const ta = el("textarea", {
-            rows: 5, placeholder: "メモを入力…",
+            rows: 5, placeholder: "Enter memo…",
             style: "background:#111;border:1px solid #555;color:#ddd;padding:6px 10px;" +
                    "border-radius:4px;font-size:12px;resize:vertical;width:100%;box-sizing:border-box;",
         });
         ta.value = pose.memo || "";
 
         const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;" });
-        const ok     = mkBtn("保存", "#2a6a3a");
-        const cancel = mkBtn("キャンセル", "#555");
+        const ok     = mkBtn("Save", "#2a6a3a");
+        const cancel = mkBtn("Cancel", "#555");
         ok.onclick = async () => {
             pose.memo = ta.value.trim();
             await patchMeta(pose.id, { memo: pose.memo });
@@ -461,16 +467,16 @@ function buildModal(editor, vrmBuffer) {
     }
 
     // ----------------------------------------------------------------
-    // ファイル名変更ダイアログ
+    // Rename dialog
     // ----------------------------------------------------------------
     function showRenameDlg(pose) {
-        const dlg  = miniDlg("✏️ ファイル名変更", () => dlg.remove());
+        const dlg  = miniDlg("✏️ Rename File", () => dlg.remove());
         const body = dlg.querySelector(".plb-dlg-body");
         const wrap = el("div", { style: "padding:12px;display:flex;flex-direction:column;gap:8px;" });
 
         const hint = el("div", {
             style: "font-size:11px;color:#888;",
-        }, `現在: ${pose.name}${pose.ext}`);
+        }, `Current: ${pose.name}${pose.ext}`);
 
         const input = el("input", {
             type: "text",
@@ -482,19 +488,19 @@ function buildModal(editor, vrmBuffer) {
         const errMsg = el("div", { style: "font-size:11px;color:#f66;min-height:14px;" });
 
         const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;" });
-        const ok     = mkBtn("変更", "#2a5a8a");
-        const cancel = mkBtn("キャンセル", "#555");
+        const ok     = mkBtn("Rename", "#2a5a8a");
+        const cancel = mkBtn("Cancel", "#555");
 
         ok.onclick = async () => {
             const newName = input.value.trim();
-            if (!newName) { errMsg.textContent = "名前を入力してください。"; return; }
+            if (!newName) { errMsg.textContent = "Please enter a name."; return; }
             try {
                 const data = await apiFetch("/pose_library/rename", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ path: pose.path, new_name: newName }),
                 });
-                // ローカル状態を更新（サムネイルURLも新IDに差し替え）
+                // Update local state (thumbnail URL also updated to new ID)
                 pose.path  = data.path;
                 pose.id    = data.new_id;
                 pose.name  = data.new_name;
@@ -505,8 +511,8 @@ function buildModal(editor, vrmBuffer) {
                 renderGrid();
             } catch (e) {
                 errMsg.textContent = e.message.includes("409")
-                    ? "その名前は既に使われています。"
-                    : `エラー: ${e.message}`;
+                    ? "That name is already in use."
+                    : `Error: ${e.message}`;
             }
         };
         cancel.onclick = () => dlg.remove();
@@ -526,7 +532,7 @@ function buildModal(editor, vrmBuffer) {
 }
 
 // ----------------------------------------------------------------
-// 小ダイアログシェル
+// Mini dialog shell
 // ----------------------------------------------------------------
 function miniDlg(titleText, onClose) {
     const overlay = el("div", {
@@ -556,9 +562,11 @@ function miniDlg(titleText, onClose) {
 }
 
 // ----------------------------------------------------------------
-// サムネイル自動生成（正面向き・オフスクリーンThree.js + VRM）
+// Thumbnail generation (offscreen Three.js + VRM)
+// fromBack=true: camera placed at Z- (behind model)
+// fromBack=false (default): camera placed at Z+ (front of model)
 // ----------------------------------------------------------------
-async function generateThumbnail(pose, vrmBuffer) {
+async function generateThumbnail(pose, vrmBuffer, fromBack = false) {
     const SIZE = 256;
     try {
         const offCanvas = document.createElement("canvas");
@@ -612,8 +620,9 @@ async function generateThumbnail(pose, vrmBuffer) {
         const maxDim = Math.max(size.x, size.y, size.z);
         const dist   = (maxDim / 2) / Math.tan((30 / 2) * Math.PI / 180) * 1.4;
 
-        // 正面 = モデルのZ+ 方向（VRMは+Z が前）なので、カメラをZ+側に置く
-        camera.position.set(center.x, center.y + size.y * 0.05, center.z + dist);
+        // VRM front = +Z. Front: camera at Z+, Back: camera at Z-
+        const zOffset = fromBack ? -dist : dist;
+        camera.position.set(center.x, center.y + size.y * 0.05, center.z + zOffset);
         camera.lookAt(center.x, center.y, center.z);
 
         renderer.render(scene, camera);
@@ -627,7 +636,7 @@ async function generateThumbnail(pose, vrmBuffer) {
 }
 
 // ----------------------------------------------------------------
-// VRMへポーズ適用（.vroidpose / version2 JSON / version1 JSON）
+// Apply pose to VRM (.vroidpose / version2 JSON / version1 JSON)
 // ----------------------------------------------------------------
 function applyPoseToVRM(vrm, poseText) {
     let parsed;
@@ -703,7 +712,7 @@ function applyPoseToVRM(vrm, poseText) {
 }
 
 // ----------------------------------------------------------------
-// ヘルパー
+// Helpers
 // ----------------------------------------------------------------
 function el(tag, attrs = {}, text) {
     const e = document.createElement(tag);
