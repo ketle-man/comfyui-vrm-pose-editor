@@ -50,6 +50,7 @@ app.registerExtension({
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
+            const mirrorBtn      = makeSmallButton("↔",          "#5a6a7a", "Mirror Pose (flip left/right)");
             const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
             const camModeBtn     = makeSmallButton("OT",         "#444",    "Camera: Perspective (click to toggle Orthographic)");
 
@@ -100,6 +101,7 @@ app.registerExtension({
 
             btnRow.appendChild(captureBtn);
             btnRow.appendChild(resetBtn);
+            btnRow.appendChild(mirrorBtn);
             btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
@@ -435,7 +437,8 @@ app.registerExtension({
                 openPoseLibrary(editor, _currentVrmBuffer);
             };
 
-            resetBtn.onclick = () => editor.resetPose();
+            resetBtn.onclick   = () => editor.resetPose();
+            mirrorBtn.onclick  = () => editor.mirrorPose();
             cameraResetBtn.onclick = () => editor.resetCamera();
             camModeBtn.onclick = () => {
                 const toOrtho = camModeBtn.dataset.mode !== "ortho";
