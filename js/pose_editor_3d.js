@@ -1302,6 +1302,66 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
                 bone.rotation.z = bones[key].z ?? 0;
             });
         },
+        mirrorPose() {
+            // 現在のポーズをversion2形式でエクスポートし、左右ミラーして再インポート
+            const json = this.exportPose();
+            if (!json) return;
+            const parsed = JSON.parse(json);
+            if (parsed.version !== 2 || !parsed.bones) return;
+
+            // Left↔Right ボーン名の対応表（VRM humanoid bone名ベース）
+            const MIRROR_PAIRS = [
+                ["leftShoulder",  "rightShoulder"],
+                ["leftUpperArm",  "rightUpperArm"],
+                ["leftLowerArm",  "rightLowerArm"],
+                ["leftHand",      "rightHand"],
+                ["leftUpperLeg",  "rightUpperLeg"],
+                ["leftLowerLeg",  "rightLowerLeg"],
+                ["leftFoot",      "rightFoot"],
+                ["leftToes",      "rightToes"],
+                ["leftThumbMetacarpal",   "rightThumbMetacarpal"],
+                ["leftThumbProximal",     "rightThumbProximal"],
+                ["leftThumbDistal",       "rightThumbDistal"],
+                ["leftIndexProximal",     "rightIndexProximal"],
+                ["leftIndexIntermediate", "rightIndexIntermediate"],
+                ["leftIndexDistal",       "rightIndexDistal"],
+                ["leftMiddleProximal",    "rightMiddleProximal"],
+                ["leftMiddleIntermediate","rightMiddleIntermediate"],
+                ["leftMiddleDistal",      "rightMiddleDistal"],
+                ["leftRingProximal",      "rightRingProximal"],
+                ["leftRingIntermediate",  "rightRingIntermediate"],
+                ["leftRingDistal",        "rightRingDistal"],
+                ["leftLittleProximal",    "rightLittleProximal"],
+                ["leftLittleIntermediate","rightLittleIntermediate"],
+                ["leftLittleDistal",      "rightLittleDistal"],
+            ];
+
+            // クォータニオンを左右ミラー変換: YZ軸を反転 (x, -y, -z, w)
+            function mirrorQuat(bd) {
+                return { qx: bd.qx, qy: -bd.qy, qz: -bd.qz, qw: bd.qw };
+            }
+
+            const src   = parsed.bones;
+            const mirrored = {};
+
+            // ペアボーンを左右入れ替えてミラー変換
+            for (const [left, right] of MIRROR_PAIRS) {
+                if (src[left])  mirrored[right] = mirrorQuat(src[left]);
+                if (src[right]) mirrored[left]  = mirrorQuat(src[right]);
+            }
+
+            // ペア以外（中央ボーン: hips / spine / chest 等）もミラー変換
+            for (const [key, bd] of Object.entries(src)) {
+                if (!(key in mirrored)) mirrored[key] = mirrorQuat(bd);
+            }
+
+            const mirroredJson = JSON.stringify({
+                version: 2,
+                vrmVersion: parsed.vrmVersion,
+                bones: mirrored,
+            });
+            this.importPose(mirroredJson);
+        },
         setColorCorrect(enabled) {
             renderer.outputColorSpace    = enabled ? THREE.SRGBColorSpace       : THREE.LinearSRGBColorSpace;
             renderer.toneMapping         = enabled ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;

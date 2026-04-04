@@ -409,6 +409,15 @@ function buildModal(editor, vrmBuffer) {
                 renderGrid();
             }
         ));
+        menu.appendChild(menuItem("↔️ Mirror & Apply", async () => {
+            try {
+                const content = await loadPoseContent(pose.path);
+                editor.importPose(content);
+                editor.mirrorPose();
+            } catch (e) {
+                alert("Failed to apply mirrored pose: " + e.message);
+            }
+        }));
         menu.appendChild(menuItem("📝 Edit Memo",    () => showMemoDlg(pose)));
         menu.appendChild(menuItem("✏️ Rename File",  () => showRenameDlg(pose)));
 
