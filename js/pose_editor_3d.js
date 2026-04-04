@@ -3,6 +3,7 @@ import * as THREE from './vendor/three.module.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
+import { openPoseLibrary } from './pose_library.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -67,6 +68,10 @@ app.registerExtension({
             poseInput.style.display = "none";
             loadPoseBtn.onclick = () => poseInput.click();
 
+            // ポーズライブラリボタン
+            const libraryBtn = makeSmallButton("📚", "#4a4a8a", "Open Pose Library");
+            let _currentVrmBuffer = null; // VRMバッファへの参照（ライブラリ内サムネイル生成用）
+
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
             ccBtn.onclick = () => {
@@ -102,6 +107,7 @@ app.registerExtension({
             btnRow.appendChild(bgClearBtn);
             btnRow.appendChild(savePoseBtn);
             btnRow.appendChild(loadPoseBtn);
+            btnRow.appendChild(libraryBtn);
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
@@ -423,6 +429,10 @@ app.registerExtension({
                 }, 1500);
             };
 
+            libraryBtn.onclick = () => {
+                openPoseLibrary(editor, baseUrl, _currentVrmBuffer);
+            };
+
             resetBtn.onclick = () => editor.resetPose();
             cameraResetBtn.onclick = () => editor.resetCamera();
             camModeBtn.onclick = () => {
@@ -459,6 +469,8 @@ app.registerExtension({
                     const buffer = e.target.result;
                     // キャッシュに保存（タブ切り替えによる再作成時に復元）
                     _nodeModelCache[node.id] = { buffer, isDefault: false };
+                    // ライブラリのサムネイル生成用に保持
+                    _currentVrmBuffer = buffer;
                     const url = URL.createObjectURL(new Blob([buffer]));
                     editor.loadVRMFromBuffer(buffer, url, () => {
                         URL.revokeObjectURL(url);
