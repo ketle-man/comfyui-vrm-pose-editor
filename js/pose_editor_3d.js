@@ -3,6 +3,7 @@ import * as THREE from './vendor/three.module.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
+import { openPoseLibrary } from './pose_library.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -49,6 +50,7 @@ app.registerExtension({
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
+            const mirrorBtn      = makeSmallButton("↔",          "#5a6a7a", "Mirror Pose (flip left/right)");
             const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
             const camModeBtn     = makeSmallButton("OT",         "#444",    "Camera: Perspective (click to toggle Orthographic)");
 
@@ -59,13 +61,18 @@ app.registerExtension({
             vrmInput.style.display = "none";
             vrmBtn.onclick = () => vrmInput.click();
 
-            const savePoseBtn = makeSmallButton("💾", "#4a7a4a", "Save pose as JSON");
-            const loadPoseBtn = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
+            const savePoseBtn    = makeSmallButton("⬇️", "#4a7a4a", "Download the pose");
+            const saveToPosesBtn = makeSmallButton("💾", "#4a6a8a", "Save pose to poses/");
+            const loadPoseBtn    = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
             const poseInput = document.createElement("input");
             poseInput.type = "file";
             poseInput.accept = ".json,.vroidpose";
             poseInput.style.display = "none";
             loadPoseBtn.onclick = () => poseInput.click();
+
+            // ポーズライブラリボタン
+            const libraryBtn = makeSmallButton("📚", "#4a4a8a", "Open Pose Library");
+            let _currentVrmBuffer = null; // VRMバッファへの参照（ライブラリ内サムネイル生成用）
 
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
@@ -94,6 +101,7 @@ app.registerExtension({
 
             btnRow.appendChild(captureBtn);
             btnRow.appendChild(resetBtn);
+            btnRow.appendChild(mirrorBtn);
             btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
@@ -101,7 +109,9 @@ app.registerExtension({
             btnRow.appendChild(bgBtn);
             btnRow.appendChild(bgClearBtn);
             btnRow.appendChild(savePoseBtn);
+            btnRow.appendChild(saveToPosesBtn);
             btnRow.appendChild(loadPoseBtn);
+            btnRow.appendChild(libraryBtn);
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
@@ -423,7 +433,12 @@ app.registerExtension({
                 }, 1500);
             };
 
-            resetBtn.onclick = () => editor.resetPose();
+            libraryBtn.onclick = () => {
+                openPoseLibrary(editor, _currentVrmBuffer);
+            };
+
+            resetBtn.onclick   = () => editor.resetPose();
+            mirrorBtn.onclick  = () => editor.mirrorPose();
             cameraResetBtn.onclick = () => editor.resetCamera();
             camModeBtn.onclick = () => {
                 const toOrtho = camModeBtn.dataset.mode !== "ortho";
@@ -459,6 +474,8 @@ app.registerExtension({
                     const buffer = e.target.result;
                     // キャッシュに保存（タブ切り替えによる再作成時に復元）
                     _nodeModelCache[node.id] = { buffer, isDefault: false };
+                    // ライブラリのサムネイル生成用に保持
+                    _currentVrmBuffer = buffer;
                     const url = URL.createObjectURL(new Blob([buffer]));
                     editor.loadVRMFromBuffer(buffer, url, () => {
                         URL.revokeObjectURL(url);
@@ -469,7 +486,7 @@ app.registerExtension({
                 reader.readAsArrayBuffer(file);
             }
 
-            // ---- ポーズJSON 保存 ----
+            // ---- ポーズJSON ダウンロード ----
             savePoseBtn.onclick = () => {
                 const json = editor.exportPose();
                 if (!json) return;
@@ -479,6 +496,25 @@ app.registerExtension({
                 a.download = "pose.json";
                 a.click();
                 URL.revokeObjectURL(a.href);
+            };
+
+            // ---- ポーズJSON を poses/ に保存 ----
+            saveToPosesBtn.onclick = async () => {
+                const json = editor.exportPose();
+                if (!json) return;
+                try {
+                    const res  = await fetch("/pose_library/save_pose", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ json }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error ?? res.status);
+                    saveToPosesBtn.textContent = "✅";
+                    setTimeout(() => { saveToPosesBtn.textContent = "💾"; }, 1500);
+                } catch (e) {
+                    alert("poses/ への保存に失敗しました: " + e.message);
+                }
             };
 
             // ---- ポーズJSON 読み込み ----
@@ -1268,6 +1304,66 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
                 bone.rotation.y = bones[key].y ?? 0;
                 bone.rotation.z = bones[key].z ?? 0;
             });
+        },
+        mirrorPose() {
+            // 現在のポーズをversion2形式でエクスポートし、左右ミラーして再インポート
+            const json = this.exportPose();
+            if (!json) return;
+            const parsed = JSON.parse(json);
+            if (parsed.version !== 2 || !parsed.bones) return;
+
+            // Left↔Right ボーン名の対応表（VRM humanoid bone名ベース）
+            const MIRROR_PAIRS = [
+                ["leftShoulder",  "rightShoulder"],
+                ["leftUpperArm",  "rightUpperArm"],
+                ["leftLowerArm",  "rightLowerArm"],
+                ["leftHand",      "rightHand"],
+                ["leftUpperLeg",  "rightUpperLeg"],
+                ["leftLowerLeg",  "rightLowerLeg"],
+                ["leftFoot",      "rightFoot"],
+                ["leftToes",      "rightToes"],
+                ["leftThumbMetacarpal",   "rightThumbMetacarpal"],
+                ["leftThumbProximal",     "rightThumbProximal"],
+                ["leftThumbDistal",       "rightThumbDistal"],
+                ["leftIndexProximal",     "rightIndexProximal"],
+                ["leftIndexIntermediate", "rightIndexIntermediate"],
+                ["leftIndexDistal",       "rightIndexDistal"],
+                ["leftMiddleProximal",    "rightMiddleProximal"],
+                ["leftMiddleIntermediate","rightMiddleIntermediate"],
+                ["leftMiddleDistal",      "rightMiddleDistal"],
+                ["leftRingProximal",      "rightRingProximal"],
+                ["leftRingIntermediate",  "rightRingIntermediate"],
+                ["leftRingDistal",        "rightRingDistal"],
+                ["leftLittleProximal",    "rightLittleProximal"],
+                ["leftLittleIntermediate","rightLittleIntermediate"],
+                ["leftLittleDistal",      "rightLittleDistal"],
+            ];
+
+            // クォータニオンを左右ミラー変換: YZ軸を反転 (x, -y, -z, w)
+            function mirrorQuat(bd) {
+                return { qx: bd.qx, qy: -bd.qy, qz: -bd.qz, qw: bd.qw };
+            }
+
+            const src   = parsed.bones;
+            const mirrored = {};
+
+            // ペアボーンを左右入れ替えてミラー変換
+            for (const [left, right] of MIRROR_PAIRS) {
+                if (src[left])  mirrored[right] = mirrorQuat(src[left]);
+                if (src[right]) mirrored[left]  = mirrorQuat(src[right]);
+            }
+
+            // ペア以外（中央ボーン: hips / spine / chest 等）もミラー変換
+            for (const [key, bd] of Object.entries(src)) {
+                if (!(key in mirrored)) mirrored[key] = mirrorQuat(bd);
+            }
+
+            const mirroredJson = JSON.stringify({
+                version: 2,
+                vrmVersion: parsed.vrmVersion,
+                bones: mirrored,
+            });
+            this.importPose(mirroredJson);
         },
         setColorCorrect(enabled) {
             renderer.outputColorSpace    = enabled ? THREE.SRGBColorSpace       : THREE.LinearSRGBColorSpace;
