@@ -294,8 +294,9 @@ async def rename_pose(request):
     _save_meta(meta)
 
     return web.json_response({
-        "ok":      True,
-        "path":    str(new_path),
-        "new_id":  new_fid,
+        "ok":       True,
+        "path":     str(new_path),
+        "new_id":   new_fid,
         "new_name": new_path.stem,
+        "has_thumb": (_THUMB_DIR / f"{new_fid}.png").exists(),
     })

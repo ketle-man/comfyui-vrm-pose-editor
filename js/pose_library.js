@@ -494,10 +494,13 @@ function buildModal(editor, vrmBuffer) {
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ path: pose.path, new_name: newName }),
                 });
-                // ローカル状態を更新
-                pose.path = data.path;
-                pose.id   = data.new_id;
-                pose.name = data.new_name;
+                // ローカル状態を更新（サムネイルURLも新IDに差し替え）
+                pose.path  = data.path;
+                pose.id    = data.new_id;
+                pose.name  = data.new_name;
+                pose.thumb = data.has_thumb
+                    ? `/pose_library/thumbnail/${data.new_id}`
+                    : null;
                 dlg.remove();
                 renderGrid();
             } catch (e) {
