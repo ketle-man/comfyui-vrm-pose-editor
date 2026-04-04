@@ -430,7 +430,7 @@ app.registerExtension({
             };
 
             libraryBtn.onclick = () => {
-                openPoseLibrary(editor, baseUrl, _currentVrmBuffer);
+                openPoseLibrary(editor, _currentVrmBuffer);
             };
 
             resetBtn.onclick = () => editor.resetPose();
