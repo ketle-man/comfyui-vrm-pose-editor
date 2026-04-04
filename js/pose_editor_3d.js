@@ -60,8 +60,9 @@ app.registerExtension({
             vrmInput.style.display = "none";
             vrmBtn.onclick = () => vrmInput.click();
 
-            const savePoseBtn = makeSmallButton("💾", "#4a7a4a", "Save pose as JSON");
-            const loadPoseBtn = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
+            const savePoseBtn    = makeSmallButton("⬇️", "#4a7a4a", "Download the pose");
+            const saveToPosesBtn = makeSmallButton("💾", "#4a6a8a", "Save pose to poses/");
+            const loadPoseBtn    = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
             const poseInput = document.createElement("input");
             poseInput.type = "file";
             poseInput.accept = ".json,.vroidpose";
@@ -106,6 +107,7 @@ app.registerExtension({
             btnRow.appendChild(bgBtn);
             btnRow.appendChild(bgClearBtn);
             btnRow.appendChild(savePoseBtn);
+            btnRow.appendChild(saveToPosesBtn);
             btnRow.appendChild(loadPoseBtn);
             btnRow.appendChild(libraryBtn);
             btnRow.appendChild(vrmInput);
@@ -481,7 +483,7 @@ app.registerExtension({
                 reader.readAsArrayBuffer(file);
             }
 
-            // ---- ポーズJSON 保存 ----
+            // ---- ポーズJSON ダウンロード ----
             savePoseBtn.onclick = () => {
                 const json = editor.exportPose();
                 if (!json) return;
@@ -491,6 +493,25 @@ app.registerExtension({
                 a.download = "pose.json";
                 a.click();
                 URL.revokeObjectURL(a.href);
+            };
+
+            // ---- ポーズJSON を poses/ に保存 ----
+            saveToPosesBtn.onclick = async () => {
+                const json = editor.exportPose();
+                if (!json) return;
+                try {
+                    const res  = await fetch("/pose_library/save_pose", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ json }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error ?? res.status);
+                    saveToPosesBtn.textContent = "✅";
+                    setTimeout(() => { saveToPosesBtn.textContent = "💾"; }, 1500);
+                } catch (e) {
+                    alert("poses/ への保存に失敗しました: " + e.message);
+                }
             };
 
             // ---- ポーズJSON 読み込み ----

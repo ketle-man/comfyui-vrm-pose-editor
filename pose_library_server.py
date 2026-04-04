@@ -81,8 +81,11 @@ async def list_poses(request):
     meta  = _load_meta()
     poses = []
 
+    # subdir 指定なし（すべて）は再帰スキャン、指定ありは1階層のみ
+    scan = target.rglob if not subdir else target.glob
+
     for ext in ("*.json", "*.vroidpose"):
-        for p in sorted(target.glob(ext)):   # glob（1階層）
+        for p in sorted(scan(ext)):
             fid = _file_id(str(p))
             m   = meta.get(fid, {})
             thumb_file = _THUMB_DIR / f"{fid}.png"
