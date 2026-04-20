@@ -4,6 +4,7 @@ import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 import { openPoseLibrary } from './pose_library.js';
+import { openLightEditor } from './light_editor.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -46,7 +47,9 @@ app.registerExtension({
 
             // ---- ボタン行 ----
             const btnRow = document.createElement("div");
-            btnRow.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
+            btnRow.style.cssText = "display:flex;gap:4px;margin-bottom:2px;align-items:center;flex-wrap:wrap;";
+            const btnRow2 = document.createElement("div");
+            btnRow2.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
@@ -74,6 +77,9 @@ app.registerExtension({
             const libraryBtn = makeSmallButton("📚", "#4a4a8a", "Open Pose Library");
             let _currentVrmBuffer = null; // VRMバッファへの参照（ライブラリ内サムネイル生成用）
 
+            // ライトエディタボタン
+            const lightBtn = makeSmallButton("💡", "#7a6a2a", "Open Light Editor");
+
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
             ccBtn.onclick = () => {
@@ -95,28 +101,41 @@ app.registerExtension({
             const bgClearBtn = makeSmallButton("✕", "#5a3a3a", "Clear background image");
             bgClearBtn.style.padding = "4px 7px";
 
+            const bgColorInput = document.createElement("input");
+            bgColorInput.type = "color";
+            bgColorInput.value = "#e0e0e0";
+            bgColorInput.title = "背景色";
+            bgColorInput.style.cssText =
+                "width:28px;height:26px;border:none;cursor:pointer;background:none;" +
+                "padding:0;flex-shrink:0;border-radius:3px;";
+
             const vrmLabel = document.createElement("span");
             vrmLabel.style.cssText = "font-size:10px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;";
             vrmLabel.textContent = "default model";
 
+            // ---- 1行目: キャプチャ・カメラ・VRM・背景系 ----
             btnRow.appendChild(captureBtn);
-            btnRow.appendChild(resetBtn);
-            btnRow.appendChild(mirrorBtn);
             btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
             btnRow.appendChild(ccBtn);
             btnRow.appendChild(bgBtn);
             btnRow.appendChild(bgClearBtn);
-            btnRow.appendChild(savePoseBtn);
-            btnRow.appendChild(saveToPosesBtn);
-            btnRow.appendChild(loadPoseBtn);
-            btnRow.appendChild(libraryBtn);
+            btnRow.appendChild(bgColorInput);
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
-            btnRow.appendChild(vrmLabel);
+            // ---- 2行目: ポーズ操作系 ----
+            btnRow2.appendChild(resetBtn);
+            btnRow2.appendChild(mirrorBtn);
+            btnRow2.appendChild(savePoseBtn);
+            btnRow2.appendChild(saveToPosesBtn);
+            btnRow2.appendChild(loadPoseBtn);
+            btnRow2.appendChild(libraryBtn);
+            btnRow2.appendChild(lightBtn);
+            btnRow2.appendChild(vrmLabel);
             container.appendChild(btnRow);
+            container.appendChild(btnRow2);
 
             // ---- キャンバスラッパー ----
             const CVS_DISPLAY = 384;
@@ -213,6 +232,8 @@ app.registerExtension({
                 bgBtn.style.background = "#3a6a4a";
                 bgBtn.title = "Load background image";
                 editor.clearBgImage();
+                editor.clearBgColor();
+                bgColorInput.value = "#e0e0e0";
             }
 
             bgInput.addEventListener("change", (e) => {
@@ -437,6 +458,12 @@ app.registerExtension({
                 openPoseLibrary(editor, _currentVrmBuffer);
             };
 
+            lightBtn.onclick = () => {
+                openLightEditor(editor, cvsWrapper);
+            };
+
+            bgColorInput.addEventListener("input", () => editor.setBgColor(bgColorInput.value));
+
             resetBtn.onclick   = () => editor.resetPose();
             mirrorBtn.onclick  = () => editor.mirrorPose();
             cameraResetBtn.onclick = () => editor.resetCamera();
@@ -603,6 +630,8 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const scene = new THREE.Scene();
     const perspCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
@@ -641,10 +670,344 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
         orbit.update();
     }
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    dirLight.position.set(1, 2, 3);
-    scene.add(dirLight);
+    // ================================================================
+    // Managed light system
+    // ================================================================
+    // RectAreaLight requires UniformsLib init (if available in vendor bundle)
+    if (THREE.RectAreaLightUniformsLib) THREE.RectAreaLightUniformsLib.init();
+
+    let nextLightId = 0;
+    const managedLights = []; // { id, config, threeLight, helperMesh }
+
+    function _hexToColor(hex) { return new THREE.Color(hex); }
+
+    function _createThreeLight(cfg) {
+        let light;
+        const col = _hexToColor(cfg.color);
+        switch (cfg.type) {
+            case "directional":
+                light = new THREE.DirectionalLight(col, cfg.intensity);
+                light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+                light.target.position.set(cfg.target.x, cfg.target.y, cfg.target.z);
+                scene.add(light.target);
+                if (cfg.castShadow) {
+                    light.castShadow = true;
+                    light.shadow.mapSize.width = light.shadow.mapSize.height = 2048;
+                    light.shadow.camera.near = 0.1; light.shadow.camera.far = 100;
+                    light.shadow.camera.left = light.shadow.camera.bottom = -8;
+                    light.shadow.camera.right = light.shadow.camera.top = 8;
+                }
+                break;
+            case "point":
+                light = new THREE.PointLight(col, cfg.intensity, cfg.distance ?? 0, cfg.decay ?? 1);
+                light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+                // PointLight/SpotLight castShadow not supported: VRM MToon shader lacks vPointShadowCoord/vSpotShadowCoord varyings
+                break;
+            case "spot":
+                light = new THREE.SpotLight(col, cfg.intensity, cfg.distance ?? 0, cfg.angle ?? Math.PI / 6, cfg.penumbra ?? 0.1, cfg.decay ?? 1);
+                light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+                light.target.position.set(cfg.target.x, cfg.target.y, cfg.target.z);
+                scene.add(light.target);
+                // SpotLight castShadow not supported: VRM MToon shader lacks vSpotShadowCoord varying
+                break;
+            case "rect":
+                light = new THREE.RectAreaLight(col, cfg.intensity, cfg.width ?? 2, cfg.height ?? 2);
+                light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+                light.lookAt(cfg.target.x, cfg.target.y, cfg.target.z);
+                break;
+            case "ambient":
+            default:
+                light = new THREE.AmbientLight(col, cfg.intensity);
+                break;
+        }
+        light.visible = cfg.enabled !== false;
+        return light;
+    }
+
+    function _createHelperMesh(cfg) {
+        if (cfg.type === "ambient") return null;
+        const geo = new THREE.SphereGeometry(0.07, 12, 12);
+        const mat = new THREE.MeshBasicMaterial({ color: _hexToColor(cfg.color), depthTest: false });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+        mesh.userData.isLightHelper = true;
+        mesh.userData.lightId = cfg.id;
+        mesh.renderOrder = 100;
+        mesh.visible = false; // hidden unless editor open
+        return mesh;
+    }
+
+    function _addManagedLight(config) {
+        const id = nextLightId++;
+        const cfg = {
+            id,
+            name:      config.name      ?? `Light ${id + 1}`,
+            type:      config.type      ?? "directional",
+            color:     config.color     ?? "#ffffff",
+            intensity: config.intensity ?? 1.0,
+            position:  { x: 2, y: 4, z: 3, ...(config.position ?? {}) },
+            target:    { x: 0, y: 1, z: 0, ...(config.target   ?? {}) },
+            angle:     config.angle     ?? Math.PI / 6,
+            penumbra:  config.penumbra  ?? 0.1,
+            decay:     config.decay     ?? 1,
+            distance:  config.distance  ?? 0,
+            width:     config.width     ?? 2,
+            height:    config.height    ?? 2,
+            castShadow: config.castShadow ?? false,
+            enabled:   config.enabled   !== false,
+        };
+        const threeLight = _createThreeLight(cfg);
+        scene.add(threeLight);
+        const helperMesh = _createHelperMesh(cfg);
+        if (helperMesh) scene.add(helperMesh);
+        managedLights.push({ id, config: cfg, threeLight, helperMesh });
+        return cfg;
+    }
+
+    function _removeManagedLight(id) {
+        const idx = managedLights.findIndex(l => l.id === id);
+        if (idx < 0) return;
+        const { threeLight, helperMesh } = managedLights[idx];
+        scene.remove(threeLight);
+        if (threeLight.target) scene.remove(threeLight.target);
+        threeLight.dispose?.();
+        if (helperMesh) {
+            scene.remove(helperMesh);
+            helperMesh.geometry.dispose();
+            helperMesh.material.dispose();
+        }
+        managedLights.splice(idx, 1);
+    }
+
+    function _updateManagedLight(id, changes) {
+        const entry = managedLights.find(l => l.id === id);
+        if (!entry) return;
+        const cfg = entry.config;
+
+        const typeChanged = changes.type && changes.type !== cfg.type;
+        Object.assign(cfg, changes);
+
+        if (typeChanged) {
+            scene.remove(entry.threeLight);
+            if (entry.threeLight.target) scene.remove(entry.threeLight.target);
+            entry.threeLight.dispose?.();
+            if (entry.helperMesh) { scene.remove(entry.helperMesh); entry.helperMesh.geometry.dispose(); entry.helperMesh.material.dispose(); }
+            entry.threeLight = _createThreeLight(cfg);
+            scene.add(entry.threeLight);
+            entry.helperMesh = _createHelperMesh(cfg);
+            if (entry.helperMesh) scene.add(entry.helperMesh);
+            return;
+        }
+
+        const tl = entry.threeLight;
+        if (changes.color     !== undefined) { tl.color.set(changes.color); if (entry.helperMesh && !entry.helperMesh.userData.selected) entry.helperMesh.material.color.set(changes.color); }
+        if (changes.intensity !== undefined) tl.intensity = cfg.intensity;
+        if (changes.enabled   !== undefined) tl.visible = cfg.enabled;
+        if (changes.position  !== undefined) {
+            tl.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+            if (entry.helperMesh) entry.helperMesh.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+        }
+        if (changes.target    !== undefined && tl.target) tl.target.position.set(cfg.target.x, cfg.target.y, cfg.target.z);
+        if (changes.angle     !== undefined && tl.isSpotLight) tl.angle = cfg.angle;
+        if (changes.penumbra  !== undefined && tl.isSpotLight) tl.penumbra = cfg.penumbra;
+        if (changes.decay     !== undefined && (tl.isSpotLight || tl.isPointLight)) tl.decay = cfg.decay;
+        if (changes.distance  !== undefined && (tl.isSpotLight || tl.isPointLight)) tl.distance = cfg.distance;
+        if (changes.castShadow !== undefined && tl.isDirectionalLight) {
+            // Only DirectionalLight supports shadows with VRM MToon shader
+            tl.castShadow = cfg.castShadow;
+            if (cfg.castShadow && tl.shadow) {
+                tl.shadow.mapSize.width = tl.shadow.mapSize.height = 2048;
+                tl.shadow.camera.left = tl.shadow.camera.bottom = -8;
+                tl.shadow.camera.right = tl.shadow.camera.top = 8;
+                tl.shadow.camera.far = 100;
+                tl.shadow.needsUpdate = true;
+            }
+        }
+        if (changes.width  !== undefined && tl.isRectAreaLight) tl.width  = cfg.width;
+        if (changes.height !== undefined && tl.isRectAreaLight) tl.height = cfg.height;
+    }
+
+    // Default lights (ambient + directional sun)
+    _addManagedLight({ name: "Ambient", type: "ambient",      color: "#ffffff", intensity: 0.7,  enabled: true });
+    _addManagedLight({ name: "Sun",     type: "directional",  color: "#ffffff", intensity: 2.0,  position: { x: 2, y: 4, z: 3 }, target: { x: 0, y: 1, z: 0 }, castShadow: true, enabled: true });
+
+    // ================================================================
+    // Ground plane
+    // ================================================================
+    let groundMesh = null;
+    let _groundVisible = false;
+    let _groundY = 0;
+    let _groundColor = "#555555";
+    let _groundTex   = null; // THREE.Texture
+    let _groundTexRepeat = 1;
+    let _groundShadowCatcher = false;
+    let _groundShadowOpacity = 0.5;
+
+    function _makeSurfaceMat(color, tex, repeat) {
+        const mat = new THREE.MeshStandardMaterial({
+            color: _hexToColor(color),
+            roughness: 1.0, metalness: 0.0,
+            transparent: false,
+            map: tex ?? null,
+        });
+        if (tex) { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(repeat, repeat); }
+        return mat;
+    }
+
+    function _setGroundVisible(v) {
+        _groundVisible = v;
+        if (v && !groundMesh) {
+            groundMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(20, 20),
+                _makeSurfaceMat(_groundColor, _groundTex, _groundTexRepeat)
+            );
+            groundMesh.rotation.x = -Math.PI / 2;
+            groundMesh.position.y = _groundY;
+            groundMesh.receiveShadow = true;
+            scene.add(groundMesh);
+        } else if (groundMesh) {
+            groundMesh.visible = v;
+        }
+    }
+
+    function _setGroundY(y)        { _groundY = y; if (groundMesh) groundMesh.position.y = y; if (bgWallMesh) bgWallMesh.position.y = y + 10; }
+    function _setGroundColor(hex)  { _groundColor = hex; if (groundMesh && !_groundShadowCatcher) { groundMesh.material.color.set(hex); groundMesh.material.needsUpdate = true; } }
+    function _setGroundTexture(url) {
+        new THREE.TextureLoader().load(url, tex => {
+            if (_groundTex) _groundTex.dispose();
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(_groundTexRepeat, _groundTexRepeat);
+            _groundTex = tex;
+            if (groundMesh && !_groundShadowCatcher) { groundMesh.material.map = tex; groundMesh.material.needsUpdate = true; }
+        });
+    }
+    function _clearGroundTexture() {
+        if (_groundTex) { _groundTex.dispose(); _groundTex = null; }
+        if (groundMesh && !_groundShadowCatcher) { groundMesh.material.map = null; groundMesh.material.needsUpdate = true; }
+    }
+    function _setGroundTexRepeat(n) {
+        _groundTexRepeat = n;
+        if (_groundTex) { _groundTex.repeat.set(n, n); _groundTex.needsUpdate = true; }
+    }
+    function _setGroundShadowCatcher(enabled) {
+        _groundShadowCatcher = enabled;
+        if (!groundMesh) return;
+        groundMesh.material.dispose();
+        groundMesh.material = enabled
+            ? new THREE.ShadowMaterial({ opacity: _groundShadowOpacity, transparent: true })
+            : _makeSurfaceMat(_groundColor, _groundTex, _groundTexRepeat);
+    }
+    function _setGroundShadowOpacity(v) {
+        _groundShadowOpacity = v;
+        if (_groundShadowCatcher && groundMesh) { groundMesh.material.opacity = v; groundMesh.material.needsUpdate = true; }
+    }
+
+    // ================================================================
+    // Background wall
+    // ================================================================
+    let bgWallMesh = null;
+    let _bgWallVisible = false;
+    let _bgWallZ = -2;
+    let _bgWallColor = "#666666";
+    let _bgWallTex   = null;
+    let _bgWallTexRepeat = 1;
+    let _bgWallShadowCatcher = false;
+    let _bgWallShadowOpacity = 0.5;
+
+    function _setBgWallVisible(v) {
+        _bgWallVisible = v;
+        if (v && !bgWallMesh) {
+            bgWallMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(20, 20),
+                _makeSurfaceMat(_bgWallColor, _bgWallTex, _bgWallTexRepeat)
+            );
+            bgWallMesh.position.set(0, _groundY + 10, _bgWallZ);
+            bgWallMesh.receiveShadow = true;
+            scene.add(bgWallMesh);
+        } else if (bgWallMesh) {
+            bgWallMesh.visible = v;
+        }
+    }
+
+    function _setBgWallZ(z)          { _bgWallZ = z; if (bgWallMesh) bgWallMesh.position.z = z; }
+    function _setBgWallColor(hex)    { _bgWallColor = hex; if (bgWallMesh && !_bgWallShadowCatcher) { bgWallMesh.material.color.set(hex); bgWallMesh.material.needsUpdate = true; } }
+    function _setBgWallTexture(url)  {
+        new THREE.TextureLoader().load(url, tex => {
+            if (_bgWallTex) _bgWallTex.dispose();
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(_bgWallTexRepeat, _bgWallTexRepeat);
+            _bgWallTex = tex;
+            if (bgWallMesh && !_bgWallShadowCatcher) { bgWallMesh.material.map = tex; bgWallMesh.material.needsUpdate = true; }
+        });
+    }
+    function _clearBgWallTexture()   {
+        if (_bgWallTex) { _bgWallTex.dispose(); _bgWallTex = null; }
+        if (bgWallMesh && !_bgWallShadowCatcher) { bgWallMesh.material.map = null; bgWallMesh.material.needsUpdate = true; }
+    }
+    function _setBgWallTexRepeat(n)  {
+        _bgWallTexRepeat = n;
+        if (_bgWallTex) { _bgWallTex.repeat.set(n, n); _bgWallTex.needsUpdate = true; }
+    }
+    function _setBgWallShadowCatcher(enabled) {
+        _bgWallShadowCatcher = enabled;
+        if (!bgWallMesh) return;
+        bgWallMesh.material.dispose();
+        bgWallMesh.material = enabled
+            ? new THREE.ShadowMaterial({ opacity: _bgWallShadowOpacity, transparent: true })
+            : _makeSurfaceMat(_bgWallColor, _bgWallTex, _bgWallTexRepeat);
+    }
+    function _setBgWallShadowOpacity(v) {
+        _bgWallShadowOpacity = v;
+        if (_bgWallShadowCatcher && bgWallMesh) { bgWallMesh.material.opacity = v; bgWallMesh.material.needsUpdate = true; }
+    }
+
+    // ================================================================
+    // Light helper drag (3D)
+    // ================================================================
+    let _draggingEntry = null;
+    const _dragPlane = new THREE.Plane();
+    const _dragPt    = new THREE.Vector3();
+    let _selectedHelperMesh = null;
+
+    function _getHelperMeshes() {
+        return managedLights.filter(l => l.helperMesh).map(l => l.helperMesh);
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        updateMouse(e);
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(_getHelperMeshes());
+        if (hits.length > 0) {
+            const hit = hits[0];
+            const entry = managedLights.find(l => l.helperMesh === hit.object);
+            if (entry) {
+                _draggingEntry = entry;
+                const camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                _dragPlane.setFromNormalAndCoplanarPoint(camDir, hit.point);
+                orbit.enabled = false;
+                e.stopImmediatePropagation();
+            }
+        }
+    }, true);
+
+    canvas.addEventListener("pointermove", (e) => {
+        if (!_draggingEntry) return;
+        updateMouse(e);
+        raycaster.setFromCamera(mouse, camera);
+        if (raycaster.ray.intersectPlane(_dragPlane, _dragPt)) {
+            const pos = { x: _dragPt.x, y: _dragPt.y, z: _dragPt.z };
+            _updateManagedLight(_draggingEntry.id, { position: pos });
+            window.dispatchEvent(new CustomEvent("lightHelperMoved", { detail: { id: _draggingEntry.id, position: pos } }));
+        }
+    }, true);
+
+    canvas.addEventListener("pointerup", () => {
+        if (_draggingEntry) { _draggingEntry = null; orbit.enabled = true; }
+    });
 
     const orbit = new OrbitControls(perspCamera, renderer.domElement);
     orbit.enableRotate = true;
@@ -797,8 +1160,16 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
                 mats.forEach(m => { if (m) m.side = THREE.DoubleSide; });
                 obj.frustumCulled = false;
+                obj.castShadow = true;
             }
         });
+    }
+
+    function _applyGroundToModel(model) {
+        const box = new THREE.Box3().setFromObject(model);
+        _groundY = box.min.y;
+        if (groundMesh) groundMesh.position.y = _groundY;
+        if (bgWallMesh) bgWallMesh.position.set(0, _groundY + 10, _bgWallZ);
     }
 
     function clearModel() {
@@ -884,6 +1255,7 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
                 scene.add(model);
                 const displayScale = placeModel(model);
                 setupModel(model, displayScale);
+                _applyGroundToModel(model);
                 onMorphKeysReady(collectGltfMorphKeys(model));
                 if (onComplete) onComplete();
                 return;
@@ -896,6 +1268,8 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
             loadedModel = model;
             scene.add(model);
             const displayScale = placeModel(model);
+            model.traverse(obj => { if (obj.isMesh || obj.isSkinnedMesh) obj.castShadow = true; });
+            _applyGroundToModel(model);
 
             // VRM0はrotateVRM0なしだとZ軸負方向が正面 → カメラをZ軸負方向から見る
             // VRM1はZ軸正方向が正面 → カメラをZ軸正方向から見る（従来通り）
@@ -1102,9 +1476,92 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
     return {
         loadBgImage,
         clearBgImage,
+        setBgColor(hex)  { scene.background = new THREE.Color(hex); },
+        clearBgColor()   { scene.background = null; },
+
+        // ---- Light management API (used by light_editor.js) ----
+        getLights()          { return managedLights.map(l => l.config); },
+        addLight(config)     { return _addManagedLight(config); },
+        removeLight(id)      { _removeManagedLight(id); },
+        updateLight(id, ch)  { _updateManagedLight(id, ch); },
+        setLightEnabled(id, v) { _updateManagedLight(id, { enabled: v }); },
+
+        // Light helper visibility (shown only when editor is open)
+        selectLightHelper(id) {
+            // Reset all to their own color
+            managedLights.forEach(l => {
+                if (l.helperMesh) {
+                    l.helperMesh.visible = true;
+                    l.helperMesh.userData.selected = false;
+                    l.helperMesh.material.color.set(l.config.color);
+                }
+            });
+            // Highlight selected
+            const entry = managedLights.find(l => l.id === id);
+            if (entry?.helperMesh) {
+                entry.helperMesh.material.color.set(0xffdd00);
+                entry.helperMesh.userData.selected = true;
+                _selectedHelperMesh = entry.helperMesh;
+            }
+        },
+        clearLightHelpers() {
+            managedLights.forEach(l => {
+                if (l.helperMesh) {
+                    l.helperMesh.visible = false;
+                    l.helperMesh.userData.selected = false;
+                    l.helperMesh.material.color.set(l.config.color);
+                }
+            });
+            _selectedHelperMesh = null;
+        },
+
+        // ---- Canvas (for preview mirror) ----
+        getCanvas() { return canvas; },
+
+        // ---- Ground ----
+        getGroundVisible()       { return _groundVisible; },
+        toggleGround()           { _setGroundVisible(!_groundVisible); return _groundVisible; },
+        getGroundY()             { return _groundY; },
+        setGroundY(y)            { _setGroundY(y); },
+        getGroundColor()         { return _groundColor; },
+        setGroundColor(hex)      { _setGroundColor(hex); },
+        setGroundTexture(url)    { _setGroundTexture(url); },
+        clearGroundTexture()     { _clearGroundTexture(); },
+        setGroundTexRepeat(n)    { _setGroundTexRepeat(n); },
+        getGroundShadowCatcher() { return _groundShadowCatcher; },
+        toggleGroundShadowCatcher() { _setGroundShadowCatcher(!_groundShadowCatcher); return _groundShadowCatcher; },
+        setGroundShadowOpacity(v){ _setGroundShadowOpacity(v); },
+        // ---- Background wall ----
+        getBgWallVisible()       { return _bgWallVisible; },
+        toggleBgWall()           { _setBgWallVisible(!_bgWallVisible); return _bgWallVisible; },
+        getBgWallZ()             { return _bgWallZ; },
+        setBgWallZ(z)            { _setBgWallZ(z); },
+        getBgWallColor()         { return _bgWallColor; },
+        setBgWallColor(hex)      { _setBgWallColor(hex); },
+        setBgWallTexture(url)    { _setBgWallTexture(url); },
+        clearBgWallTexture()     { _clearBgWallTexture(); },
+        setBgWallTexRepeat(n)    { _setBgWallTexRepeat(n); },
+        getBgWallShadowCatcher() { return _bgWallShadowCatcher; },
+        toggleBgWallShadowCatcher() { _setBgWallShadowCatcher(!_bgWallShadowCatcher); return _bgWallShadowCatcher; },
+        setBgWallShadowOpacity(v){ _setBgWallShadowOpacity(v); },
+
+        // ---- Shadow quality ----
+        setShadowQuality(q) {
+            if (q === "none") {
+                renderer.shadowMap.enabled = false;
+            } else {
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = q === "hard" ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
+            }
+            renderer.shadowMap.needsUpdate = true;
+        },
 
         capture(frameRect, displaySize) {
             interactableBones.forEach(h => h.visible = false);
+            // Save and hide light helper visibility
+            const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
+            managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
+
             if (currentVRM) currentVRM.update(0);
             renderer.render(scene, camera);
 
@@ -1124,6 +1581,7 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
             const data = crop.toDataURL("image/png");
 
             interactableBones.forEach(h => h.visible = true);
+            managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
             return data;
         },
         resetPose() {

@@ -20,21 +20,30 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 ### Features / Buttons
 
+**Row 1** (capture / camera / model / background)
+
 | Button | Function |
 |--------|----------|
 | 📸 Capture | Send current pose as PNG to node output |
-| RP | Reset pose |
-| ↔ | Mirror pose (flip left ↔ right) |
 | RC | Reset camera |
 | OT / PR | Toggle Orthographic / Perspective camera |
 | VRM | Load VRM / GLB / GLTF file from local disk |
 | CC | Color correction ON/OFF (sRGB + ACES Filmic) |
 | BG | Load background image from local disk |
-| ✕ | Clear background image |
+| ✕ | Clear background image **and** background color |
+| 🎨 | Scene background color picker |
+
+**Row 2** (pose / library / lights)
+
+| Button | Function |
+|--------|----------|
+| RP | Reset pose |
+| ↔ | Mirror pose (flip left ↔ right) |
 | ⬇️ | Download current pose as JSON file |
 | 💾 | Save current pose to `poses/` folder |
 | 📂 | Load pose file (.json / .vroidpose) |
 | 📚 | Open Pose Library |
+| 💡 | Open Light Editor |
 
 ### Installation
 
@@ -133,6 +142,31 @@ Legacy version 1 (Euler angles) files are still supported.
 Click **↔** on the node (or right-click → **↔️ Mirror & Apply** in the Pose Library) to flip the current pose left ↔ right.  
 Left/Right bone pairs are swapped and quaternions are YZ-flipped `(qx, -qy, -qz, qw)`.
 
+### Light Editor (💡)
+
+Click **💡** on any node to open the Light Editor panel.
+
+- **3D preview** with live bone / camera / light-helper interaction (actual WebGL canvas, not a copy).
+- **Multiple lights**: add any number of lights. Types: ☀ Sun (Directional), 💡 Point, 🔦 Spot, ▭ Box (RectArea), 🌐 Ambient.
+- **Per-light settings**: color, intensity, position XYZ, target XYZ (Directional / Spot), angle & penumbra (Spot), distance & decay (Point / Spot), shadow (Directional only).
+- **Drag the yellow sphere** in the preview to reposition a light in 3D.
+- **Shadow note**: Only DirectionalLight supports `castShadow`. SpotLight / PointLight shadows are incompatible with the VRM MToon shader.
+- **Shadow quality**: None / Soft PCF / Hard selector.
+
+#### Ground & Background Wall
+
+| Control | Function |
+|---------|----------|
+| 🟫 Ground ON/OFF | Toggle ground plane (receives shadows) |
+| Y slider | Ground height |
+| 🖼 BG Wall ON/OFF | Toggle background wall (receives shadows) |
+| Z slider | Wall depth |
+| 🎨 Color picker | Surface color |
+| 📁 Tex | Load image texture (tiled) |
+| Tile | Texture repeat count |
+| 🕶 SC | Shadow Catcher — surface becomes transparent, shows shadows only |
+| 影濃度 / Opacity | Shadow darkness (0.01 – 1.0) |
+
 ### Aspect Ratio Frame
 
 When `output_size_mode` is **Custom**, a letterbox overlay is drawn in real time to show the output crop area.  
@@ -154,21 +188,30 @@ Enable if VRoid Studio / Blender models appear too dark.
 
 ### 機能・ボタン一覧
 
+**1行目**（キャプチャ・カメラ・モデル・背景）
+
 | ボタン | 機能 |
 |--------|------|
 | 📸 Capture | 現在のポーズを PNG としてノード出力に送信 |
-| RP | ポーズをリセット |
-| ↔ | ポーズを左右反転 |
 | RC | カメラをリセット |
 | OT / PR | Orthographic / Perspective カメラを切り替え |
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
 | BG | 背景画像をローカルから読み込む |
-| ✕ | 背景画像をクリア |
+| ✕ | 背景画像**および**背景色をクリア |
+| 🎨 | シーン背景色ピッカー |
+
+**2行目**（ポーズ・ライブラリ・ライト）
+
+| ボタン | 機能 |
+|--------|------|
+| RP | ポーズをリセット |
+| ↔ | ポーズを左右反転 |
 | ⬇️ | 現在のポーズを JSON ファイルとしてダウンロード |
 | 💾 | 現在のポーズを `poses/` フォルダに保存 |
 | 📂 | ポーズファイルを読み込む（.json / .vroidpose） |
 | 📚 | ポーズライブラリを開く |
+| 💡 | ライトエディタを開く |
 
 ### インストール
 
@@ -221,6 +264,30 @@ Enable if VRoid Studio / Blender models appear too dark.
 - **💾 Save**: 現在のエディタのポーズを `poses/p_HHMMSS.json` として保存。
 - サムネイルは読み込み済み VRM を使ってオフスクリーンで自動生成・キャッシュ。
 
+### ライトエディタ（💡）
+
+ノードの **💡** ボタンをクリックするとライトエディタが開きます。
+
+- **3D プレビュー**: 実際の WebGL canvas を埋め込み（コピーではない）。ボーン操作・カメラ操作・ライトヘルパードラッグがプレビュー内でネイティブに動作。
+- **複数ライト**: 任意の数を追加可能。タイプ: ☀ Sun (Directional) / 💡 Point / 🔦 Spot / ▭ Box (RectArea) / 🌐 Ambient。
+- **ライト設定**: 色・強度・位置 XYZ・ターゲット XYZ（Directional/Spot）・角度＆ペナンブラ（Spot）・距離＆減衰（Point/Spot）・シャドウ（Directional のみ）。
+- **黄色球体をドラッグ**してプレビュー内でライトを 3D 移動。
+- **シャドウ注意**: DirectionalLight のみ `castShadow` 対応。SpotLight/PointLight のシャドウは VRM MToon シェーダーと非互換。
+
+#### 地面・背景壁
+
+| コントロール | 機能 |
+|------------|------|
+| 🟫 Ground ON/OFF | 地面（影を受ける）の表示切替 |
+| Y スライダー | 地面の高さ |
+| 🖼 BG Wall ON/OFF | 背景壁（影を受ける）の表示切替 |
+| Z スライダー | 壁の奥行き |
+| 🎨 カラーピッカー | 面の色 |
+| 📁 Tex | テクスチャ画像読み込み（タイル表示） |
+| Tile | テクスチャの繰り返し数 |
+| 🕶 SC | シャドウキャッチャー — 面を透明にして影のみ表示 |
+| 影濃度 | 影の暗さ（0.01 〜 1.0） |
+
 ### ポーズ左右反転（↔）
 
 ノードの **↔** ボタン、またはポーズライブラリの右クリックメニュー **↔️ Mirror & Apply** で現在のポーズを左右反転します。  
@@ -262,6 +329,9 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **VRM0 quaternion**: Unity left-hand → Three.js right-hand `(x, y, -z, -w)`
 - **VRM1 quaternion**: VRM0 conversion + VRM0→VRM1 `(x, -y, z, -w)`
 - **Pose mirror**: Left↔Right bone swap + YZ-flip `(qx, -qy, -qz, qw)`
+- **Lights**: managed multi-light system (Directional / Point / Spot / RectArea / Ambient); shadow restricted to DirectionalLight (VRM MToon constraint)
+- **Ground / BG Wall**: `MeshStandardMaterial` (opaque) or `ShadowMaterial` (shadow catcher); color, texture, tile, height/depth adjustable
+- **Background color**: `scene.background = THREE.Color` via color picker; transparent by default
 
 ---
 
