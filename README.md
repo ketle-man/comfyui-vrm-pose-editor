@@ -14,6 +14,8 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 ![pose library](docs/screenshot_pose_library.png)
 
+![light library](docs/screenshot_light_library.png)
+
 ---
 
 ## English
