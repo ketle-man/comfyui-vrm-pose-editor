@@ -300,3 +300,170 @@ async def rename_pose(request):
         "new_name": new_path.stem,
         "has_thumb": (_THUMB_DIR / f"{new_fid}.png").exists(),
     })
+
+
+# ================================================================
+# Light Library API
+# ライト設定プリセットを .light_library/ フォルダに保存・管理する
+# ================================================================
+
+_LIGHT_LIB_DIR = _NODE_DIR / ".light_library"
+_LIGHT_LIB_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _light_preset_id(filepath: str) -> str:
+    return hashlib.md5(filepath.encode("utf-8")).hexdigest()
+
+
+# ----------------------------------------------------------------
+# API: プリセット一覧取得
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.get("/light_library/list")
+async def light_library_list(request):
+    """GET /light_library/list  — プリセット一覧を返す"""
+    presets = []
+    for p in sorted(_LIGHT_LIB_DIR.glob("*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        pid = _light_preset_id(str(p))
+        presets.append({
+            "id":        pid,
+            "path":      str(p),
+            "name":      data.get("name", p.stem),
+            "createdAt": data.get("createdAt", ""),
+        })
+    return web.json_response({"presets": presets})
+
+
+# ----------------------------------------------------------------
+# API: プリセット保存
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/light_library/save")
+async def light_library_save(request):
+    """
+    POST /light_library/save
+    body: { "name": "<preset name>", "preset": { ...light settings... } }
+    .light_library/ に l_HHMMSS.json で保存。
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    name   = body.get("name", "").strip()
+    preset = body.get("preset")
+    if not name:
+        return web.json_response({"error": "name required"}, status=400)
+    if preset is None:
+        return web.json_response({"error": "preset required"}, status=400)
+
+    ts       = datetime.now().strftime("%H%M%S")
+    filename = f"l_{ts}.json"
+    dest     = _LIGHT_LIB_DIR / filename
+    # 同名衝突回避
+    if dest.exists():
+        dest = _LIGHT_LIB_DIR / f"l_{ts}_{int(datetime.now().microsecond / 1000):03d}.json"
+
+    data = {
+        "version":   1,
+        "name":      name,
+        "createdAt": datetime.utcnow().isoformat() + "Z",
+        **preset,
+    }
+    dest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    pid = _light_preset_id(str(dest))
+    return web.json_response({
+        "ok":        True,
+        "id":        pid,
+        "path":      str(dest),
+        "name":      name,
+        "createdAt": data["createdAt"],
+    })
+
+
+# ----------------------------------------------------------------
+# API: プリセット内容取得
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.get("/light_library/get/{preset_id}")
+async def light_library_get(request):
+    """GET /light_library/get/{preset_id}  — プリセット内容を返す"""
+    pid = request.match_info["preset_id"]
+    # preset_id から対応ファイルを検索
+    for p in _LIGHT_LIB_DIR.glob("*.json"):
+        if _light_preset_id(str(p)) == pid:
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                return web.json_response(data)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"error": "not found"}, status=404)
+
+
+# ----------------------------------------------------------------
+# API: プリセット名変更
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/light_library/rename")
+async def light_library_rename(request):
+    """
+    POST /light_library/rename
+    body: { "id": "<preset_id>", "new_name": "<new display name>" }
+    ファイル名は変更せず、JSON 内の name フィールドのみ更新。
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    pid      = body.get("id", "")
+    new_name = body.get("new_name", "").strip()
+    if not pid:
+        return web.json_response({"error": "id required"}, status=400)
+    if not new_name:
+        return web.json_response({"error": "new_name required"}, status=400)
+
+    for p in _LIGHT_LIB_DIR.glob("*.json"):
+        if _light_preset_id(str(p)) == pid:
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                data["name"] = new_name
+                p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                return web.json_response({"ok": True, "id": pid, "name": new_name})
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"error": "not found"}, status=404)
+
+
+# ----------------------------------------------------------------
+# API: プリセット削除
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/light_library/delete")
+async def light_library_delete(request):
+    """
+    POST /light_library/delete
+    body: { "id": "<preset_id>" }
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    pid = body.get("id", "")
+    if not pid:
+        return web.json_response({"error": "id required"}, status=400)
+
+    for p in _LIGHT_LIB_DIR.glob("*.json"):
+        if _light_preset_id(str(p)) == pid:
+            try:
+                p.unlink()
+                return web.json_response({"ok": True})
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"error": "not found"}, status=404)

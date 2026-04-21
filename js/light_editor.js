@@ -6,6 +6,7 @@
  * - Per-light: color, intensity, position XYZ, target XYZ, angle, shadow (Directional only)
  * - Ground height (Y) / Background wall depth (Z) sliders
  * - Shadow quality selector
+ * - Light Library: save/load/rename/delete presets (server-side .light_library/)
  */
 
 export function openLightEditor(editor, cvsWrapper) {
@@ -69,8 +70,18 @@ function buildModal(editor, cvsWrapper) {
         style: "display:flex;align-items:center;gap:8px;padding:10px 14px;" +
                "background:#16213e;border-bottom:1px solid #333;flex-shrink:0;",
     });
+
+    const libBtn = el("button", {
+        style: "padding:4px 10px;background:#2a3a6a;color:#aac;border:1px solid #3a4a7a;" +
+               "border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;" +
+               "white-space:nowrap;transition:all 0.15s;",
+    }, "📚 Library");
+    libBtn.addEventListener("mouseover", () => { libBtn.style.opacity = "0.8"; });
+    libBtn.addEventListener("mouseout",  () => { libBtn.style.opacity = "1"; });
+
     header.append(
         el("span", { style: "font-size:15px;font-weight:bold;color:#e0e0ff;flex:1;" }, "💡 Light Editor"),
+        libBtn,
         mkCloseBtn(cleanup)
     );
 
@@ -207,7 +218,16 @@ function buildModal(editor, cvsWrapper) {
     const wallSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setBgWallShadowOpacity(v));
     surfaceBar.append(wallSCBtn, wallSCOpLbl, wallSCOpNum);
 
-    // ---- 3-column body ----
+    // ----------------------------------------------------------------
+    // uiRefs: captureCurrentSettings / applyPreset が参照するUI参照まとめ
+    // ----------------------------------------------------------------
+    const uiRefs = {
+        shadowSel,
+        groundBtn, groundYSl, groundColorPick, groundTileNum, groundSCBtn, groundSCOpNum,
+        bgWallBtn, bgZSl, wallColorPick, wallTileNum, wallSCBtn, wallSCOpNum,
+    };
+
+    // ---- 3-column body (+ library panel) ----
     const body = el("div", { style: "flex:1;display:flex;overflow:hidden;min-height:0;" });
 
     // ---- Col 1: Light list ----
@@ -258,9 +278,25 @@ function buildModal(editor, cvsWrapper) {
     const propBody = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;" });
     propPanel.appendChild(propBody);
 
-    body.append(listPanel, previewPanel, propPanel);
+    // ---- Col 4: Library panel (hidden initially) ----
+    const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
+    libPanel.style.display = "none";
+
+    body.append(listPanel, previewPanel, propPanel, libPanel);
     dialog.append(header, sceneBar, surfaceBar, body);
     overlay.appendChild(dialog);
+
+    // ---- Library toggle ----
+    libBtn.onclick = () => {
+        const visible = libPanel.style.display !== "none";
+        libPanel.style.display = visible ? "none" : "flex";
+        libBtn.style.background = visible ? "#2a3a6a" : "#3a5aaa";
+        libBtn.style.color      = visible ? "#aac" : "#fff";
+        if (!visible) {
+            // パネルを開いた時に一覧を読み込む
+            libPanel._reload?.();
+        }
+    };
 
     // ---- Embed cvsWrapper into preview ----
     previewWrap.appendChild(cvsWrapper);
@@ -479,6 +515,474 @@ function buildModal(editor, cvsWrapper) {
     }
 
     return overlay;
+}
+
+// ================================================================
+// Library Panel
+// ================================================================
+
+/**
+ * ライブラリパネルを生成する。
+ * @param {object} editor        - initPoseEditor3D 戻り値
+ * @param {object} uiRefs        - sceneBar/surfaceBar の各UIコントロール参照
+ * @param {Function} refreshList - ライトリストを再描画する関数
+ * @param {Function} showProps   - プロパティパネルを再描画する関数
+ */
+function buildLibraryPanel(editor, uiRefs, refreshList, showProps) {
+    const panel = el("div", {
+        style: "width:230px;flex-shrink:0;flex-direction:column;" +
+               "background:#12121e;border-left:1px solid #2a2a4a;",
+    });
+
+    // ---- ヘッダー ----
+    const panelHeader = el("div", {
+        style: "display:flex;align-items:center;gap:6px;padding:8px 10px;" +
+               "border-bottom:1px solid #2a2a4a;flex-shrink:0;background:#16213e;",
+    });
+
+    const reloadBtn = el("button", {
+        style: "background:none;border:none;color:#7a9aaa;font-size:14px;cursor:pointer;padding:2px 5px;" +
+               "border-radius:3px;transition:color 0.15s;",
+        title: "Reload",
+    }, "↺");
+    reloadBtn.addEventListener("mouseover", () => { reloadBtn.style.color = "#aad"; });
+    reloadBtn.addEventListener("mouseout",  () => { reloadBtn.style.color = "#7a9aaa"; });
+
+    panelHeader.append(
+        el("span", { style: "font-size:12px;font-weight:bold;color:#aac;flex:1;" }, "📚 Library"),
+        reloadBtn
+    );
+
+    // ---- 検索 ----
+    const searchBar = el("div", {
+        style: "padding:6px 8px;border-bottom:1px solid #1e1e38;flex-shrink:0;",
+    });
+    const searchInput = el("input", {
+        type: "text", placeholder: "Search…",
+        style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #333;" +
+               "color:#ccc;padding:4px 8px;border-radius:4px;font-size:11px;",
+    });
+    searchInput.addEventListener("wheel",   e => e.stopPropagation(), { passive: true });
+    searchInput.addEventListener("keydown", e => e.stopPropagation());
+    searchBar.appendChild(searchInput);
+
+    // ---- 保存ボタン ----
+    const saveBar = el("div", {
+        style: "padding:6px 8px;border-bottom:1px solid #1e1e38;flex-shrink:0;",
+    });
+    const saveBtn = el("button", {
+        style: "width:100%;padding:5px 0;background:#2a5a3a;color:#cfc;border:none;" +
+               "border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;" +
+               "transition:opacity 0.15s;",
+    }, "💾 Save Current");
+    saveBtn.addEventListener("mouseover", () => { saveBtn.style.opacity = "0.8"; });
+    saveBtn.addEventListener("mouseout",  () => { saveBtn.style.opacity = "1"; });
+    saveBar.appendChild(saveBtn);
+
+    // ---- プリセット一覧 ----
+    const listArea = el("div", { style: "flex:1;overflow-y:auto;padding:6px 6px;" });
+
+    // ---- ステータス ----
+    const statusBar = el("div", {
+        style: "padding:4px 8px;font-size:10px;color:#444;flex-shrink:0;" +
+               "border-top:1px solid #1a1a2a;",
+    });
+
+    panel.append(panelHeader, searchBar, saveBar, listArea, statusBar);
+
+    // ----------------------------------------------------------------
+    // 状態
+    // ----------------------------------------------------------------
+    let allPresets = [];
+
+    function setStatus(msg, isError = false) {
+        statusBar.textContent = msg;
+        statusBar.style.color = isError ? "#a55" : "#444";
+    }
+
+    // ---- API ----
+    async function apiFetch(url, opts) {
+        const res = await fetch(url, opts);
+        if (!res.ok) {
+            const t = await res.text().catch(() => "");
+            throw new Error(`HTTP ${res.status}: ${t.slice(0, 120)}`);
+        }
+        return res.json();
+    }
+
+    async function loadLibrary() {
+        setStatus("Loading…");
+        listArea.innerHTML = "";
+        try {
+            const data  = await apiFetch("/light_library/list");
+            allPresets  = data.presets ?? [];
+            setStatus(`${allPresets.length} preset${allPresets.length !== 1 ? "s" : ""}`);
+            renderList();
+        } catch (e) {
+            setStatus("Error: " + e.message, true);
+        }
+    }
+
+    async function savePreset(name) {
+        const preset = captureCurrentSettings(editor, uiRefs);
+        try {
+            const data = await apiFetch("/light_library/save", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, preset }),
+            });
+            allPresets.push({
+                id: data.id, path: data.path, name: data.name, createdAt: data.createdAt,
+            });
+            setStatus(`Saved: ${data.name}`);
+            renderList();
+        } catch (e) {
+            alert("Failed to save: " + e.message);
+        }
+    }
+
+    async function applyPresetById(id) {
+        try {
+            const data = await apiFetch(`/light_library/get/${id}`);
+            applyPreset(data, editor, uiRefs, refreshList, showProps);
+            setStatus("Applied!");
+            setTimeout(() => setStatus(allPresets.length + " presets"), 1500);
+        } catch (e) {
+            alert("Failed to apply preset: " + e.message);
+        }
+    }
+
+    async function renamePreset(id, newName) {
+        try {
+            await apiFetch("/light_library/rename", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id, new_name: newName }),
+            });
+            const p = allPresets.find(p => p.id === id);
+            if (p) p.name = newName;
+            renderList();
+        } catch (e) {
+            alert("Failed to rename: " + e.message);
+        }
+    }
+
+    async function deletePreset(id) {
+        try {
+            await apiFetch("/light_library/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id }),
+            });
+            allPresets = allPresets.filter(p => p.id !== id);
+            setStatus(`${allPresets.length} preset${allPresets.length !== 1 ? "s" : ""}`);
+            renderList();
+        } catch (e) {
+            alert("Failed to delete: " + e.message);
+        }
+    }
+
+    // ---- フィルタリング ----
+    function filtered() {
+        const q = searchInput.value.toLowerCase();
+        return q ? allPresets.filter(p => p.name.toLowerCase().includes(q)) : allPresets;
+    }
+
+    searchInput.addEventListener("input", renderList);
+
+    // ---- 一覧描画 ----
+    function renderList() {
+        listArea.innerHTML = "";
+        const list = filtered();
+        if (list.length === 0) {
+            const empty = el("div", {
+                style: "font-size:11px;color:#444;text-align:center;padding:20px 8px;",
+            }, allPresets.length === 0
+                ? "プリセットがありません\n💾 で保存してください"
+                : "一致するプリセットがありません");
+            listArea.appendChild(empty);
+            return;
+        }
+        list.forEach(preset => listArea.appendChild(buildCard(preset)));
+    }
+
+    // ---- カード生成 ----
+    function buildCard(preset) {
+        const card = el("div", {
+            style: "padding:8px 10px;border-radius:5px;cursor:pointer;margin-bottom:4px;" +
+                   "background:#1a1a2e;border:1px solid #252545;" +
+                   "transition:border-color 0.12s,background 0.12s;",
+        });
+        card.addEventListener("mouseenter", () => {
+            card.style.borderColor = "#4a80c0";
+            card.style.background  = "#1e2040";
+        });
+        card.addEventListener("mouseleave", () => {
+            card.style.borderColor = "#252545";
+            card.style.background  = "#1a1a2e";
+        });
+
+        const nameEl = el("div", {
+            style: "font-size:11px;color:#cce;font-weight:bold;" +
+                   "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+            title: preset.name,
+        }, preset.name);
+
+        const dateStr = preset.createdAt
+            ? new Date(preset.createdAt).toLocaleString("ja-JP", {
+                  month: "2-digit", day: "2-digit",
+                  hour: "2-digit", minute: "2-digit",
+              })
+            : "";
+        const dateEl = el("div", {
+            style: "font-size:9px;color:#44506a;margin-top:2px;",
+        }, dateStr);
+
+        card.append(nameEl, dateEl);
+
+        // クリック → 適用
+        card.addEventListener("click", () => applyPresetById(preset.id));
+
+        // 右クリック → コンテキストメニュー
+        card.addEventListener("contextmenu", e => {
+            e.preventDefault();
+            showCtxMenu(e.clientX, e.clientY, preset);
+        });
+
+        return card;
+    }
+
+    // ---- コンテキストメニュー ----
+    function showCtxMenu(x, y, preset) {
+        document.getElementById("lib-ctx-menu")?.remove();
+        const menu = el("div", {
+            id: "lib-ctx-menu",
+            style: `position:fixed;left:${x}px;top:${y}px;` +
+                   "background:#1a1a38;border:1px solid #3a3a5a;border-radius:6px;" +
+                   "z-index:100001;padding:4px 0;min-width:150px;" +
+                   "box-shadow:0 4px 16px rgba(0,0,0,0.7);font-family:sans-serif;",
+        });
+
+        const menuItem = (label, fn) => {
+            const item = el("div", {
+                style: "padding:7px 14px;cursor:pointer;font-size:12px;color:#ccc;white-space:nowrap;",
+            }, label);
+            item.addEventListener("mouseenter", () => item.style.background = "#2a2a5a");
+            item.addEventListener("mouseleave", () => item.style.background = "");
+            item.addEventListener("click", () => { menu.remove(); fn(); });
+            return item;
+        };
+
+        menu.append(
+            menuItem("✏️ 名前変更", () => showRenameDlg(preset)),
+            menuItem("🗑 削除",     () => {
+                if (!confirm(`プリセット「${preset.name}」を削除しますか？`)) return;
+                deletePreset(preset.id);
+            })
+        );
+
+        document.body.appendChild(menu);
+        const close = e => {
+            if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", close); }
+        };
+        setTimeout(() => document.addEventListener("click", close), 0);
+    }
+
+    // ---- 名前変更ダイアログ ----
+    function showRenameDlg(preset) {
+        const dlg = el("div", {
+            style: "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;" +
+                   "display:flex;align-items:center;justify-content:center;",
+        });
+        const box = el("div", {
+            style: "background:#1e1e3a;border-radius:8px;padding:16px;min-width:280px;" +
+                   "box-shadow:0 6px 24px rgba(0,0,0,0.7);font-family:sans-serif;",
+        });
+        const title = el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, "✏️ 名前変更");
+        const input = el("input", {
+            type: "text",
+            style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #555;" +
+                   "color:#ddd;padding:6px 10px;border-radius:4px;font-size:13px;",
+        });
+        input.value = preset.name;
+        input.addEventListener("keydown", e => {
+            e.stopPropagation();
+            if (e.key === "Enter") ok();
+            if (e.key === "Escape") dlg.remove();
+        });
+        const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;margin-top:10px;" });
+        const cancelBtn = el("button", {
+            style: "padding:5px 12px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;",
+        }, "Cancel");
+        const okBtn = el("button", {
+            style: "padding:5px 12px;background:#2a5a8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;",
+        }, "Rename");
+        function ok() {
+            const n = input.value.trim();
+            if (!n) return;
+            renamePreset(preset.id, n);
+            dlg.remove();
+        }
+        cancelBtn.onclick = () => dlg.remove();
+        okBtn.onclick = ok;
+        btnRow.append(cancelBtn, okBtn);
+        box.append(title, input, btnRow);
+        dlg.appendChild(box);
+        document.body.appendChild(dlg);
+        setTimeout(() => { input.focus(); input.select(); }, 0);
+    }
+
+    // ---- 保存ダイアログ ----
+    saveBtn.onclick = () => {
+        const dlg = el("div", {
+            style: "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;" +
+                   "display:flex;align-items:center;justify-content:center;",
+        });
+        const box = el("div", {
+            style: "background:#1e1e3a;border-radius:8px;padding:16px;min-width:280px;" +
+                   "box-shadow:0 6px 24px rgba(0,0,0,0.7);font-family:sans-serif;",
+        });
+        const title = el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, "💾 プリセット名を入力");
+        const input = el("input", {
+            type: "text", placeholder: "例: 夕方の逆光",
+            style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #555;" +
+                   "color:#ddd;padding:6px 10px;border-radius:4px;font-size:13px;",
+        });
+        input.addEventListener("keydown", e => {
+            e.stopPropagation();
+            if (e.key === "Enter") ok();
+            if (e.key === "Escape") dlg.remove();
+        });
+        const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;margin-top:10px;" });
+        const cancelBtn = el("button", {
+            style: "padding:5px 12px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;",
+        }, "Cancel");
+        const okBtn = el("button", {
+            style: "padding:5px 12px;background:#2a5a3a;color:#cfc;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;",
+        }, "Save");
+        async function ok() {
+            const n = input.value.trim();
+            if (!n) { input.style.border = "1px solid #a55"; return; }
+            dlg.remove();
+            await savePreset(n);
+        }
+        cancelBtn.onclick = () => dlg.remove();
+        okBtn.onclick = ok;
+        btnRow.append(cancelBtn, okBtn);
+        box.append(title, input, btnRow);
+        dlg.appendChild(box);
+        document.body.appendChild(dlg);
+        setTimeout(() => input.focus(), 0);
+    };
+
+    // ---- reload / click ----
+    reloadBtn.onclick = loadLibrary;
+
+    // パネルを開いた時に外部から呼べるフック
+    panel._reload = loadLibrary;
+
+    return panel;
+}
+
+// ================================================================
+// captureCurrentSettings
+// 現在のライトエディタ状態を全収集してプリセットオブジェクトを返す
+// ================================================================
+function captureCurrentSettings(editor, uiRefs) {
+    const lights = editor.getLights().map(cfg => ({ ...cfg }));
+
+    const sc = editor.getGroundShadowCatcher?.() ?? false;
+    const wc = editor.getBgWallShadowCatcher?.() ?? false;
+
+    return {
+        scene: {
+            shadowQuality:       uiRefs.shadowSel.value,
+            groundVisible:       editor.getGroundVisible(),
+            groundY:             parseFloat(uiRefs.groundYSl.value),
+            groundColor:         uiRefs.groundColorPick.value,
+            groundTexRepeat:     parseFloat(uiRefs.groundTileNum.value),
+            groundShadowCatcher: sc,
+            groundShadowOpacity: parseFloat(uiRefs.groundSCOpNum.value),
+            bgWallVisible:       editor.getBgWallVisible(),
+            bgWallZ:             parseFloat(uiRefs.bgZSl.value),
+            bgWallColor:         uiRefs.wallColorPick.value,
+            bgWallTexRepeat:     parseFloat(uiRefs.wallTileNum.value),
+            bgWallShadowCatcher: wc,
+            bgWallShadowOpacity: parseFloat(uiRefs.wallSCOpNum.value),
+        },
+        lights,
+    };
+}
+
+// ================================================================
+// applyPreset
+// プリセットをエディタAPIに流し込み、UIコントロールも同期する
+// ================================================================
+function applyPreset(preset, editor, uiRefs, refreshList, showProps) {
+    const { scene, lights } = preset;
+    if (!scene || !Array.isArray(lights)) return;
+
+    // ---- ライトを全削除→再作成 ----
+    const current = editor.getLights();
+    current.forEach(l => editor.removeLight(l.id));
+    lights.forEach(cfg => {
+        // id は再生成されるので除外
+        const { id: _id, ...rest } = cfg;
+        editor.addLight(rest);
+    });
+    refreshList();
+    showProps(null);
+
+    // ---- Shadow quality ----
+    editor.setShadowQuality(scene.shadowQuality);
+    uiRefs.shadowSel.value = scene.shadowQuality;
+
+    // ---- Ground ----
+    const gVis = scene.groundVisible ?? false;
+    if (editor.getGroundVisible() !== gVis) editor.toggleGround();
+    applyToggle(uiRefs.groundBtn, "🟫 Ground", gVis);
+
+    editor.setGroundY(scene.groundY ?? 0);
+    uiRefs.groundYSl.value = scene.groundY ?? 0;
+    // 数値入力の同期（mkSl の vl が number input の場合）
+    const groundYVlSync = uiRefs.groundYSl.nextSibling;
+    if (groundYVlSync && groundYVlSync.type === "number") groundYVlSync.value = (scene.groundY ?? 0).toFixed(2);
+
+    editor.setGroundColor(scene.groundColor ?? "#555555");
+    uiRefs.groundColorPick.value = scene.groundColor ?? "#555555";
+
+    editor.setGroundTexRepeat(scene.groundTexRepeat ?? 1);
+    uiRefs.groundTileNum.value = scene.groundTexRepeat ?? 1;
+
+    const gSC = scene.groundShadowCatcher ?? false;
+    if ((editor.getGroundShadowCatcher?.() ?? false) !== gSC) editor.toggleGroundShadowCatcher?.();
+    applyToggle(uiRefs.groundSCBtn, "🕶 SC", gSC);
+
+    editor.setGroundShadowOpacity(scene.groundShadowOpacity ?? 0.5);
+    uiRefs.groundSCOpNum.value = scene.groundShadowOpacity ?? 0.5;
+
+    // ---- BG Wall ----
+    const wVis = scene.bgWallVisible ?? false;
+    if (editor.getBgWallVisible() !== wVis) editor.toggleBgWall();
+    applyToggle(uiRefs.bgWallBtn, "🖼 BG Wall", wVis);
+
+    editor.setBgWallZ(scene.bgWallZ ?? -2);
+    uiRefs.bgZSl.value = scene.bgWallZ ?? -2;
+    const bgZVlSync = uiRefs.bgZSl.nextSibling;
+    if (bgZVlSync && bgZVlSync.type === "number") bgZVlSync.value = (scene.bgWallZ ?? -2).toFixed(2);
+
+    editor.setBgWallColor(scene.bgWallColor ?? "#666666");
+    uiRefs.wallColorPick.value = scene.bgWallColor ?? "#666666";
+
+    editor.setBgWallTexRepeat(scene.bgWallTexRepeat ?? 1);
+    uiRefs.wallTileNum.value = scene.bgWallTexRepeat ?? 1;
+
+    const wSC = scene.bgWallShadowCatcher ?? false;
+    if ((editor.getBgWallShadowCatcher?.() ?? false) !== wSC) editor.toggleBgWallShadowCatcher?.();
+    applyToggle(uiRefs.wallSCBtn, "🕶 SC", wSC);
+
+    editor.setBgWallShadowOpacity(scene.bgWallShadowOpacity ?? 0.5);
+    uiRefs.wallSCOpNum.value = scene.bgWallShadowOpacity ?? 0.5;
 }
 
 // ----------------------------------------------------------------

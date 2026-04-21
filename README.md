@@ -152,6 +152,25 @@ Click **💡** on any node to open the Light Editor panel.
 - **Drag the yellow sphere** in the preview to reposition a light in 3D.
 - **Shadow note**: Only DirectionalLight supports `castShadow`. SpotLight / PointLight shadows are incompatible with the VRM MToon shader.
 - **Shadow quality**: None / Soft PCF / Hard selector.
+- **📚 Library**: Save and recall complete light presets (all lights + Ground / BG Wall / Shadow settings).
+
+#### Light Library (📚)
+
+Click **📚 Library** in the Light Editor header to open the Library panel.
+
+| Action | Description |
+|--------|-------------|
+| 💾 Save Current | Save all current settings as a named preset |
+| Click a preset card | Apply saved settings immediately |
+| Right-click a card | Rename or delete the preset |
+| Search field | Filter presets by name |
+| ↺ Reload | Refresh the preset list from the server |
+
+Presets are stored server-side in `.light_library/` inside the node folder.  
+They persist across browser restarts and are available on any machine sharing the same ComfyUI server.
+
+> **Note**: Texture images are not saved in presets (binary data is excluded).  
+> All numeric settings (color, intensity, positions, Ground/Wall/Shadow values) are saved and restored.
 
 #### Ground & Background Wall
 
@@ -166,6 +185,8 @@ Click **💡** on any node to open the Light Editor panel.
 | Tile | Texture repeat count |
 | 🕶 SC | Shadow Catcher — surface becomes transparent, shows shadows only |
 | 影濃度 / Opacity | Shadow darkness (0.01 – 1.0) |
+
+
 
 ### Aspect Ratio Frame
 
@@ -273,6 +294,25 @@ Enable if VRoid Studio / Blender models appear too dark.
 - **ライト設定**: 色・強度・位置 XYZ・ターゲット XYZ（Directional/Spot）・角度＆ペナンブラ（Spot）・距離＆減衰（Point/Spot）・シャドウ（Directional のみ）。
 - **黄色球体をドラッグ**してプレビュー内でライトを 3D 移動。
 - **シャドウ注意**: DirectionalLight のみ `castShadow` 対応。SpotLight/PointLight のシャドウは VRM MToon シェーダーと非互換。
+- **📚 Library**: ライト設定プリセット（全ライト ＋ Ground / BG Wall / Shadow 設定）の保存・呼び出し。
+
+#### ライトライブラリ（📚）
+
+ライトエディタのヘッダーにある **📚 Library** ボタンをクリックするとライブラリパネルが開きます。
+
+| 操作 | 内容 |
+|------|------|
+| 💾 Save Current | 現在の全設定をプリセット名を付けて保存 |
+| プリセットカードをクリック | 保存済みの設定を即時適用 |
+| プリセットカードを右クリック | 名前変更・削除 |
+| 検索フィールド | 名前で絞り込み |
+| ↺ リロード | サーバーから一覧を再読み込み |
+
+プリセットはサーバー側の `.light_library/` フォルダに保存されます（ノードフォルダ内）。  
+ブラウザを再起動しても残り、同じ ComfyUI サーバーを使う別のマシンからも利用できます。
+
+> **注意**: テクスチャ画像はプリセットに保存されません。  
+> 色・強度・位置・Ground/Wall/Shadow のすべての数値設定は保存・復元されます。
 
 #### 地面・背景壁
 
@@ -323,6 +363,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Frontend**: JavaScript + [Three.js r160](https://threejs.org/) + [@pixiv/three-vrm 2.1.0](https://github.com/pixiv/three-vrm) (bundled locally)
 - **Backend**: Python — Base64 PNG → PIL → Torch Tensor
 - **Pose Library API**: aiohttp routes registered via `@PromptServer.instance.routes`
+- **Light Library API**: `GET/POST /light_library/*` — presets stored in `.light_library/` as `l_HHMMSS.json`
 - **Capture**: letterbox-cropped to output aspect ratio (no stretching)
 - **Camera**: Perspective (FOV 45°) / Orthographic toggle
 - **Pose JSON**: version 2 (quaternion + `vrmVersion` tag, VRM0/VRM1 cross-compatible)
@@ -332,6 +373,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Lights**: managed multi-light system (Directional / Point / Spot / RectArea / Ambient); shadow restricted to DirectionalLight (VRM MToon constraint)
 - **Ground / BG Wall**: `MeshStandardMaterial` (opaque) or `ShadowMaterial` (shadow catcher); color, texture, tile, height/depth adjustable
 - **Background color**: `scene.background = THREE.Color` via color picker; transparent by default
+- **Light presets**: full scene snapshot (all lights + Ground/Wall/Shadow values); texture images excluded; stored server-side as JSON files
 
 ---
 
