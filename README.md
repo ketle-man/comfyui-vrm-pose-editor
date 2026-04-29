@@ -22,20 +22,18 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 ### Features / Buttons
 
-**Row 1** (capture / camera / model / background)
+**Row 1** (capture / timer / camera / model)
 
 | Button | Function |
 |--------|----------|
 | 📸 Capture | Send current pose as PNG to node output |
+| ⏱ | Timer capture toggle — auto-captures every `timer_interval` seconds |
 | RC | Reset camera |
 | OT / PR | Toggle Orthographic / Perspective camera |
 | VRM | Load VRM / GLB / GLTF file from local disk |
 | CC | Color correction ON/OFF (sRGB + ACES Filmic) |
-| BG | Load background image from local disk |
-| ✕ | Clear background image **and** background color |
-| 🎨 | Scene background color picker |
 
-**Row 2** (pose / library / lights)
+**Row 2** (pose / library / lights / background)
 
 | Button | Function |
 |--------|----------|
@@ -46,6 +44,26 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 | 📂 | Load pose file (.json / .vroidpose) |
 | 📚 | Open Pose Library |
 | 💡 | Open Light Editor |
+| BG | Load background image from local disk |
+| ✕ | Clear background image **and** background color |
+| 🎨 | Scene background color picker |
+
+**Row 3** (file name)
+
+Displays the name of the currently loaded VRM / GLB / GLTF file.
+
+#### Timer Capture (⏱)
+
+Click **⏱** to start / stop the timer.
+
+| State | Color | Behavior |
+|-------|-------|----------|
+| OFF | Grey (`#555`) | No auto-capture |
+| ON — waiting | Dark red (`#7b0000`) | Auto-captures every N seconds |
+| ON — firing | Bright red (`#e74c3c`) | Flashes for 300 ms on each capture |
+
+The interval is read from the **`timer_interval`** node parameter (1 – 3600 s, default 5 s).  
+While the timer is running, the **📸 Capture** button does **not** flash — only the ⏱ button changes colour.
 
 ### Installation
 
@@ -211,20 +229,18 @@ Enable if VRoid Studio / Blender models appear too dark.
 
 ### 機能・ボタン一覧
 
-**1行目**（キャプチャ・カメラ・モデル・背景）
+**1行目**（キャプチャ・タイマー・カメラ・モデル）
 
 | ボタン | 機能 |
 |--------|------|
 | 📸 Capture | 現在のポーズを PNG としてノード出力に送信 |
+| ⏱ | タイマーキャプチャのトグル（`timer_interval` 秒ごとに自動キャプチャ） |
 | RC | カメラをリセット |
 | OT / PR | Orthographic / Perspective カメラを切り替え |
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
-| BG | 背景画像をローカルから読み込む |
-| ✕ | 背景画像**および**背景色をクリア |
-| 🎨 | シーン背景色ピッカー |
 
-**2行目**（ポーズ・ライブラリ・ライト）
+**2行目**（ポーズ・ライブラリ・ライト・背景）
 
 | ボタン | 機能 |
 |--------|------|
@@ -235,6 +251,26 @@ Enable if VRoid Studio / Blender models appear too dark.
 | 📂 | ポーズファイルを読み込む（.json / .vroidpose） |
 | 📚 | ポーズライブラリを開く |
 | 💡 | ライトエディタを開く |
+| BG | 背景画像をローカルから読み込む |
+| ✕ | 背景画像**および**背景色をクリア |
+| 🎨 | シーン背景色ピッカー |
+
+**3行目**（ファイル名）
+
+現在読み込まれている VRM / GLB / GLTF のファイル名を表示。
+
+#### タイマーキャプチャ（⏱）
+
+**⏱** ボタンをクリックしてタイマーを開始 / 停止します。
+
+| 状態 | 色 | 動作 |
+|------|----|----|
+| OFF | グレー（`#555`） | 自動キャプチャなし |
+| ON — 待機中 | 暗い赤（`#7b0000`） | N 秒ごとに自動キャプチャ |
+| ON — 実行瞬間 | 明るい赤（`#e74c3c`） | 300ms 点灯して暗い赤に戻る |
+
+間隔は **`timer_interval`** ノードパラメータ（1〜3600 秒、デフォルト 5 秒）で指定します。  
+タイマー動作中は **📸 Capture** ボタンは変化せず、⏱ ボタンのみ色が変わります。
 
 ### インストール
 
@@ -356,6 +392,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 | `background_image` | IMAGE (optional) | Background composited with the captured pose on the Python side |
 | `output_size_mode` | Standard / Background / Custom | Output resolution mode |
 | `custom_width` / `custom_height` | INT | Output size in Custom mode |
+| `timer_interval` | INT | Timer capture interval in seconds (1 – 3600, default 5) |
 | **output: image** | IMAGE | Captured pose image (Torch tensor) |
 
 ---

@@ -52,6 +52,7 @@ app.registerExtension({
             btnRow2.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
+            const timerBtn       = makeSmallButton("⏱ OFF",     "#555",    "Timer Capture: OFF");
             const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
             const mirrorBtn      = makeSmallButton("↔",          "#5a6a7a", "Mirror Pose (flip left/right)");
             const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
@@ -113,19 +114,21 @@ app.registerExtension({
             vrmLabel.style.cssText = "font-size:10px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;";
             vrmLabel.textContent = "default model";
 
-            // ---- 1行目: キャプチャ・カメラ・VRM・背景系 ----
+            // ---- 3行目: ファイル名表示 ----
+            const btnRow3 = document.createElement("div");
+            btnRow3.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
+
+            // ---- 1行目: キャプチャ・タイマー・カメラ・VRM・CC ----
             btnRow.appendChild(captureBtn);
+            btnRow.appendChild(timerBtn);
             btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
             btnRow.appendChild(ccBtn);
-            btnRow.appendChild(bgBtn);
-            btnRow.appendChild(bgClearBtn);
-            btnRow.appendChild(bgColorInput);
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
-            // ---- 2行目: ポーズ操作系 ----
+            // ---- 2行目: ポーズ操作系 + 背景系 ----
             btnRow2.appendChild(resetBtn);
             btnRow2.appendChild(mirrorBtn);
             btnRow2.appendChild(savePoseBtn);
@@ -133,9 +136,14 @@ app.registerExtension({
             btnRow2.appendChild(loadPoseBtn);
             btnRow2.appendChild(libraryBtn);
             btnRow2.appendChild(lightBtn);
-            btnRow2.appendChild(vrmLabel);
+            btnRow2.appendChild(bgBtn);
+            btnRow2.appendChild(bgClearBtn);
+            btnRow2.appendChild(bgColorInput);
+            // ---- 3行目: 読み込みファイル名 ----
+            btnRow3.appendChild(vrmLabel);
             container.appendChild(btnRow);
             container.appendChild(btnRow2);
+            container.appendChild(btnRow3);
 
             // ---- キャンバスラッパー ----
             const CVS_DISPLAY = 384;
@@ -331,7 +339,7 @@ app.registerExtension({
                     node.setDirtyCanvas(true, true);
                 } else {
                     const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 140) : 0;
-                    node.size = [430, 520 + morphH];
+                    node.size = [430, 540 + morphH];
                     node.setDirtyCanvas(true, true);
                 }
             }
@@ -395,7 +403,7 @@ app.registerExtension({
             });
             domWidget.computeSize = function() {
                 const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
-                return [430, 520 + morphH];
+                return [430, 540 + morphH];
             };
 
             node.resizable = false;
@@ -440,18 +448,44 @@ app.registerExtension({
                 }
             }
 
-            captureBtn.onclick = () => {
+            function doCapture() {
                 const frame = getFrameRect();
                 const dataUrl = editor.capture(frame, CVS_DISPLAY);
                 const w = node.widgets?.find(w => w.name === "image_data");
                 if (w) w.value = dataUrl;
 
-                captureBtn.textContent = "✅ Captured!";
-                captureBtn.style.background = "#28a745";
-                setTimeout(() => {
-                    captureBtn.textContent = "📸 Capture";
-                    captureBtn.style.background = "#4a90d9";
-                }, 1500);
+                if (_timerCapId === null) {
+                    captureBtn.textContent = "✅ Captured!";
+                    captureBtn.style.background = "#28a745";
+                    setTimeout(() => {
+                        captureBtn.textContent = "📸 Capture";
+                        captureBtn.style.background = "#4a90d9";
+                    }, 1500);
+                } else {
+                    timerBtn.style.background = "#e74c3c";
+                    setTimeout(() => { timerBtn.style.background = "#7b0000"; }, 300);
+                }
+            }
+
+            captureBtn.onclick = doCapture;
+
+            let _timerCapId = null;
+            timerBtn.onclick = () => {
+                if (_timerCapId !== null) {
+                    clearInterval(_timerCapId);
+                    _timerCapId = null;
+                    timerBtn.textContent = "⏱ OFF";
+                    timerBtn.style.background = "#555";
+                    timerBtn.title = "Timer Capture: OFF";
+                } else {
+                    const intervalW = node.widgets?.find(w => w.name === "timer_interval");
+                    const sec = Math.max(1, intervalW?.value ?? 5);
+                    doCapture();
+                    _timerCapId = setInterval(doCapture, sec * 1000);
+                    timerBtn.textContent = `⏱ ${sec}s`;
+                    timerBtn.style.background = "#7b0000";
+                    timerBtn.title = `Timer Capture: every ${sec}s (click to stop)`;
+                }
             };
 
             libraryBtn.onclick = () => {
@@ -596,6 +630,7 @@ app.registerExtension({
 
             // ---- ノード削除時のクリーンアップ ----
             node.onRemoved = function () {
+                if (_timerCapId !== null) { clearInterval(_timerCapId); _timerCapId = null; }
                 editor.dispose();
                 delete _nodeModelCache[node.id];
             };

@@ -21,6 +21,7 @@ class PoseEditor3DNode:
                 "output_size_mode": (["Standard", "Background", "Custom"], {"default": "Standard"}),
                 "custom_width":     ("INT", {"default": 600, "min": 64, "max": 4096, "step": 8}),
                 "custom_height":    ("INT", {"default": 600, "min": 64, "max": 4096, "step": 8}),
+                "timer_interval":   ("INT", {"default": 5, "min": 1, "max": 3600, "step": 1}),
             },
             "optional": {
                 "background_image": ("IMAGE",),
@@ -38,6 +39,7 @@ class PoseEditor3DNode:
                     output_size_mode: str = "Standard",
                     custom_width: int = 600,
                     custom_height: int = 600,
+                    timer_interval: int = 5,
                     background_image=None):
 
         # ---- 背景画像の準備 ----
@@ -99,7 +101,7 @@ class PoseEditor3DNode:
 
     @classmethod
     def IS_CHANGED(cls, image_data, output_size_mode="Standard",
-                   custom_width=600, custom_height=600, background_image=None):
+                   custom_width=600, custom_height=600, timer_interval=5, background_image=None):
         import hashlib
         key = f"{image_data}|{output_size_mode}|{custom_width}|{custom_height}"
         return hashlib.md5(key.encode()).hexdigest()
