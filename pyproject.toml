@@ -10,4 +10,4 @@ Repository = "https://github.com/ketle-man/comfyui-vrm-pose-editor"
 [tool.comfy]
 PublisherId = "statsu"
 DisplayName = "comfyui-vrm-pose-editor"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/ketle-man/comfyui-vrm-pose-editor/master/docs/thumb.png"
