@@ -420,8 +420,9 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Lights**: managed multi-light system (Directional / Point / Spot / RectArea / Ambient); shadow restricted to DirectionalLight (VRM MToon constraint)
 - **Ground / BG Wall**: `MeshStandardMaterial` (opaque) or `ShadowMaterial` (shadow catcher); color, texture, tile, height/depth adjustable
 - **Background color**: `scene.background = THREE.Color` via color picker; transparent by default
-- **Zoom mode**: wheel zoom (default) or Ctrl+Right-drag zoom, toggled from the Light Editor scene bar (`editor.getZoomMode()` / `setZoomMode()`)
+- **Zoom mode**: wheel zoom (default) or Ctrl+Right-drag zoom, toggled from the Light Editor scene bar (`editor.getZoomMode()` / `setZoomMode()`). Persisted in `localStorage` (`vrmPoseEditor_zoomMode`), shared across all ComfyUI nodes and pages on the same origin
 - **Light presets**: full scene snapshot (all lights + Ground/Wall/Shadow values); texture images excluded; stored server-side as JSON files
+- **Core module**: `js/pose_editor_core.js` exports `initPoseEditor3D()` with zero ComfyUI dependency, so it can be imported directly from external pages (e.g. `/extensions/comfyui-vrm-pose-editor/pose_editor_core.js`) alongside `light_editor.js` / `pose_library.js`
 
 ---
 
