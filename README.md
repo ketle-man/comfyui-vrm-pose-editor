@@ -86,9 +86,12 @@ While the timer is running, the **📸 Capture** button does **not** flash — o
 | Left drag | Rotate camera |
 | Ctrl + Left drag | Pan |
 | Right drag | Pan |
-| Scroll wheel | Zoom |
+| Scroll wheel | Zoom (default) |
+| Ctrl + Right drag | Zoom — only when the "Ctrl+Right drag zoom" switch is ON in the Light Editor (see below) |
 | Alt + Left drag | Zoom (Node 2.0 mode) |
 | Click gizmo X/Y/Z axis | Snap to that view direction |
+
+> On some PCs the scroll wheel does not zoom (mouse/driver dependent). Open the **Light Editor (💡)** and toggle **🖱 Ctrl+Right drag zoom** in the top scene bar to switch from wheel zoom to Ctrl+Right-drag zoom.
 
 ### Bone Controls
 
@@ -172,6 +175,7 @@ Click **💡** on any node to open the Light Editor panel.
 - **Drag the yellow sphere** in the preview to reposition a light in 3D.
 - **Shadow note**: Only DirectionalLight supports `castShadow`. SpotLight / PointLight shadows are incompatible with the VRM MToon shader.
 - **Shadow quality**: None / Soft PCF / Hard selector.
+- **🖱 Ctrl+Right drag zoom**: Toggle in the top scene bar. OFF (default) = scroll wheel zoom. ON = disables wheel zoom and lets you zoom by Ctrl+Right-dragging on empty space — useful when the scroll wheel doesn't zoom on some PCs/mice. This setting also applies to the main preview canvas outside the Light Editor.
 - **📚 Library**: Save and recall complete light presets (all lights + Ground / BG Wall / Shadow settings).
 
 #### Light Library (📚)
@@ -293,9 +297,12 @@ Enable if VRoid Studio / Blender models appear too dark.
 | 左ドラッグ | カメラ回転 |
 | Ctrl + 左ドラッグ | パン（平行移動） |
 | 右ドラッグ | パン（平行移動） |
-| ホイール | ズーム |
+| ホイール | ズーム（既定） |
+| Ctrl + 右ドラッグ | ズーム — ライトエディタの「Ctrl+右ドラッグでズーム」スイッチが ON のときのみ有効（後述） |
 | Alt + 左ドラッグ | ズーム（Node2.0 モード時） |
 | ビューギズモ軸クリック | その方向へスナップ |
+
+> PC 環境によってはマウスホイールでズームできない場合があります（マウス・ドライバ依存）。**ライトエディタ（💡）** を開き、上部の Scene バーにある **🖱 Ctrl+右ドラッグでズーム** をトグルすると、ホイールズームから Ctrl+右ドラッグズームに切り替えられます。
 
 ### ボーン操作
 
@@ -332,6 +339,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 - **ライト設定**: 色・強度・位置 XYZ・ターゲット XYZ（Directional/Spot）・角度＆ペナンブラ（Spot）・距離＆減衰（Point/Spot）・シャドウ（Directional のみ）。
 - **黄色球体をドラッグ**してプレビュー内でライトを 3D 移動。
 - **シャドウ注意**: DirectionalLight のみ `castShadow` 対応。SpotLight/PointLight のシャドウは VRM MToon シェーダーと非互換。
+- **🖱 Ctrl+右ドラッグでズーム**: 上部の Scene バーにあるトグルスイッチ。OFF（既定）＝マウスホイールでズーム。ON＝ホイールズームを無効化し、何もない場所での Ctrl+右ドラッグでズームできるようにする。マウスやドライバの相性でホイールズームが効かない環境向け。この設定はライトエディタ外のメインプレビューキャンバスにも適用される。
 - **📚 Library**: ライト設定プリセット（全ライト ＋ Ground / BG Wall / Shadow 設定）の保存・呼び出し。
 
 #### ライトライブラリ（📚）
@@ -412,6 +420,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Lights**: managed multi-light system (Directional / Point / Spot / RectArea / Ambient); shadow restricted to DirectionalLight (VRM MToon constraint)
 - **Ground / BG Wall**: `MeshStandardMaterial` (opaque) or `ShadowMaterial` (shadow catcher); color, texture, tile, height/depth adjustable
 - **Background color**: `scene.background = THREE.Color` via color picker; transparent by default
+- **Zoom mode**: wheel zoom (default) or Ctrl+Right-drag zoom, toggled from the Light Editor scene bar (`editor.getZoomMode()` / `setZoomMode()`)
 - **Light presets**: full scene snapshot (all lights + Ground/Wall/Shadow values); texture images excluded; stored server-side as JSON files
 
 ---

@@ -116,10 +116,21 @@ function buildModal(editor, cvsWrapper) {
     shadowSel.addEventListener("change", () => editor.setShadowQuality(shadowSel.value));
     shadowSel.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
 
+    // ---- Zoom mode toggle (ホイールズームが効かない環境向け) ----
+    const zoomModeBtn = mkToggleBtn("🖱 Ctrl+右ドラッグでズーム", editor.getZoomMode() === "ctrlDrag");
+    zoomModeBtn.title = "OFF: マウスホイールでズーム / ON: 何もない場所でCtrl+右ドラッグでズーム\n" +
+                         "(マウスホイールズームが機能しない環境向け)";
+    zoomModeBtn.onclick = () => {
+        const next = editor.getZoomMode() === "wheel" ? "ctrlDrag" : "wheel";
+        editor.setZoomMode(next);
+        applyToggle(zoomModeBtn, "🖱 Ctrl+右ドラッグでズーム", next === "ctrlDrag");
+    };
+
     sceneBar.append(
         groundBtn, groundYLbl, groundYSl, groundYVl,
         sep(), bgWallBtn, bgZLbl, bgZSl, bgZVl,
-        shadowLbl, shadowSel
+        shadowLbl, shadowSel,
+        sep(), zoomModeBtn
     );
 
     // ---- Surface bar (color / texture) ----

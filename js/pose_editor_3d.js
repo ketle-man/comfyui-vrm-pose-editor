@@ -1050,6 +1050,51 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
     orbit.target.set(0, 1, 0);
     orbit.update();
 
+    // ---- ズーム操作モード切り替え ----
+    // 環境によってはマウスホイールでのズームが機能しないため、
+    // Ctrl+右ドラッグでズームする操作モードに切り替えられるようにする
+    let _zoomMode = "wheel"; // "wheel" | "ctrlDrag"
+    let _ctrlRightDrag = false;
+    let _ctrlRightDragLastY = 0;
+
+    function _applyZoomMode() {
+        orbit.enableZoom = (_zoomMode === "wheel");
+    }
+    _applyZoomMode();
+
+    // ctrlDragモード時はホイールでページがスクロールしてしまわないよう阻止
+    renderer.domElement.addEventListener("wheel", (e) => {
+        if (_zoomMode === "ctrlDrag") e.preventDefault();
+    }, { passive: false });
+
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+        if (_zoomMode !== "ctrlDrag" || e.button !== 2 || !e.ctrlKey) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _ctrlRightDrag = true;
+        _ctrlRightDragLastY = e.clientY;
+        orbit.enableRotate = false;
+        orbit.enablePan    = false;
+    }, true);
+
+    renderer.domElement.addEventListener("pointermove", (e) => {
+        if (!_ctrlRightDrag) return;
+        const dy = e.clientY - _ctrlRightDragLastY;
+        _ctrlRightDragLastY = e.clientY;
+        const dir = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
+        camera.position.addScaledVector(dir, dy * 0.01);
+        orbit.update();
+    }, true);
+
+    function _endCtrlRightDrag() {
+        if (!_ctrlRightDrag) return;
+        _ctrlRightDrag = false;
+        orbit.enableRotate = true;
+        orbit.enablePan    = true;
+    }
+    window.addEventListener("pointerup", _endCtrlRightDrag);
+    window.addEventListener("blur", _endCtrlRightDrag);
+
     // ---- Node2.0時のみイベント制御 ----
     if (isModern) {
         // wheel/contextmenu がComfyUIキャンバスに伝播しないよう阻止
@@ -1579,6 +1624,11 @@ function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isMode
         getBgWallShadowCatcher() { return _bgWallShadowCatcher; },
         toggleBgWallShadowCatcher() { _setBgWallShadowCatcher(!_bgWallShadowCatcher); return _bgWallShadowCatcher; },
         setBgWallShadowOpacity(v){ _setBgWallShadowOpacity(v); },
+
+        // ---- Zoom operation mode ----
+        // "wheel": マウスホイールでズーム(既定) / "ctrlDrag": Ctrl+右ドラッグでズーム
+        getZoomMode()  { return _zoomMode; },
+        setZoomMode(m) { _zoomMode = (m === "ctrlDrag") ? "ctrlDrag" : "wheel"; _applyZoomMode(); },
 
         // ---- Shadow quality ----
         setShadowQuality(q) {
