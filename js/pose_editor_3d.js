@@ -73,10 +73,12 @@ app.registerExtension({
 
             // ポーズライブラリボタン
             const libraryBtn = makeSmallButton("📚", "#4a4a8a", "Open Pose Library");
+            libraryBtn.style.minWidth = "60px";
             let _currentVrmBuffer = null; // VRMバッファへの参照（ライブラリ内サムネイル生成用）
 
             // ライトエディタボタン
             const lightBtn = makeSmallButton("💡", "#7a6a2a", "Open Light Editor");
+            lightBtn.style.minWidth = "60px";
 
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
@@ -85,6 +87,24 @@ app.registerExtension({
                 editor.setColorCorrect(colorCorrectOn);
                 ccBtn.style.background = colorCorrectOn ? "#c07a20" : "#444";
                 ccBtn.title = `Color Correct: ${colorCorrectOn ? "ON" : "OFF"}`;
+            };
+
+            // 視線ターゲット(LookAt)トグルボタン
+            const lookAtBtn = makeSmallButton("👁 OFF", "#444", "LookAt Target: OFF");
+            lookAtBtn.onclick = () => {
+                const on = editor.toggleLookAt();
+                lookAtBtn.textContent = on ? "👁 ON" : "👁 OFF";
+                lookAtBtn.style.background = on ? "#1a9a9a" : "#444";
+                lookAtBtn.title = `LookAt Target: ${on ? "ON (drag the cyan marker)" : "OFF"}`;
+            };
+
+            // 揺れ物理(SpringBone)トグルボタン
+            const springBoneBtn = makeSmallButton("🎐 ON", "#3a6a4a", "Spring Bone Physics: ON");
+            springBoneBtn.onclick = () => {
+                const on = editor.toggleSpringBoneEnabled();
+                springBoneBtn.textContent = on ? "🎐 ON" : "🎐 OFF";
+                springBoneBtn.style.background = on ? "#3a6a4a" : "#444";
+                springBoneBtn.title = `Spring Bone Physics: ${on ? "ON" : "OFF"}`;
             };
 
             // 背景画像ロードボタン
@@ -111,7 +131,11 @@ app.registerExtension({
             vrmLabel.style.cssText = "font-size:10px;color:#aaa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;";
             vrmLabel.textContent = "default model";
 
-            // ---- 3行目: ファイル名表示 ----
+            // ---- 3行目: 視線・揺れ + ポーズ操作系 ----
+            const btnRow2b = document.createElement("div");
+            btnRow2b.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
+
+            // ---- 4行目: ファイル名表示 ----
             const btnRow3 = document.createElement("div");
             btnRow3.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
 
@@ -125,21 +149,25 @@ app.registerExtension({
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
-            // ---- 2行目: ポーズ操作系 + 背景系 ----
-            btnRow2.appendChild(resetBtn);
-            btnRow2.appendChild(mirrorBtn);
-            btnRow2.appendChild(savePoseBtn);
-            btnRow2.appendChild(saveToPosesBtn);
-            btnRow2.appendChild(loadPoseBtn);
+            // ---- 2行目: ライブラリ・ライト + 背景系 ----
             btnRow2.appendChild(libraryBtn);
             btnRow2.appendChild(lightBtn);
             btnRow2.appendChild(bgBtn);
             btnRow2.appendChild(bgClearBtn);
             btnRow2.appendChild(bgColorInput);
-            // ---- 3行目: 読み込みファイル名 ----
+            // ---- 3行目: 視線・揺れ + ポーズ操作系 ----
+            btnRow2b.appendChild(lookAtBtn);
+            btnRow2b.appendChild(springBoneBtn);
+            btnRow2b.appendChild(resetBtn);
+            btnRow2b.appendChild(mirrorBtn);
+            btnRow2b.appendChild(savePoseBtn);
+            btnRow2b.appendChild(saveToPosesBtn);
+            btnRow2b.appendChild(loadPoseBtn);
+            // ---- 4行目: 読み込みファイル名 ----
             btnRow3.appendChild(vrmLabel);
             container.appendChild(btnRow);
             container.appendChild(btnRow2);
+            container.appendChild(btnRow2b);
             container.appendChild(btnRow3);
 
             // ---- キャンバスラッパー ----
@@ -336,7 +364,7 @@ app.registerExtension({
                     node.setDirtyCanvas(true, true);
                 } else {
                     const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 140) : 0;
-                    node.size = [430, 540 + morphH];
+                    node.size = [430, 572 + morphH];
                     node.setDirtyCanvas(true, true);
                 }
             }
@@ -400,7 +428,7 @@ app.registerExtension({
             });
             domWidget.computeSize = function() {
                 const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
-                return [430, 540 + morphH];
+                return [430, 572 + morphH];
             };
 
             node.resizable = false;

@@ -33,24 +33,39 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 | VRM | Load VRM / GLB / GLTF file from local disk |
 | CC | Color correction ON/OFF (sRGB + ACES Filmic) |
 
-**Row 2** (pose / library / lights / background)
+**Row 2** (library / lights / background)
 
 | Button | Function |
 |--------|----------|
-| RP | Reset pose |
-| ↔ | Mirror pose (flip left ↔ right) |
-| ⬇️ | Download current pose as JSON file |
-| 💾 | Save current pose to `poses/` folder |
-| 📂 | Load pose file (.json / .vroidpose) |
 | 📚 | Open Pose Library |
 | 💡 | Open Light Editor |
 | BG | Load background image from local disk |
 | ✕ | Clear background image **and** background color |
 | 🎨 | Scene background color picker |
 
-**Row 3** (file name)
+**Row 3** (look-at / spring bone / pose)
+
+| Button | Function |
+|--------|----------|
+| 👁 | Toggle LookAt target — when ON, drag the cyan marker in the 3D view to steer the eyes/head (no effect if the model has no LookAt data) |
+| 🎐 | Toggle spring bone physics (hair, skirts, etc.) — turning OFF freezes the current sway state |
+| RP | Reset pose |
+| ↔ | Mirror pose (flip left ↔ right) |
+| ⬇️ | Download current pose as JSON file |
+| 💾 | Save current pose to `poses/` folder |
+| 📂 | Load pose file (.json / .vroidpose) |
+
+**Row 4** (file name)
 
 Displays the name of the currently loaded VRM / GLB / GLTF file.
+
+#### LookAt Target (👁)
+
+When enabled, a cyan marker appears in the 3D view and the model's eyes/head automatically track its position. Drag the marker to steer the gaze. Resetting/loading a pose or mirroring re-anchors spring bones so nothing jumps unexpectedly. The marker itself is never captured in the output image.
+
+#### Spring Bone Physics (🎐)
+
+Toggles the sway-bone simulation (hair, skirts, etc.) defined on the VRM. Turning it OFF freezes the sway at its current state instead of resetting to rest pose. On Reset Pose / Load Pose / Mirror, the spring bone internal state is re-anchored to the new pose so it doesn't snap unnaturally right after the switch.
 
 #### Timer Capture (⏱)
 
@@ -244,24 +259,39 @@ Enable if VRoid Studio / Blender models appear too dark.
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
 
-**2行目**（ポーズ・ライブラリ・ライト・背景）
+**2行目**（ライブラリ・ライト・背景）
 
 | ボタン | 機能 |
 |--------|------|
-| RP | ポーズをリセット |
-| ↔ | ポーズを左右反転 |
-| ⬇️ | 現在のポーズを JSON ファイルとしてダウンロード |
-| 💾 | 現在のポーズを `poses/` フォルダに保存 |
-| 📂 | ポーズファイルを読み込む（.json / .vroidpose） |
 | 📚 | ポーズライブラリを開く |
 | 💡 | ライトエディタを開く |
 | BG | 背景画像をローカルから読み込む |
 | ✕ | 背景画像**および**背景色をクリア |
 | 🎨 | シーン背景色ピッカー |
 
-**3行目**（ファイル名）
+**3行目**（視線・揺れ・ポーズ）
+
+| ボタン | 機能 |
+|--------|------|
+| 👁 | 視線ターゲットの ON/OFF。ON にすると 3D ビュー内のシアン色マーカーをドラッグして目・頭の向きを誘導できる（モデルに LookAt 情報が無い場合は効果なし） |
+| 🎐 | 揺れ物理（髪・スカート等）の ON/OFF。OFF にすると現在の揺れ具合のまま固定される |
+| RP | ポーズをリセット |
+| ↔ | ポーズを左右反転 |
+| ⬇️ | 現在のポーズを JSON ファイルとしてダウンロード |
+| 💾 | 現在のポーズを `poses/` フォルダに保存 |
+| 📂 | ポーズファイルを読み込む（.json / .vroidpose） |
+
+**4行目**（ファイル名）
 
 現在読み込まれている VRM / GLB / GLTF のファイル名を表示。
+
+#### 視線ターゲット（👁）
+
+ON にすると 3D ビュー内にシアン色のマーカーが表示され、モデルの目・頭がマーカーの方向を自動的に追従します。マーカーをドラッグして視線の向きを調整できます。ポーズリセット・ポーズ読込・ミラー実行時は揺れボーンの内部状態を新しいポーズに合わせて再アンカーするため、切替直後に不自然に跳ねることはありません。マーカー自体は出力画像には写り込みません。
+
+#### 揺れ物理（🎐）
+
+VRM に定義された揺れボーン（髪・スカート等）の物理シミュレーションの ON/OFF を切り替えます。OFF にすると、リセット姿勢に戻るのではなく現在の揺れ具合のまま固定されます。ポーズリセット・ポーズ読込・ミラー実行の直後は揺れボーンの内部状態を新しいポーズに再アンカーするため、切替直後に不自然に跳ねることはありません。
 
 #### タイマーキャプチャ（⏱）
 

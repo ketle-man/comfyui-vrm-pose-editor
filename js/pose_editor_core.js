@@ -351,9 +351,54 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     }
 
     // ================================================================
+    // LookAt target (視線ターゲット): VRMLookAt を利用した視線誘導
+    // ================================================================
+    // three-vrm.module.js には VRMLookAt が同梱されており、VRMLoaderPlugin
+    // でロードした vrm には常に vrm.lookAt が生成される（表情ベース/ボーンベース
+    // いずれの場合も）。ここではドラッグ可能な3Dマーカーを vrm.lookAt.target に
+    // 割り当てることで、目・頭がマーカーの方向を自動追従するようにする。
+    const lookAtHelperMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.06, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0x00d0d0, transparent: true, opacity: 0.85, depthTest: false })
+    );
+    lookAtHelperMesh.renderOrder = 100;
+    lookAtHelperMesh.visible = false;
+    lookAtHelperMesh.position.set(0, 1.5, 2);
+    scene.add(lookAtHelperMesh);
+    let _lookAtEnabled = false;
+
+    function _setLookAtEnabled(v) {
+        _lookAtEnabled = v;
+        lookAtHelperMesh.visible = v;
+        if (currentVRM?.lookAt) {
+            currentVRM.lookAt.target = v ? lookAtHelperMesh : null;
+            if (!v) currentVRM.lookAt.reset();
+        }
+    }
+
+    // ================================================================
+    // Spring bone physics（揺れ物理）
+    // ================================================================
+    // VRMLoaderPlugin は springBonePlugin を内包しており、VRMアセット自体に
+    // 定義された揺れボーン(髪・スカート等)は vrm.springBoneManager として
+    // 既に生成済み。VRM.update(delta) が毎フレーム自動的に物理を進めるため、
+    // 実装済みの機構を配線するのみでよい。
+    // - ポーズを瞬間的に切り替える操作(リセット/読込/ミラー)の直後は、
+    //   揺れボーンの内部状態が旧ポーズのままになり「一瞬跳ねる」ため、
+    //   setInitState() で新しいボーン位置を基準として再アンカーする。
+    // - 物理のON/OFFは update(delta) の delta を 0 にすることで実現する
+    //   （capture() で既に使われている「delta=0=一時停止」と同じ手法）。
+    let _springBoneEnabled = true;
+
+    function _settleSpringBoneAnchor() {
+        currentVRM?.springBoneManager?.setInitState();
+    }
+
+    // ================================================================
     // Light helper drag (3D)
     // ================================================================
     let _draggingEntry = null;
+    let _draggingLookAt = false;
     const _dragPlane = new THREE.Plane();
     const _dragPt    = new THREE.Vector3();
     let _selectedHelperMesh = null;
@@ -366,9 +411,20 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         if (e.button !== 0) return;
         updateMouse(e);
         raycaster.setFromCamera(mouse, camera);
-        const hits = raycaster.intersectObjects(_getHelperMeshes());
+        const targets = _getHelperMeshes();
+        if (lookAtHelperMesh.visible) targets.push(lookAtHelperMesh);
+        const hits = raycaster.intersectObjects(targets);
         if (hits.length > 0) {
             const hit = hits[0];
+            if (hit.object === lookAtHelperMesh) {
+                _draggingLookAt = true;
+                const camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                _dragPlane.setFromNormalAndCoplanarPoint(camDir, hit.point);
+                orbit.enabled = false;
+                e.stopImmediatePropagation();
+                return;
+            }
             const entry = managedLights.find(l => l.helperMesh === hit.object);
             if (entry) {
                 _draggingEntry = entry;
@@ -382,6 +438,14 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     }, true);
 
     canvas.addEventListener("pointermove", (e) => {
+        if (_draggingLookAt) {
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            if (raycaster.ray.intersectPlane(_dragPlane, _dragPt)) {
+                lookAtHelperMesh.position.copy(_dragPt);
+            }
+            return;
+        }
         if (!_draggingEntry) return;
         updateMouse(e);
         raycaster.setFromCamera(mouse, camera);
@@ -393,6 +457,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     }, true);
 
     canvas.addEventListener("pointerup", () => {
+        if (_draggingLookAt) { _draggingLookAt = false; orbit.enabled = true; return; }
         if (_draggingEntry) { _draggingEntry = null; orbit.enabled = true; }
     });
 
@@ -722,6 +787,11 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             orbit.target.set(0, 1, 0);
             orbit.update();
 
+            // 新しいモデルの正面側にLookAtターゲットの初期位置を合わせ、
+            // 有効化されていれば新モデルのvrm.lookAtに再割り当てする
+            lookAtHelperMesh.position.set(0, 1.5, isVrm0 ? -2 : 2);
+            if (vrm.lookAt) vrm.lookAt.target = _lookAtEnabled ? lookAtHelperMesh : null;
+
             const humanoid = vrm.humanoid;
             if (humanoid) {
                 const vrmBoneNames = [
@@ -853,7 +923,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     function animate() {
         animFrameId = requestAnimationFrame(animate);
         if (renderer.getContext().isContextLost()) return;
-        if (currentVRM) currentVRM.update(1 / 60);
+        if (currentVRM) currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
         orbit.update();
         renderer.render(scene, camera);
 
@@ -922,6 +992,16 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         clearBgImage,
         setBgColor(hex)  { scene.background = new THREE.Color(hex); },
         clearBgColor()   { scene.background = null; },
+
+        // ---- LookAt target (視線ターゲット) ----
+        hasLookAt()          { return !!currentVRM?.lookAt; },
+        getLookAtEnabled()   { return _lookAtEnabled; },
+        toggleLookAt()       { _setLookAtEnabled(!_lookAtEnabled); return _lookAtEnabled; },
+
+        // ---- Spring bone physics (揺れ物理) ----
+        hasSpringBones()          { return !!currentVRM?.springBoneManager; },
+        getSpringBoneEnabled()    { return _springBoneEnabled; },
+        toggleSpringBoneEnabled() { _springBoneEnabled = !_springBoneEnabled; return _springBoneEnabled; },
 
         // ---- Light management API (used by light_editor.js) ----
         getLights()          { return managedLights.map(l => l.config); },
@@ -1014,6 +1094,8 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             // Save and hide light helper visibility
             const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
             managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
+            const lookAtHelperVisBefore = lookAtHelperMesh.visible;
+            lookAtHelperMesh.visible = false;
 
             if (currentVRM) currentVRM.update(0);
             renderer.render(scene, camera);
@@ -1035,6 +1117,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
             interactableBones.forEach(h => h.visible = true);
             managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
+            lookAtHelperMesh.visible = lookAtHelperVisBefore;
             return data;
         },
         resetPose() {
@@ -1042,6 +1125,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 bone.rotation.copy(val.rot);
                 bone.position.copy(val.pos);
             });
+            _settleSpringBoneAnchor();
         },
         resetCamera() {
             const isVrm0 = currentVRM?.meta?.metaVersion === '0';
@@ -1162,6 +1246,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                     currentVRM.humanoid.update();
                     currentVRM.scene.updateMatrixWorld(true);
                 }
+                _settleSpringBoneAnchor();
                 return;
             }
 
@@ -1177,6 +1262,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                     q.set(r[0], r[1], r[2], r[3]);
                     bone.rotation.setFromQuaternion(q);
                 });
+                _settleSpringBoneAnchor();
                 return;
             }
 
@@ -1202,6 +1288,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                     currentVRM.humanoid.update();
                     currentVRM.scene.updateMatrixWorld(true);
                 }
+                _settleSpringBoneAnchor();
                 return;
             }
 
@@ -1215,6 +1302,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 bone.rotation.y = bones[key].y ?? 0;
                 bone.rotation.z = bones[key].z ?? 0;
             });
+            _settleSpringBoneAnchor();
         },
         mirrorPose() {
             // 現在のポーズをversion2形式でエクスポートし、左右ミラーして再インポート

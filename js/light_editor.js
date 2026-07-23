@@ -30,6 +30,8 @@ function buildModal(editor, cvsWrapper) {
     const origTransform   = cvsWrapper.style.transform;
     const origTransformOrigin = cvsWrapper.style.transformOrigin;
     const origPosition    = cvsWrapper.style.position;
+    const origTop         = cvsWrapper.style.top;
+    const origLeft        = cvsWrapper.style.left;
 
     // Overlay
     const overlay = el("div", {
@@ -49,6 +51,8 @@ function buildModal(editor, cvsWrapper) {
         cvsWrapper.style.transform       = origTransform;
         cvsWrapper.style.transformOrigin = origTransformOrigin;
         cvsWrapper.style.position        = origPosition;
+        cvsWrapper.style.top             = origTop;
+        cvsWrapper.style.left            = origLeft;
         if (origNextSibling) origParent.insertBefore(cvsWrapper, origNextSibling);
         else                  origParent.appendChild(cvsWrapper);
 
@@ -312,13 +316,21 @@ function buildModal(editor, cvsWrapper) {
     // ---- Embed cvsWrapper into preview ----
     previewWrap.appendChild(cvsWrapper);
     cvsWrapper.style.position = "relative"; // override absolute if any
+    // 呼び出し元がposition:absolute用にtop/leftを設定している場合、position:relativeでは
+    // オフセットとして再解釈されてプレビュー枠外に押し出されてしまうためリセットする
+    cvsWrapper.style.top  = "0";
+    cvsWrapper.style.left = "0";
 
     function applyScale() {
         const pw = previewWrap.clientWidth  - 8;
         const ph = previewWrap.clientHeight - 8;
         if (pw <= 0 || ph <= 0) return;
-        // cvsWrapper is 384×384 in layout
-        const scale = Math.min(pw / 384, ph / 384);
+        // cvsWrapper の実レイアウトサイズ（transform非依存）を都度計測する。
+        // 呼び出し元によってサイズが可変（例: コマの矩形に追従）なため固定値を仮定しない
+        const cw = cvsWrapper.offsetWidth;
+        const ch = cvsWrapper.offsetHeight;
+        if (cw <= 0 || ch <= 0) return;
+        const scale = Math.min(pw / cw, ph / ch);
         cvsWrapper.style.transform       = `scale(${scale.toFixed(4)})`;
         cvsWrapper.style.transformOrigin = "center center";
     }
