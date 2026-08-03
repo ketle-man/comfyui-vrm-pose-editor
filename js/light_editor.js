@@ -46,15 +46,42 @@ function buildModal(editor, cvsWrapper) {
 
     let resizeObserver = null;
 
+    // モーダルを開いている間に呼び出し元の状態が変化し、cvsWrapperの元の親要素が既にDOMから
+    // 失われている（文書に属さなくなっている）ケースがあり得る。この場合でも必ずモーダルを
+    // 閉じられるよう、復元処理の失敗では例外を投げない（閉じるボタンが機能しなくなる不具合防止）。
     function cleanup() {
-        // Restore cvsWrapper
-        cvsWrapper.style.transform       = origTransform;
-        cvsWrapper.style.transformOrigin = origTransformOrigin;
-        cvsWrapper.style.position        = origPosition;
-        cvsWrapper.style.top             = origTop;
-        cvsWrapper.style.left            = origLeft;
-        if (origNextSibling) origParent.insertBefore(cvsWrapper, origNextSibling);
-        else                  origParent.appendChild(cvsWrapper);
+        try {
+            // Restore cvsWrapper
+            cvsWrapper.style.transform       = origTransform;
+            cvsWrapper.style.transformOrigin = origTransformOrigin;
+            cvsWrapper.style.position        = origPosition;
+            cvsWrapper.style.top             = origTop;
+            cvsWrapper.style.left            = origLeft;
+            if (origParent && origParent.isConnected) {
+                if (origNextSibling && origNextSibling.parentNode === origParent) {
+                    origParent.insertBefore(cvsWrapper, origNextSibling);
+                } else {
+                    origParent.appendChild(cvsWrapper);
+                }
+            } else if (!cvsWrapper.isConnected) {
+                // 元の親が失われている場合、最低限どこかに繋ぎ戻して迷子にしない
+                document.body.appendChild(cvsWrapper);
+            }
+            // applyScale()でプレビュー拡大用に引き上げた解像度を、元の表示サイズに合わせて戻す。
+            // DOM復帰直後はレイアウト未確定のためrAFで1フレーム待ってから実寸を測る。
+            if (typeof editor.resizeRenderer === "function") {
+                requestAnimationFrame(() => {
+                    const w = cvsWrapper.clientWidth;
+                    const h = cvsWrapper.clientHeight;
+                    if (w > 0 && h > 0) {
+                        const dpr = window.devicePixelRatio || 1;
+                        editor.resizeRenderer(Math.round(w * dpr), Math.round(h * dpr));
+                    }
+                });
+            }
+        } catch (err) {
+            console.warn("[light_editor] プレビューの復元に失敗しました:", err);
+        }
 
         resizeObserver?.disconnect();
         editor.clearLightHelpers();
@@ -130,11 +157,21 @@ function buildModal(editor, cvsWrapper) {
         applyToggle(zoomModeBtn, "🖱 Ctrl+右ドラッグでズーム", next === "ctrlDrag");
     };
 
+    // ---- アンチエイリアス強化トグル（プレビュー拡大表示時の輪郭のギザギザを緩和） ----
+    const AA_LABEL = "🖼 アンチエイリアス強化";
+    const aaBtn = mkToggleBtn(AA_LABEL, editor.getSuperSample?.() ?? false);
+    aaBtn.title = "プレビュー拡大表示時の輪郭のギザギザを抑えます（解像度を上げるため描画負荷が増えます）";
+    aaBtn.onclick = () => {
+        const next = !(editor.getSuperSample?.() ?? false);
+        editor.setSuperSample?.(next);
+        applyToggle(aaBtn, AA_LABEL, next);
+    };
+
     sceneBar.append(
         groundBtn, groundYLbl, groundYSl, groundYVl,
         sep(), bgWallBtn, bgZLbl, bgZSl, bgZVl,
         shadowLbl, shadowSel,
-        sep(), zoomModeBtn
+        sep(), zoomModeBtn, aaBtn
     );
 
     // ---- Surface bar (color / texture) ----
@@ -333,6 +370,14 @@ function buildModal(editor, cvsWrapper) {
         const scale = Math.min(pw / cw, ph / ch);
         cvsWrapper.style.transform       = `scale(${scale.toFixed(4)})`;
         cvsWrapper.style.transformOrigin = "center center";
+
+        // CSS transform:scale()で元サイズより拡大表示すると、レンダラーの実解像度が
+        // 足りずラスターが荒く見える。拡大後の実表示サイズに合わせてレンダラー側の解像度も
+        // 引き上げる（縮小表示時は元解像度のままで十分なため何もしない）。
+        if (scale > 1 && typeof editor.resizeRenderer === "function") {
+            const dpr = window.devicePixelRatio || 1;
+            editor.resizeRenderer(Math.round(cw * scale * dpr), Math.round(ch * scale * dpr));
+        }
     }
     // Apply after first layout paint
     requestAnimationFrame(() => {

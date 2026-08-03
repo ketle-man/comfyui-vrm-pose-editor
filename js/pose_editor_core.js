@@ -12,7 +12,25 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     // -- メインレンダラー --
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setSize(canvas.width, canvas.height, false);
-    renderer.setPixelRatio(window.devicePixelRatio);
+
+    // ---- スーパーサンプリング（アンチエイリアス強化）----
+    // WebGLコンテキストのMSAA(antialias:true)だけでは、Light EditorのプレビューのようにCSS
+    // transform:scale()で拡大表示するケースで輪郭が荒く見える（ラスターを単純拡大するため）。
+    // devicePixelRatioを底上げして実解像度を上げることで緩和する。ON/OFFはlocalStorageに永続化し、
+    // 3Dテキスト側(text3d-core.js)と同じキーを共有する（どちらで切り替えても連動する）。
+    const _SUPERSAMPLE_STORAGE_KEY = 'vrmPoseEditor_superSample';
+    function _loadSuperSample() {
+        try { return localStorage.getItem(_SUPERSAMPLE_STORAGE_KEY) === '1'; } catch (e) { return false; }
+    }
+    let _superSample = _loadSuperSample();
+    function _applyPixelRatio() {
+        const base = window.devicePixelRatio || 1;
+        // setPixelRatio()内部で現在のwidth/heightを使ってsetSize()が再実行されるため、
+        // ここで改めてrenderer.setSize()を呼ぶ必要はない
+        renderer.setPixelRatio(_superSample ? Math.min(base * 2, 4) : base);
+    }
+    _applyPixelRatio();
+
     renderer.setClearColor(0x000000, 0);
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
@@ -913,7 +931,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
     canvas.addEventListener('webglcontextrestored', () => {
         renderer.setSize(canvas.width, canvas.height, false);
-        renderer.setPixelRatio(window.devicePixelRatio);
+        _applyPixelRatio();
         reloadLastModel();
     }, false);
 
@@ -1392,6 +1410,13 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 orthoCamera.updateProjectionMatrix();
             }
         },
+        // ---- スーパーサンプリング（アンチエイリアス強化）----
+        getSuperSample() { return _superSample; },
+        setSuperSample(v) {
+            _superSample = !!v;
+            try { localStorage.setItem(_SUPERSAMPLE_STORAGE_KEY, _superSample ? '1' : '0'); } catch (e) { /* localStorage不可の環境は無視 */ }
+            _applyPixelRatio();
+        },
         stopLoop() {
             if (animFrameId !== null) { cancelAnimationFrame(animFrameId); animFrameId = null; }
         },
@@ -1401,7 +1426,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         forceReload() {
             // タブ切り替えと同等: webglcontextrestored と同じ処理を手動実行
             renderer.setSize(canvas.width, canvas.height, false);
-            renderer.setPixelRatio(window.devicePixelRatio);
+            _applyPixelRatio();
             reloadLastModel();
         },
         isContextLost() {
