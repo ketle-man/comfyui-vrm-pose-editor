@@ -9,9 +9,9 @@
  * - Light Library: save/load/rename/delete presets (server-side .light_library/)
  */
 
-export function openLightEditor(editor, cvsWrapper) {
+export function openLightEditor(editor, cvsWrapper, onClose) {
     if (document.getElementById("light-editor-modal")) return;
-    document.body.appendChild(buildModal(editor, cvsWrapper));
+    document.body.appendChild(buildModal(editor, cvsWrapper, onClose));
 }
 
 // ----------------------------------------------------------------
@@ -23,7 +23,7 @@ const LIGHT_TYPES = [
     { value: "ambient",     label: "🌐 Ambient" },
 ];
 
-function buildModal(editor, cvsWrapper) {
+function buildModal(editor, cvsWrapper, onClose) {
     // ---- Save original DOM position of cvsWrapper ----
     const origParent      = cvsWrapper.parentNode;
     const origNextSibling = cvsWrapper.nextSibling;
@@ -87,6 +87,7 @@ function buildModal(editor, cvsWrapper) {
         editor.clearLightHelpers();
         window.removeEventListener("lightHelperMoved", onHelperMoved);
         overlay.remove();
+        onClose?.();
     }
 
     // ---- Dialog ----
@@ -167,11 +168,48 @@ function buildModal(editor, cvsWrapper) {
         applyToggle(aaBtn, AA_LABEL, next);
     };
 
+    // ---- 風（そよ風エフェクト）----
+    const windBtn2 = mkToggleBtn("🌬 Wind", editor.getWindEnabled());
+    windBtn2.title = "Spring Bone Physics がONの時のみ効果があります";
+    windBtn2.onclick = () => applyToggle(windBtn2, "🌬 Wind", editor.toggleWindEnabled());
+
+    const windStrLbl = el("span", { style: "font-size:10px;color:#888;" }, "強さ:");
+    const [windStrSl, windStrVl] = mkSl(0, 5, 0.05, editor.getWindStrength(), v => editor.setWindStrength(v));
+    windStrSl.style.cssText += ";width:70px;flex:none;";
+
+    const windDirLbl = el("span", { style: "font-size:10px;color:#888;" }, "向き:");
+    const [windDirSl, windDirVl] = mkSl(0, 360, 1, editor.getWindDirection(),
+        v => editor.setWindDirection(v),
+        v => v.toFixed(0) + "°");
+    windDirSl.style.cssText += ";width:70px;flex:none;";
+
+    const windGustLbl = el("span", { style: "font-size:10px;color:#888;" }, "そよぎ:");
+    const [windGustSl, windGustVl] = mkSl(0, 1, 0.01, editor.getWindTurbulence(), v => editor.setWindTurbulence(v));
+    windGustSl.style.cssText += ";width:70px;flex:none;";
+
+    // 風の発生源マーカー(ONの間はプレビュー内のオレンジのコーンをドラッグして向きを指定でき、
+    // 「向き」スライダーは無効化される)
+    function _syncWindDirDisabled(disabled) {
+        windDirSl.disabled = disabled;
+        windDirSl.style.opacity = disabled ? "0.4" : "1";
+        windDirVl.style.opacity = disabled ? "0.4" : "1";
+    }
+    const windSrcBtn = mkToggleBtn("🧭 発生源", editor.getWindSourceEnabled());
+    windSrcBtn.title = "ONにするとプレビュー内のオレンジのコーンをドラッグして風向きを指定できます(「向き」スライダーは無効化されます)";
+    windSrcBtn.onclick = () => {
+        const on = editor.toggleWindSourceEnabled();
+        applyToggle(windSrcBtn, "🧭 発生源", on);
+        _syncWindDirDisabled(on);
+    };
+    _syncWindDirDisabled(editor.getWindSourceEnabled());
+
     sceneBar.append(
         groundBtn, groundYLbl, groundYSl, groundYVl,
         sep(), bgWallBtn, bgZLbl, bgZSl, bgZVl,
         shadowLbl, shadowSel,
-        sep(), zoomModeBtn, aaBtn
+        sep(), zoomModeBtn, aaBtn,
+        sep(), windBtn2, windStrLbl, windStrSl, windStrVl,
+        windSrcBtn, windDirLbl, windDirSl, windDirVl, windGustLbl, windGustSl, windGustVl
     );
 
     // ---- Surface bar (color / texture) ----

@@ -413,10 +413,149 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     }
 
     // ================================================================
+    // Wind physics（風エフェクト・そよ風）
+    // ================================================================
+    // three-vrmには風専用のAPIが存在しないため、VRMSpringBoneJointが公開している
+    // settings.gravityDir / settings.gravityPower（ミュータブルなプレーンオブジェクト）を
+    // 毎フレーム動的に上書きし、「モデル本来の重力ベクトル + 時間変動する風ベクトル」の
+    // 合成結果を注入することで実現する（vendorのthree-vrm.module.jsは無改造）。
+    // Spring Bone物理自体がOFF(delta=0)の間はVRMSpringBoneJoint.update()が即returnして
+    // gravityDir/gravityPowerを読まないため、風は自動的に無効化される。
+    let _windEnabled = false;
+    let _windStrength = 1.0;    // gravityPowerと同スケールの無次元値
+    let _windDirectionDeg = 0;  // 水平面の風向き(度数)。0°=ワールド+Z方向、90°=+X方向
+    let _windTurbulence = 0.4;  // そよぎの度合い 0(一定風)〜1(強いガスト)
+
+    // joint -> { dir: THREE.Vector3, power: number }  ロード時点の「本来の重力設定」
+    const _origJointGravity = new Map();
+    let _windWasApplied = false; // 直前フレームで風を適用していたか(OFF定常状態での書き込み省略用)
+    const _windTmpVecA = new THREE.Vector3();
+    const _windTmpVecB = new THREE.Vector3();
+
+    function _captureOriginalJointGravity() {
+        _origJointGravity.clear();
+        const joints = currentVRM?.springBoneManager?.joints;
+        if (!joints) return;
+        joints.forEach(joint => {
+            _origJointGravity.set(joint, {
+                dir: joint.settings.gravityDir.clone(),
+                power: joint.settings.gravityPower,
+            });
+        });
+    }
+
+    // 風ベクトル（ワールド空間・水平面、gravityDir*gravityPowerと同スケール）を計算
+    function _computeWindVector(t, out) {
+        // 強さのゆらぎ(ガスト): 周期の異なる3つのsin波を重ねる(合計振幅1.0で正規化)
+        const gust =
+            0.55 * Math.sin(2 * Math.PI * t / 6.7) +
+            0.30 * Math.sin(2 * Math.PI * t / 2.3 + 1.7) +
+            0.15 * Math.sin(2 * Math.PI * t / 0.9 + 4.1);
+        const strength = Math.max(0, _windStrength * (1 + _windTurbulence * gust));
+
+        // 向きのゆらぎ(そよぎ): ガストより長い周期で±18°、短い周期で±7°揺れる
+        const swayDeg =
+            18 * Math.sin(2 * Math.PI * t / 5.3 + 0.6) +
+            7  * Math.sin(2 * Math.PI * t / 1.6 + 2.9);
+        const angleRad = (_windDirectionDeg + _windTurbulence * swayDeg) * Math.PI / 180;
+
+        return out.set(Math.sin(angleRad), 0, Math.cos(angleRad)).multiplyScalar(strength);
+    }
+
+    // ---- 風の発生源マーカー(視線(LookAt)と同様にドラッグ可能な3Dオブジェクトで向きを指定) ----
+    // モデル非依存の固定基準点方式: マーカー位置 → _windSourceRefPoint への方向を風向きとして使う。
+    const _windSourceRefPoint = new THREE.Vector3(0, 1, 0); // orbit.targetと同じ固定基準点
+    const _windWorldUp = new THREE.Vector3(0, 1, 0);
+    const _windAxisAlt = new THREE.Vector3(1, 0, 0); // baseDirがほぼ垂直な時のフォールバック軸
+
+    const windSourceHelperGeo = new THREE.ConeGeometry(0.08, 0.26, 16);
+    windSourceHelperGeo.rotateX(-Math.PI / 2); // 先端がローカル-Z方向を向くようにし、lookAt()で基準点を指せるようにする
+    const windSourceHelperMesh = new THREE.Mesh(
+        windSourceHelperGeo,
+        new THREE.MeshBasicMaterial({ color: 0xff8c00, transparent: true, opacity: 0.85, depthTest: false })
+    );
+    windSourceHelperMesh.renderOrder = 100;
+    windSourceHelperMesh.visible = false;
+    windSourceHelperMesh.position.set(2, 1.5, 0); // 風上側の横位置(横風になり効果が視認しやすい)
+    windSourceHelperMesh.lookAt(_windSourceRefPoint);
+    scene.add(windSourceHelperMesh);
+    let _windSourceEnabled = false;
+
+    function _setWindSourceEnabled(v) {
+        _windSourceEnabled = v;
+        windSourceHelperMesh.visible = v;
+    }
+
+    const _windTmpVecC = new THREE.Vector3();
+    const _windTmpRight = new THREE.Vector3();
+    const _windTmpUp = new THREE.Vector3();
+    const _windTmpQuat = new THREE.Quaternion();
+
+    // 発生源マーカーからの風ベクトルを計算(強さのガストは_computeWindVectorと同じ式を再利用し、
+    // 向きのそよぎは「baseDirに直交する疑似上軸まわりの回転」として一般化する)
+    function _computeWindVectorFromSource(t, out) {
+        const gust =
+            0.55 * Math.sin(2 * Math.PI * t / 6.7) +
+            0.30 * Math.sin(2 * Math.PI * t / 2.3 + 1.7) +
+            0.15 * Math.sin(2 * Math.PI * t / 0.9 + 4.1);
+        const strength = Math.max(0, _windStrength * (1 + _windTurbulence * gust));
+
+        _windTmpVecC.subVectors(_windSourceRefPoint, windSourceHelperMesh.position);
+        const baseLen = _windTmpVecC.length();
+        if (baseLen < 1e-6) return out.set(0, 0, 0);
+        const baseDir = _windTmpVecC.multiplyScalar(1 / baseLen);
+
+        const upRef = Math.abs(baseDir.y) > 0.99 ? _windAxisAlt : _windWorldUp;
+        _windTmpRight.crossVectors(upRef, baseDir).normalize();
+        _windTmpUp.crossVectors(baseDir, _windTmpRight).normalize();
+
+        const swayDeg =
+            18 * Math.sin(2 * Math.PI * t / 5.3 + 0.6) +
+            7  * Math.sin(2 * Math.PI * t / 1.6 + 2.9);
+        _windTmpQuat.setFromAxisAngle(_windTmpUp, (_windTurbulence * swayDeg) * Math.PI / 180);
+
+        return out.copy(baseDir).applyQuaternion(_windTmpQuat).multiplyScalar(strength);
+    }
+
+    function _applyWindToSpringBones() {
+        const joints = currentVRM?.springBoneManager?.joints;
+        if (!joints || _origJointGravity.size === 0) return;
+        if (!_windEnabled && !_windWasApplied) return;
+
+        const windVec = _windEnabled
+            ? (_windSourceEnabled
+                ? _computeWindVectorFromSource(performance.now() / 1000, _windTmpVecA)
+                : _computeWindVector(performance.now() / 1000, _windTmpVecA))
+            : null;
+
+        joints.forEach(joint => {
+            const orig = _origJointGravity.get(joint);
+            if (!orig) return;
+
+            if (windVec) {
+                _windTmpVecB.copy(orig.dir).multiplyScalar(orig.power).add(windVec);
+                const len = _windTmpVecB.length();
+                if (len > 1e-6) {
+                    joint.settings.gravityDir.copy(_windTmpVecB).divideScalar(len);
+                    joint.settings.gravityPower = len;
+                } else {
+                    joint.settings.gravityDir.copy(orig.dir);
+                    joint.settings.gravityPower = 0;
+                }
+            } else {
+                joint.settings.gravityDir.copy(orig.dir);
+                joint.settings.gravityPower = orig.power;
+            }
+        });
+        _windWasApplied = !!windVec;
+    }
+
+    // ================================================================
     // Light helper drag (3D)
     // ================================================================
     let _draggingEntry = null;
     let _draggingLookAt = false;
+    let _draggingWindSource = false;
     const _dragPlane = new THREE.Plane();
     const _dragPt    = new THREE.Vector3();
     let _selectedHelperMesh = null;
@@ -431,11 +570,21 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         raycaster.setFromCamera(mouse, camera);
         const targets = _getHelperMeshes();
         if (lookAtHelperMesh.visible) targets.push(lookAtHelperMesh);
+        if (windSourceHelperMesh.visible) targets.push(windSourceHelperMesh);
         const hits = raycaster.intersectObjects(targets);
         if (hits.length > 0) {
             const hit = hits[0];
             if (hit.object === lookAtHelperMesh) {
                 _draggingLookAt = true;
+                const camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                _dragPlane.setFromNormalAndCoplanarPoint(camDir, hit.point);
+                orbit.enabled = false;
+                e.stopImmediatePropagation();
+                return;
+            }
+            if (hit.object === windSourceHelperMesh) {
+                _draggingWindSource = true;
                 const camDir = new THREE.Vector3();
                 camera.getWorldDirection(camDir);
                 _dragPlane.setFromNormalAndCoplanarPoint(camDir, hit.point);
@@ -464,6 +613,15 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             }
             return;
         }
+        if (_draggingWindSource) {
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            if (raycaster.ray.intersectPlane(_dragPlane, _dragPt)) {
+                windSourceHelperMesh.position.copy(_dragPt);
+                windSourceHelperMesh.lookAt(_windSourceRefPoint);
+            }
+            return;
+        }
         if (!_draggingEntry) return;
         updateMouse(e);
         raycaster.setFromCamera(mouse, camera);
@@ -476,6 +634,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
     canvas.addEventListener("pointerup", () => {
         if (_draggingLookAt) { _draggingLookAt = false; orbit.enabled = true; return; }
+        if (_draggingWindSource) { _draggingWindSource = false; orbit.enabled = true; return; }
         if (_draggingEntry) { _draggingEntry = null; orbit.enabled = true; }
     });
 
@@ -704,6 +863,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         }
         interactableBones = [];
         initialPoses.clear();
+        _origJointGravity.clear();
     }
 
     function placeModel(model) {
@@ -788,6 +948,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
             clearModel();
             currentVRM = vrm;
+            _captureOriginalJointGravity();
             // rotateVRM0は使わない（normalized bone座標系を素のまま使うため）
             const model = vrm.scene;
             loadedModel = model;
@@ -941,7 +1102,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     function animate() {
         animFrameId = requestAnimationFrame(animate);
         if (renderer.getContext().isContextLost()) return;
-        if (currentVRM) currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
+        if (currentVRM) {
+            _applyWindToSpringBones();
+            currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
+        }
         orbit.update();
         renderer.render(scene, camera);
 
@@ -1020,6 +1184,20 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         hasSpringBones()          { return !!currentVRM?.springBoneManager; },
         getSpringBoneEnabled()    { return _springBoneEnabled; },
         toggleSpringBoneEnabled() { _springBoneEnabled = !_springBoneEnabled; return _springBoneEnabled; },
+
+        // ---- Wind physics (風エフェクト・そよ風) ----
+        getWindEnabled()      { return _windEnabled; },
+        toggleWindEnabled()   { _windEnabled = !_windEnabled; return _windEnabled; },
+        getWindStrength()     { return _windStrength; },
+        setWindStrength(v)    { _windStrength = v; },
+        getWindDirection()    { return _windDirectionDeg; },
+        setWindDirection(v)   { _windDirectionDeg = v; },
+        getWindTurbulence()   { return _windTurbulence; },
+        setWindTurbulence(v)  { _windTurbulence = v; },
+
+        // ---- Wind source marker (風の発生源マーカー) ----
+        getWindSourceEnabled()    { return _windSourceEnabled; },
+        toggleWindSourceEnabled() { _setWindSourceEnabled(!_windSourceEnabled); return _windSourceEnabled; },
 
         // ---- Light management API (used by light_editor.js) ----
         getLights()          { return managedLights.map(l => l.config); },
@@ -1114,6 +1292,8 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
             const lookAtHelperVisBefore = lookAtHelperMesh.visible;
             lookAtHelperMesh.visible = false;
+            const windSourceHelperVisBefore = windSourceHelperMesh.visible;
+            windSourceHelperMesh.visible = false;
 
             if (currentVRM) currentVRM.update(0);
             renderer.render(scene, camera);
@@ -1136,6 +1316,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             interactableBones.forEach(h => h.visible = true);
             managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
             lookAtHelperMesh.visible = lookAtHelperVisBefore;
+            windSourceHelperMesh.visible = windSourceHelperVisBefore;
             return data;
         },
         resetPose() {

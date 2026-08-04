@@ -107,6 +107,24 @@ app.registerExtension({
                 springBoneBtn.title = `Spring Bone Physics: ${on ? "ON" : "OFF"}`;
             };
 
+            // 風エフェクト(Wind)トグルボタン。詳細パラメータ(強さ・向き・そよぎ)はLight Editor内で調整する
+            const windBtn = makeSmallButton("🌬 OFF", "#444", "Wind: OFF (詳細はLight Editor内で調整)");
+            windBtn.onclick = () => {
+                const on = editor.toggleWindEnabled();
+                windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
+                windBtn.style.background = on ? "#2a6a8a" : "#444";
+                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight Editor内で調整)`;
+            };
+
+            // 風の発生源マーカー(視線と同様にドラッグ可能な3Dオブジェクトで向きを指定)トグルボタン
+            const windSourceBtn = makeSmallButton("🧭 OFF", "#444", "Wind Source Marker: OFF");
+            windSourceBtn.onclick = () => {
+                const on = editor.toggleWindSourceEnabled();
+                windSourceBtn.textContent = on ? "🧭 ON" : "🧭 OFF";
+                windSourceBtn.style.background = on ? "#c07a20" : "#444";
+                windSourceBtn.title = `Wind Source Marker: ${on ? "ON (drag the orange cone)" : "OFF"}`;
+            };
+
             // 背景画像ロードボタン
             const bgBtn = makeSmallButton("BG", "#3a6a4a", "Load background image");
             const bgInput = document.createElement("input");
@@ -155,14 +173,16 @@ app.registerExtension({
             btnRow2.appendChild(bgBtn);
             btnRow2.appendChild(bgClearBtn);
             btnRow2.appendChild(bgColorInput);
+            btnRow2.appendChild(savePoseBtn);
+            btnRow2.appendChild(saveToPosesBtn);
+            btnRow2.appendChild(loadPoseBtn);
             // ---- 3行目: 視線・揺れ + ポーズ操作系 ----
             btnRow2b.appendChild(lookAtBtn);
             btnRow2b.appendChild(springBoneBtn);
+            btnRow2b.appendChild(windBtn);
+            btnRow2b.appendChild(windSourceBtn);
             btnRow2b.appendChild(resetBtn);
             btnRow2b.appendChild(mirrorBtn);
-            btnRow2b.appendChild(savePoseBtn);
-            btnRow2b.appendChild(saveToPosesBtn);
-            btnRow2b.appendChild(loadPoseBtn);
             // ---- 4行目: 読み込みファイル名 ----
             btnRow3.appendChild(vrmLabel);
             container.appendChild(btnRow);
@@ -518,7 +538,18 @@ app.registerExtension({
             };
 
             lightBtn.onclick = () => {
-                openLightEditor(editor, cvsWrapper);
+                openLightEditor(editor, cvsWrapper, () => {
+                    // Light Editor内でWind状態が変更された可能性があるためツールバー側の表示を再同期
+                    const on = editor.getWindEnabled();
+                    windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
+                    windBtn.style.background = on ? "#2a6a8a" : "#444";
+                    windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight Editor内で調整)`;
+
+                    const srcOn = editor.getWindSourceEnabled();
+                    windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
+                    windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
+                    windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
+                });
             };
 
             bgColorInput.addEventListener("input", () => editor.setBgColor(bgColorInput.value));

@@ -49,6 +49,8 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 |--------|----------|
 | 👁 | Toggle LookAt target — when ON, drag the cyan marker in the 3D view to steer the eyes/head (no effect if the model has no LookAt data) |
 | 🎐 | Toggle spring bone physics (hair, skirts, etc.) — turning OFF freezes the current sway state |
+| 🌬 | Toggle a breeze wind effect on the spring bones (hair, skirts, etc.) — strength / direction / gustiness are adjusted in the Light Editor; has no effect while 🎐 is OFF |
+| 🧭 | Toggle the wind source marker — when ON, drag the orange cone in the 3D view to set the wind direction (same operation as the LookAt marker); while ON, the "direction" slider in the Light Editor is disabled |
 | RP | Reset pose |
 | ↔ | Mirror pose (flip left ↔ right) |
 | ⬇️ | Download current pose as JSON file |
@@ -66,6 +68,13 @@ When enabled, a cyan marker appears in the 3D view and the model's eyes/head aut
 #### Spring Bone Physics (🎐)
 
 Toggles the sway-bone simulation (hair, skirts, etc.) defined on the VRM. Turning it OFF freezes the sway at its current state instead of resetting to rest pose. On Reset Pose / Load Pose / Mirror, the spring bone internal state is re-anchored to the new pose so it doesn't snap unnaturally right after the switch.
+
+#### Wind Effect (🌬) and Wind Source Marker (🧭)
+
+Adds a gentle breeze to the spring bones (hair, skirts, etc.) on top of the model's own gravity, using a sum of sine waves so the strength and direction gently drift over time instead of blowing in one fixed direction. Since three-vrm has no built-in wind API, this is implemented by overwriting each spring bone joint's `gravityDir`/`gravityPower` every frame with "the model's original gravity vector + the current wind vector" (the vendor `three-vrm` module itself is never modified). Has no effect while 🎐 Spring Bone Physics is OFF (the joint physics loop itself is paused).
+
+- **🌬 Wind**: master ON/OFF toggle. Strength, direction, and gustiness are adjusted with the sliders in the Light Editor's "Wind" section.
+- **🧭 Wind Source Marker**: when ON, an orange cone marker appears in the 3D view, using the exact same drag mechanism as the 👁 LookAt marker. The wind direction is computed as the direction from the marker toward a fixed reference point near the model, so you can steer the wind (including vertical components) just by dragging the cone. While ON, the "direction" slider in the Light Editor is disabled since the marker takes over. The marker is never captured in the output image.
 
 #### Timer Capture (⏱)
 
@@ -191,6 +200,7 @@ Click **💡** on any node to open the Light Editor panel.
 - **Shadow note**: Only DirectionalLight supports `castShadow`. SpotLight / PointLight shadows are incompatible with the VRM MToon shader.
 - **Shadow quality**: None / Soft PCF / Hard selector.
 - **🖱 Ctrl+Right drag zoom**: Toggle in the top scene bar. OFF (default) = scroll wheel zoom. ON = disables wheel zoom and lets you zoom by Ctrl+Right-dragging on empty space — useful when the scroll wheel doesn't zoom on some PCs/mice. This setting also applies to the main preview canvas outside the Light Editor.
+- **🌬 Wind**: master ON/OFF toggle plus three sliders — **strength** (0–5), **direction** (0–360°, disabled while the 🧭 wind source marker is ON), and **gustiness** (0–1, how much the strength/direction drift over time; 0 = steady wind).
 - **📚 Library**: Save and recall complete light presets (all lights + Ground / BG Wall / Shadow settings).
 
 #### Light Library (📚)
@@ -275,6 +285,8 @@ Enable if VRoid Studio / Blender models appear too dark.
 |--------|------|
 | 👁 | 視線ターゲットの ON/OFF。ON にすると 3D ビュー内のシアン色マーカーをドラッグして目・頭の向きを誘導できる（モデルに LookAt 情報が無い場合は効果なし） |
 | 🎐 | 揺れ物理（髪・スカート等）の ON/OFF。OFF にすると現在の揺れ具合のまま固定される |
+| 🌬 | 揺れボーン（髪・スカート等）にそよ風エフェクトを加える ON/OFF。強さ・向き・そよぎはライトエディタで調整。🎐 が OFF の間は効果なし |
+| 🧭 | 風の発生源マーカーの ON/OFF。ON にすると 3D ビュー内のオレンジ色のコーンをドラッグして風向きを指定できる（視線マーカーと同じ操作方法）。ON の間、ライトエディタの「向き」スライダーは無効化される |
 | RP | ポーズをリセット |
 | ↔ | ポーズを左右反転 |
 | ⬇️ | 現在のポーズを JSON ファイルとしてダウンロード |
@@ -292,6 +304,13 @@ ON にすると 3D ビュー内にシアン色のマーカーが表示され、�
 #### 揺れ物理（🎐）
 
 VRM に定義された揺れボーン（髪・スカート等）の物理シミュレーションの ON/OFF を切り替えます。OFF にすると、リセット姿勢に戻るのではなく現在の揺れ具合のまま固定されます。ポーズリセット・ポーズ読込・ミラー実行の直後は揺れボーンの内部状態を新しいポーズに再アンカーするため、切替直後に不自然に跳ねることはありません。
+
+#### 風エフェクト（🌬）と発生源マーカー（🧭）
+
+揺れボーン（髪・スカート等）に、モデル本来の重力に加えてそよ風を吹かせる機能です。複数のsin波を合成することで、風の強さ・向きが一定方向に吹き続けるのではなく時間とともに緩やかに揺らぐようにしています。three-vrmには風専用のAPIが存在しないため、各揺れボーンの`gravityDir`/`gravityPower`を毎フレーム「モデル本来の重力ベクトル＋現在の風ベクトル」で上書きすることで実現しています（vendorの`three-vrm`本体は無改造）。🎐揺れ物理がOFFの間はジョイント物理演算自体が停止するため、風の効果もありません。
+
+- **🌬 風**: 全体のON/OFFトグル。強さ・向き・そよぎは、ライトエディタの「Wind」セクション内のスライダーで調整します。
+- **🧭 発生源マーカー**: ONにすると3Dビュー内にオレンジ色のコーンマーカーが表示されます。操作方法は👁視線マーカーと全く同じドラッグ方式です。風向きは「マーカー位置からモデル付近の固定基準点への方向」として計算されるため、コーンをドラッグするだけで（上下方向を含む）風向きを自由に指定できます。ONの間はマーカーが向きを決定するため、ライトエディタの「向き」スライダーは無効化されます。マーカー自体は出力画像には写り込みません。
 
 #### タイマーキャプチャ（⏱）
 
@@ -370,6 +389,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 - **黄色球体をドラッグ**してプレビュー内でライトを 3D 移動。
 - **シャドウ注意**: DirectionalLight のみ `castShadow` 対応。SpotLight/PointLight のシャドウは VRM MToon シェーダーと非互換。
 - **🖱 Ctrl+右ドラッグでズーム**: 上部の Scene バーにあるトグルスイッチ。OFF（既定）＝マウスホイールでズーム。ON＝ホイールズームを無効化し、何もない場所での Ctrl+右ドラッグでズームできるようにする。マウスやドライバの相性でホイールズームが効かない環境向け。この設定はライトエディタ外のメインプレビューキャンバスにも適用される。
+- **🌬 Wind**: 全体のON/OFFトグルと、3つのスライダー — **強さ**（0〜5）・**向き**（0〜360°、🧭発生源マーカーがONの間は無効化）・**そよぎ**（0〜1、強さ・向きが時間とともにどれだけ揺らぐか。0＝一定の風）。
 - **📚 Library**: ライト設定プリセット（全ライト ＋ Ground / BG Wall / Shadow 設定）の保存・呼び出し。
 
 #### ライトライブラリ（📚）
@@ -453,6 +473,8 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Zoom mode**: wheel zoom (default) or Ctrl+Right-drag zoom, toggled from the Light Editor scene bar (`editor.getZoomMode()` / `setZoomMode()`). Persisted in `localStorage` (`vrmPoseEditor_zoomMode`), shared across all ComfyUI nodes and pages on the same origin
 - **Light presets**: full scene snapshot (all lights + Ground/Wall/Shadow values); texture images excluded; stored server-side as JSON files
 - **Core module**: `js/pose_editor_core.js` exports `initPoseEditor3D()` with zero ComfyUI dependency, so it can be imported directly from external pages (e.g. `/extensions/comfyui-vrm-pose-editor/pose_editor_core.js`) alongside `light_editor.js` / `pose_library.js`
+- **Wind effect**: implemented entirely in `pose_editor_core.js` by overwriting each `VRMSpringBoneJoint`'s `settings.gravityDir`/`gravityPower` every frame (`_applyWindToSpringBones()`), computed as "the joint's original gravity vector (captured on model load) + a wind vector"; the vendor `three-vrm` module is unmodified. The wind vector is a sum of sine waves at several periods so strength and direction gust gently over time (`_computeWindVector()` for the angle-slider mode, `_computeWindVectorFromSource()` for the marker mode — the latter builds a pseudo-up axis orthogonal to the marker→reference-point direction and rotates the gust around it, so it generalizes cleanly to any 3D direction). Has no effect while spring bone physics is OFF, since `VRMSpringBoneJoint.update()` returns immediately when `delta <= 0`.
+- **Wind source marker**: a cone mesh (`windSourceHelperMesh`) added to the scene and hidden by default, reusing the exact same pointerdown/move/up drag-on-a-camera-facing-plane logic as the 👁 LookAt marker. It is excluded from `capture()` output the same way the LookAt marker is.
 
 ---
 
