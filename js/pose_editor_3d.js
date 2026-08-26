@@ -372,6 +372,66 @@ app.registerExtension({
             cpPanel.appendChild(cpValLabel);
             container.appendChild(cpPanel);
 
+            // ---- カメラFOV(画角)パネル ----
+            const fovPanel = document.createElement("div");
+            fovPanel.style.cssText = "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;display:flex;align-items:center;gap:6px;";
+
+            const fovLabel = document.createElement("span");
+            fovLabel.textContent = "FOV";
+            fovLabel.style.cssText = "font-size:11px;color:#ccc;font-weight:bold;white-space:nowrap;";
+
+            const fovSlider = document.createElement("input");
+            fovSlider.type = "range";
+            fovSlider.min = "10"; fovSlider.max = "120"; fovSlider.step = "1";
+            fovSlider.value = "45";
+            fovSlider.style.cssText = "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;";
+
+            const fovValLabel = document.createElement("span");
+            fovValLabel.textContent = "45";
+            fovValLabel.style.cssText = "font-size:10px;color:#aaa;width:24px;text-align:right;flex-shrink:0;";
+
+            fovSlider.addEventListener("input", () => {
+                const v = parseFloat(fovSlider.value);
+                fovValLabel.textContent = String(v);
+                editor.setFov(v);
+            });
+            fovSlider.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+            fovPanel.appendChild(fovLabel);
+            fovPanel.appendChild(fovSlider);
+            fovPanel.appendChild(fovValLabel);
+            container.appendChild(fovPanel);
+
+            // ---- カメラNear(ニアクリップ)パネル ----
+            const nearPanel = document.createElement("div");
+            nearPanel.style.cssText = "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;display:flex;align-items:center;gap:6px;";
+
+            const nearLabel = document.createElement("span");
+            nearLabel.textContent = "Near";
+            nearLabel.style.cssText = "font-size:11px;color:#ccc;font-weight:bold;white-space:nowrap;";
+
+            const nearSlider = document.createElement("input");
+            nearSlider.type = "range";
+            nearSlider.min = "0.01"; nearSlider.max = "5"; nearSlider.step = "0.01";
+            nearSlider.value = "0.1";
+            nearSlider.style.cssText = "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;";
+
+            const nearValLabel = document.createElement("span");
+            nearValLabel.textContent = "0.10";
+            nearValLabel.style.cssText = "font-size:10px;color:#aaa;width:28px;text-align:right;flex-shrink:0;";
+
+            nearSlider.addEventListener("input", () => {
+                const v = parseFloat(nearSlider.value);
+                nearValLabel.textContent = v.toFixed(2);
+                editor.setNear(v);
+            });
+            nearSlider.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+            nearPanel.appendChild(nearLabel);
+            nearPanel.appendChild(nearSlider);
+            nearPanel.appendChild(nearValLabel);
+            container.appendChild(nearPanel);
+
             morphPanel.appendChild(morphHeader);
             morphPanel.appendChild(morphBody);
             container.appendChild(morphPanel);
@@ -384,7 +444,7 @@ app.registerExtension({
                     node.setDirtyCanvas(true, true);
                 } else {
                     const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 140) : 0;
-                    node.size = [430, 572 + morphH];
+                    node.size = [430, 624 + morphH];
                     node.setDirtyCanvas(true, true);
                 }
             }
@@ -448,7 +508,7 @@ app.registerExtension({
             });
             domWidget.computeSize = function() {
                 const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
-                return [430, 572 + morphH];
+                return [430, 624 + morphH];
             };
 
             node.resizable = false;

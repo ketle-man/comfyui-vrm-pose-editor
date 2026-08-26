@@ -50,6 +50,22 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     let isOrtho = false;
     let camera = perspCamera;
 
+    // Perspective カメラの画角(FOV)を変更する。Ortho 表示中は見た目のサイズも追随させる
+    function setFov(deg) {
+        perspCamera.fov = Math.min(170, Math.max(1, deg));
+        perspCamera.updateProjectionMatrix();
+        if (isOrtho) switchCamera(true);
+    }
+
+    // ニアクリップ面を変更する（Perspective/Ortho両カメラに適用）
+    function setNear(v) {
+        const n = Math.min(perspCamera.far - 0.01, Math.max(0.001, v));
+        perspCamera.near = n;
+        perspCamera.updateProjectionMatrix();
+        orthoCamera.near = n;
+        orthoCamera.updateProjectionMatrix();
+    }
+
     // Perspective ↔ Orthographic 切り替え
     // Ortho のサイズは「現在のカメラ距離 × tan(fov/2)」で Perspective と同じ高さに合わせる
     function switchCamera(toOrtho) {
@@ -1339,6 +1355,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             orbit.update();
         },
         switchCamera,
+        setFov,
+        getFov() { return perspCamera.fov; },
+        setNear,
+        getNear() { return perspCamera.near; },
         loadVRM,
         loadVRMFromBuffer(buffer, url, onComplete) {
             lastLoadedBuffer = buffer;

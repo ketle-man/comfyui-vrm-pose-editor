@@ -117,6 +117,15 @@ While the timer is running, the **📸 Capture** button does **not** flash — o
 
 > On some PCs the scroll wheel does not zoom (mouse/driver dependent). Open the **Light Editor (💡)** and toggle **🖱 Ctrl+Right drag zoom** in the top scene bar to switch from wheel zoom to Ctrl+Right-drag zoom.
 
+### Camera Parameters (FOV / Near)
+
+Two sliders below the preview (under **Point Size**) adjust the Perspective camera in real time:
+
+| Slider | Range | Default | Effect |
+|--------|-------|---------|--------|
+| FOV | 10° – 120° | 45° | Field of view. While in Orthographic mode, the ortho frustum size is recomputed to match (`distance × tan(fov/2)`) so the two modes stay visually consistent |
+| Near | 0.01 – 5 | 0.1 | Near clipping plane, applied to both Perspective and Orthographic cameras. Raise it only if you need to fix z-fighting; too high a value clips away geometry close to the camera |
+
 ### Bone Controls
 
 Drag the blue control points on each bone joint.
@@ -353,6 +362,15 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 > PC 環境によってはマウスホイールでズームできない場合があります（マウス・ドライバ依存）。**ライトエディタ（💡）** を開き、上部の Scene バーにある **🖱 Ctrl+右ドラッグでズーム** をトグルすると、ホイールズームから Ctrl+右ドラッグズームに切り替えられます。
 
+### カメラパラメータ（FOV / Near）
+
+プレビュー下部（**Point Size** の下）にある2つのスライダーで、Perspective カメラをリアルタイムに調整できます。
+
+| スライダー | 範囲 | 既定値 | 効果 |
+|-----------|------|--------|------|
+| FOV | 10°〜120° | 45° | 画角。Orthographic 表示中は `距離 × tan(fov/2)` でOrthoのサイズを再計算し、両モードの見た目を一致させる |
+| Near | 0.01〜5 | 0.1 | ニアクリップ面。Perspective / Orthographic 両カメラに適用される。Zファイティング対策以外では上げる必要はなく、大きくしすぎるとカメラに近いジオメトリがクリップされて消える |
+
 ### ボーン操作
 
 ボーン上の青い点（コントロールポイント）をドラッグします。
@@ -462,7 +480,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Pose Library API**: aiohttp routes registered via `@PromptServer.instance.routes`
 - **Light Library API**: `GET/POST /light_library/*` — presets stored in `.light_library/` as `l_HHMMSS.json`
 - **Capture**: letterbox-cropped to output aspect ratio (no stretching)
-- **Camera**: Perspective (FOV 45°) / Orthographic toggle
+- **Camera**: Perspective (FOV adjustable 10–120°, default 45°, via node slider) / Orthographic toggle; Near clip plane adjustable (0.01–5, default 0.1, shared by both cameras) via node slider
 - **Pose JSON**: version 2 (quaternion + `vrmVersion` tag, VRM0/VRM1 cross-compatible)
 - **VRM0 quaternion**: Unity left-hand → Three.js right-hand `(x, y, -z, -w)`
 - **VRM1 quaternion**: VRM0 conversion + VRM0→VRM1 `(x, -y, z, -w)`
