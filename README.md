@@ -31,6 +31,7 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 | RC | Reset camera |
 | OT / PR | Toggle Orthographic / Perspective camera |
 | VRM | Load VRM / GLB / GLTF file from local disk |
+| VRMA | Load a `.vrma` animation and play it back on the current VRM (see [VRMA Animation Playback](#vrma-animation-playback-vrma) below) |
 | CC | Color correction ON/OFF (sRGB + ACES Filmic) |
 
 **Row 2** (library / lights / background)
@@ -75,6 +76,24 @@ Adds a gentle breeze to the spring bones (hair, skirts, etc.) on top of the mode
 
 - **🌬 Wind**: master ON/OFF toggle. Strength, direction, and gustiness are adjusted with the sliders in the Light Editor's "Wind" section.
 - **🧭 Wind Source Marker**: when ON, an orange cone marker appears in the 3D view, using the exact same drag mechanism as the 👁 LookAt marker. The wind direction is computed as the direction from the marker toward a fixed reference point near the model, so you can steer the wind (including vertical components) just by dragging the cone. While ON, the "direction" slider in the Light Editor is disabled since the marker takes over. The marker is never captured in the output image.
+
+#### VRMA Animation Playback (VRMA)
+
+Load a `.vrma` (VRM Animation) file and play it back on the currently loaded VRM, then pause on any frame to use it as a regular still pose — 📸 Capture / 💾 Save / ⬇️ Download all work exactly as before on the paused frame, and bones can even be nudged further with the normal drag controls.
+
+**Requires a VRM model with humanoid bones already loaded** — plain GLB/GLTF models are not supported, since retargeting relies on the VRM humanoid rig.
+
+Usage:
+
+1. Load a VRM, then click **VRMA** (or drop a `.vrma` file onto the canvas) to load an animation clip.
+2. **▶ / ⏸** toggles playback. Drag the seek bar to scrub to any frame — dragging automatically pauses playback.
+3. While paused, use 📸 / 💾 / ⬇️ as usual to capture or save that frame as a still pose.
+4. **✕** unloads the animation and hides the timeline panel.
+
+Notes:
+
+- Loading a new VRM/GLB/GLTF model clears the currently loaded VRMA.
+- While a VRMA is loaded, the 👁 LookAt marker is temporarily disabled (its target is cleared) to avoid fighting with the animation's own look-at track, if any. It's restored automatically once the VRMA is unloaded.
 
 #### Timer Capture (⏱)
 
@@ -276,6 +295,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 | RC | カメラをリセット |
 | OT / PR | Orthographic / Perspective カメラを切り替え |
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
+| VRMA | `.vrma` アニメーションを読み込み、現在の VRM 上で再生（後述の[VRMAアニメーション再生](#vrmaアニメーション再生vrma)を参照） |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
 
 **2行目**（ライブラリ・ライト・背景）
@@ -320,6 +340,24 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 - **🌬 風**: 全体のON/OFFトグル。強さ・向き・そよぎは、ライトエディタの「Wind」セクション内のスライダーで調整します。
 - **🧭 発生源マーカー**: ONにすると3Dビュー内にオレンジ色のコーンマーカーが表示されます。操作方法は👁視線マーカーと全く同じドラッグ方式です。風向きは「マーカー位置からモデル付近の固定基準点への方向」として計算されるため、コーンをドラッグするだけで（上下方向を含む）風向きを自由に指定できます。ONの間はマーカーが向きを決定するため、ライトエディタの「向き」スライダーは無効化されます。マーカー自体は出力画像には写り込みません。
+
+#### VRMAアニメーション再生（VRMA）
+
+`.vrma`（VRM Animation）ファイルを読み込んで、現在ロード中のVRM上で再生できます。任意のフレームで一時停止すれば、通常の静止ポーズと全く同じように扱えます — 📸 Capture / 💾 Save / ⬇️ Download はそのフレームに対してそのまま動作し、一時停止中であれば通常のドラッグ操作でボーンをさらに微調整することもできます。
+
+**ヒューマノイドボーンを持つVRMモデルが読み込み済みであることが前提**です（プレーンなGLB/GLTFモデルには対応していません。VRMヒューマノイドリグへのリターゲットに依存しているため）。
+
+使い方:
+
+1. VRMを読み込んでから **VRMA** ボタンをクリック（またはキャンバスに`.vrma`ファイルをドロップ）してアニメーションクリップを読み込む。
+2. **▶ / ⏸** で再生・一時停止を切り替え。シークバーをドラッグすると任意のフレームへ移動でき、ドラッグ操作で自動的に一時停止します。
+3. 一時停止中は通常通り📸 / 💾 / ⬇️でそのフレームを静止ポーズとしてキャプチャ・保存できます。
+4. **✕** でアニメーションをアンロードし、タイムラインパネルを非表示にします。
+
+注意点:
+
+- 新しいVRM/GLB/GLTFモデルを読み込むと、読み込み中のVRMAはクリアされます。
+- VRMAが読み込まれている間、👁視線ターゲットマーカーは一時的に無効化されます（targetがクリアされます）。これはアニメーション自身が持つ視線トラックとの競合を避けるためです。VRMAをアンロードすると自動的に復元されます。
 
 #### タイマーキャプチャ（⏱）
 
@@ -493,6 +531,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Core module**: `js/pose_editor_core.js` exports `initPoseEditor3D()` with zero ComfyUI dependency, so it can be imported directly from external pages (e.g. `/extensions/comfyui-vrm-pose-editor/pose_editor_core.js`) alongside `light_editor.js` / `pose_library.js`
 - **Wind effect**: implemented entirely in `pose_editor_core.js` by overwriting each `VRMSpringBoneJoint`'s `settings.gravityDir`/`gravityPower` every frame (`_applyWindToSpringBones()`), computed as "the joint's original gravity vector (captured on model load) + a wind vector"; the vendor `three-vrm` module is unmodified. The wind vector is a sum of sine waves at several periods so strength and direction gust gently over time (`_computeWindVector()` for the angle-slider mode, `_computeWindVectorFromSource()` for the marker mode — the latter builds a pseudo-up axis orthogonal to the marker→reference-point direction and rotates the gust around it, so it generalizes cleanly to any 3D direction). Has no effect while spring bone physics is OFF, since `VRMSpringBoneJoint.update()` returns immediately when `delta <= 0`.
 - **Wind source marker**: a cone mesh (`windSourceHelperMesh`) added to the scene and hidden by default, reusing the exact same pointerdown/move/up drag-on-a-camera-facing-plane logic as the 👁 LookAt marker. It is excluded from `capture()` output the same way the LookAt marker is.
+- **VRMA playback**: [@pixiv/three-vrm-animation 2.1.0](https://github.com/pixiv/three-vrm/tree/release/packages/three-vrm-animation) (bundled locally in `js/vendor/`, matching the existing three-vrm 2.1.0). `.vrma` files are loaded through a dedicated `GLTFLoader` instance with `VRMAnimationLoaderPlugin` registered, retargeted onto the current VRM's normalized humanoid bones via `createVRMAnimationClip()`, and played with a `THREE.AnimationMixer(vrm.scene)`. Playback is driven by an explicit `_vrmaPlaying` flag rather than `AnimationAction.paused` (the latter also zeroes out `deltaTime` during a `mixer.update()`-based seek, which would break scrubbing); pausing simply stops calling `mixer.update()` each frame, so `exportPose()`/`capture()` see the frozen bone quaternions with no changes needed on their end. Because a VRMA's own LookAt track (if present) drives `vrm.lookAt` directly via `VRMLookAtQuaternionProxy`, the 👁 LookAt marker's `target` is cleared for the duration a VRMA is loaded to avoid the two fighting over the same output.
 
 ---
 

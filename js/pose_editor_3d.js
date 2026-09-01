@@ -62,6 +62,13 @@ app.registerExtension({
             vrmInput.style.display = "none";
             vrmBtn.onclick = () => vrmInput.click();
 
+            const vrmaBtn = makeSmallButton("VRMA", "#3a7a9a", "Load .vrma animation onto the current VRM");
+            const vrmaInput = document.createElement("input");
+            vrmaInput.type = "file";
+            vrmaInput.accept = ".vrma";
+            vrmaInput.style.display = "none";
+            vrmaBtn.onclick = () => vrmaInput.click();
+
             const savePoseBtn    = makeSmallButton("⬇️", "#4a7a4a", "Download the pose");
             const saveToPosesBtn = makeSmallButton("💾", "#4a6a8a", "Save pose to poses/");
             const loadPoseBtn    = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
@@ -163,8 +170,10 @@ app.registerExtension({
             btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
+            btnRow.appendChild(vrmaBtn);
             btnRow.appendChild(ccBtn);
             btnRow.appendChild(vrmInput);
+            btnRow.appendChild(vrmaInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
             // ---- 2行目: ライブラリ・ライト + 背景系 ----
@@ -372,6 +381,41 @@ app.registerExtension({
             cpPanel.appendChild(cpValLabel);
             container.appendChild(cpPanel);
 
+            // ---- VRMAタイムラインパネル（.vrma読込後のみ表示） ----
+            const vrmaPanel = document.createElement("div");
+            vrmaPanel.style.cssText =
+                "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;" +
+                "display:none;align-items:center;gap:6px;";
+
+            const vrmaPlayBtn = document.createElement("button");
+            vrmaPlayBtn.textContent = "▶";
+            vrmaPlayBtn.style.cssText =
+                "padding:3px 8px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
+                "cursor:pointer;font-size:11px;flex-shrink:0;";
+
+            const vrmaSeek = document.createElement("input");
+            vrmaSeek.type = "range";
+            vrmaSeek.min = "0"; vrmaSeek.max = "1"; vrmaSeek.step = "0.001"; vrmaSeek.value = "0";
+            vrmaSeek.style.cssText = "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;";
+            vrmaSeek.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+            const vrmaTimeLabel = document.createElement("span");
+            vrmaTimeLabel.style.cssText = "font-size:10px;color:#aaa;white-space:nowrap;flex-shrink:0;";
+            vrmaTimeLabel.textContent = "0.0 / 0.0s";
+
+            const vrmaEjectBtn = document.createElement("button");
+            vrmaEjectBtn.textContent = "✕";
+            vrmaEjectBtn.title = "Unload VRMA animation";
+            vrmaEjectBtn.style.cssText =
+                "padding:3px 7px;background:#5a3a3a;color:#fff;border:none;border-radius:3px;" +
+                "cursor:pointer;font-size:11px;flex-shrink:0;";
+
+            vrmaPanel.appendChild(vrmaPlayBtn);
+            vrmaPanel.appendChild(vrmaSeek);
+            vrmaPanel.appendChild(vrmaTimeLabel);
+            vrmaPanel.appendChild(vrmaEjectBtn);
+            container.appendChild(vrmaPanel);
+
             // ---- カメラFOV(画角)パネル ----
             const fovPanel = document.createElement("div");
             fovPanel.style.cssText = "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;display:flex;align-items:center;gap:6px;";
@@ -444,7 +488,8 @@ app.registerExtension({
                     node.setDirtyCanvas(true, true);
                 } else {
                     const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 140) : 0;
-                    node.size = [430, 624 + morphH];
+                    const vrmaH = vrmaPanel.style.display !== "none" ? 34 : 0;
+                    node.size = [430, 624 + morphH + vrmaH];
                     node.setDirtyCanvas(true, true);
                 }
             }
@@ -508,7 +553,8 @@ app.registerExtension({
             });
             domWidget.computeSize = function() {
                 const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
-                return [430, 624 + morphH];
+                const vrmaH = vrmaPanel.style.display !== "none" ? 34 : 0;
+                return [430, 624 + morphH + vrmaH];
             };
 
             node.resizable = false;
@@ -612,6 +658,83 @@ app.registerExtension({
                 });
             };
 
+            // ---- VRMAタイムライン制御 ----
+            let _vrmaUISyncId = null; // UI表示をplayback timeへ追従させるrAFループ
+
+            function _formatVrmaTime() {
+                const dur = editor.getVRMADuration();
+                const t = editor.getVRMATime();
+                vrmaTimeLabel.textContent = `${t.toFixed(1)} / ${dur.toFixed(1)}s`;
+                vrmaSeek.value = String(t);
+            }
+
+            function _startVrmaUISync() {
+                if (_vrmaUISyncId !== null) return;
+                const tick = () => {
+                    if (!editor.isVRMAPlaying()) { _vrmaUISyncId = null; return; }
+                    _formatVrmaTime();
+                    _vrmaUISyncId = requestAnimationFrame(tick);
+                };
+                _vrmaUISyncId = requestAnimationFrame(tick);
+            }
+
+            function _setVrmaPlayingUI(playing) {
+                vrmaPlayBtn.textContent = playing ? "⏸" : "▶";
+                if (playing) _startVrmaUISync();
+            }
+
+            vrmaPlayBtn.onclick = () => {
+                if (editor.isVRMAPlaying()) {
+                    editor.pauseVRMA();
+                    _setVrmaPlayingUI(false);
+                } else {
+                    editor.playVRMA();
+                    _setVrmaPlayingUI(true);
+                }
+            };
+
+            // スライダー操作時は自動的に一時停止してスクラブに専念させる
+            vrmaSeek.addEventListener("pointerdown", () => {
+                if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setVrmaPlayingUI(false); }
+            });
+            vrmaSeek.addEventListener("input", () => {
+                editor.seekVRMA(parseFloat(vrmaSeek.value));
+                _formatVrmaTime();
+            });
+
+            vrmaEjectBtn.onclick = () => {
+                editor.clearVRMA();
+                vrmaPanel.style.display = "none";
+                updateNodeSize();
+            };
+
+            vrmaInput.addEventListener("change", (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                loadVrmaFile(file);
+                vrmaInput.value = "";
+            });
+
+            function loadVrmaFile(file) {
+                vrmaBtn.textContent = "⏳";
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    editor.loadVRMAFromBuffer(ev.target.result, () => {
+                        vrmaBtn.textContent = "VRMA";
+                        vrmaSeek.max = String(editor.getVRMADuration());
+                        vrmaSeek.value = "0";
+                        _formatVrmaTime();
+                        vrmaPanel.style.display = "flex";
+                        _setVrmaPlayingUI(false);
+                        updateNodeSize();
+                    }, (msg) => {
+                        vrmaBtn.textContent = "VRMA";
+                        alert("VRMA load error: " + msg);
+                    });
+                };
+                reader.readAsArrayBuffer(file);
+            }
+
             bgColorInput.addEventListener("input", () => editor.setBgColor(bgColorInput.value));
 
             resetBtn.onclick   = () => editor.resetPose();
@@ -658,6 +781,10 @@ app.registerExtension({
                         URL.revokeObjectURL(url);
                         vrmBtn.textContent = "VRM";
                         vrmBtn.style.background = "#7a5a9a";
+                        // モデル切替でコア側のVRMA状態はクリア済み(clearModel→_clearVRMA)。UI側も追従させる
+                        vrmaPanel.style.display = "none";
+                        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+                        updateNodeSize();
                     });
                 };
                 reader.readAsArrayBuffer(file);
@@ -740,6 +867,12 @@ app.registerExtension({
                         return;
                     }
                     loadVrmFile(file);
+                } else if (ext === "vrma") {
+                    if (file.size > MAX_FILE_SIZE) {
+                        alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+                        return;
+                    }
+                    loadVrmaFile(file);
                 }
             });
 
@@ -747,6 +880,7 @@ app.registerExtension({
             // ---- ノード削除時のクリーンアップ ----
             node.onRemoved = function () {
                 if (_timerCapId !== null) { clearInterval(_timerCapId); _timerCapId = null; }
+                if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
                 editor.dispose();
                 delete _nodeModelCache[node.id];
             };
