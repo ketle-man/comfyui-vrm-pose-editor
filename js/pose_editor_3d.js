@@ -506,6 +506,9 @@ app.registerExtension({
                 getValue() { return node.widgets?.find(w => w.name === "image_data")?.value ?? ""; },
                 setValue(v) {},
             });
+            // getValue()がimage_dataと同じ値を返す実装のため、serialize=falseにしないと
+            // ワークフロー保存時にキャプチャ画像(数百KB〜数MB)がimage_dataと二重に書き込まれる
+            domWidget.serialize = false;
             domWidget.computeSize = function() {
                 const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
                 return [430, 624 + morphH];
