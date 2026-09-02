@@ -16,9 +16,13 @@
 // エントリポイント
 // editor: initPoseEditor3D の戻り値（exportPose / exportVrma / loadVRMAFromBuffer 等を持つ）
 // getVrmBuffer: 現在ロード済みのVRMバッファ(ArrayBuffer|null)を返す関数（将来のサムネイル生成用に受け取っておく）
+// getShapeKeys: 現在のシェイプキー一覧 [{name,getValue,setValue}] を返す関数(省略可)。
+//   ポーズと同じキーフレームに束ねて保存し、プレビュー内シーク/再生でのみ補間適用する(.vrma書き出しには含めない)。
+// onShapeKeysApplied: シーク/再生でシェイプキー値を適用した直後に呼ばれるコールバック(省略可)。
+//   呼び出し元のシェイプキー編集UI(スライダー等)を再同期させるためのフック。
 // 戻り値: { el, destroy } — el を呼び出し元のDOMへ追加し、閉じる際に destroy() を呼ぶこと
 // ----------------------------------------------------------------
-export function buildKeyframePanel(editor, getVrmBuffer) {
+export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKeysApplied) {
     const panel = el("div", {
         style: "display:flex;flex-direction:column;background:#16162a;" +
                "border-top:1px solid #2a2a4a;flex-shrink:0;font-family:sans-serif;",
@@ -93,7 +97,8 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     // ----------------------------------------------------------------
     // 状態
     // ----------------------------------------------------------------
-    let keyframes = [];      // { frame:number, label?:string, bones?, camera? } (frame昇順、bones/cameraいずれかまたは両方)
+    let keyframes = [];      // { frame:number, label?:string, bones?, shapeKeys?, camera? } (frame昇順)
+                              // bones/shapeKeysはポーズKFとして束ねて追加/削除される(表情はポーズと同時に変わることが多いため)
     let fps = 24;
     let totalFrames = 60;
     let currentFrame = 0;
@@ -144,12 +149,24 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
             editor.seekVRMA(currentFrame / fps);
         }
         applyCameraForFrame(currentFrame);
+        applyShapeKeysForFrame(currentFrame);
+        // 再生中(rAFループ)からの毎フレーム呼び出しではスライダー全再構築コストを避けるため呼ばない
+        if (!opts.silent) onShapeKeysApplied?.();
         if (!opts.silent) drawTimeline();
     }
 
     // ----------------------------------------------------------------
     // 現在フレームへのキーフレーム追加/上書き・削除
     // ----------------------------------------------------------------
+    // 現在のシェイプキー値のスナップショットを {name: value} で返す。シェイプキーが無ければundefined
+    function captureShapeKeysSnapshot() {
+        const keys = getShapeKeys?.() ?? [];
+        if (keys.length === 0) return undefined;
+        const snap = {};
+        keys.forEach(k => { snap[k.name] = k.getValue?.() ?? 0; });
+        return snap;
+    }
+
     function captureAtCurrentFrame(label, bonesOverride) {
         let bones = bonesOverride;
         if (!bones) {
@@ -157,12 +174,17 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
             if (!json) { alert("No pose data available. Load a VRM model first."); return; }
             bones = JSON.parse(json).bones;
         }
+        const shapeKeys = captureShapeKeysSnapshot();
         const existing = keyframes.find(k => k.frame === currentFrame);
         if (existing) {
             existing.bones = bones;
+            if (shapeKeys) existing.shapeKeys = shapeKeys;
             if (label) existing.label = label;
         } else {
-            keyframes.push({ frame: currentFrame, label: label ?? `Pose ${poseCounter++}`, bones });
+            keyframes.push({
+                frame: currentFrame, label: label ?? `Pose ${poseCounter++}`, bones,
+                ...(shapeKeys ? { shapeKeys } : {}),
+            });
             keyframes.sort((a, b) => a.frame - b.frame);
         }
         ensureTotalFrames();
@@ -172,7 +194,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     }
     addBtn.onclick = () => captureAtCurrentFrame();
 
-    // ポーズのフィールドだけを削除する(cameraが残っていればエントリ自体は維持)。
+    // ポーズ(bones/shapeKeys)のフィールドだけを削除する(cameraが残っていればエントリ自体は維持)。
     // PSD-Figure-Creatorのdeleteキーフレーム実装(pose/camera独立管理)を踏襲。
     function deleteAtCurrentFrame() {
         const idx = keyframes.findIndex(k => k.frame === currentFrame);
@@ -181,6 +203,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
         if (!kf.bones) return;
         delete kf.bones;
         delete kf.label;
+        delete kf.shapeKeys;
         if (!kf.camera) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
@@ -248,6 +271,41 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
             state = (before ?? after).camera;
         }
         editor.setCameraState?.(state);
+    }
+
+    // ----------------------------------------------------------------
+    // シェイプキー(表情)補間 — プレビュー内シーク/再生専用。ポーズ(bones)と同じエントリに束ねて
+    // 保存されるため、shapeKeysを持つエントリ = ポーズKFとほぼ一致する。
+    // ----------------------------------------------------------------
+    function lerpShapeKeysState(a, b, t) {
+        const result = {};
+        for (const name of new Set([...Object.keys(a), ...Object.keys(b)])) {
+            result[name] = lerp(a[name] ?? 0, b[name] ?? 0, t);
+        }
+        return result;
+    }
+
+    function applyShapeKeysForFrame(frame) {
+        const keys = getShapeKeys?.() ?? [];
+        if (keys.length === 0) return;
+        const skKfs = keyframes.filter(k => k.shapeKeys).sort((a, b) => a.frame - b.frame);
+        if (skKfs.length === 0) return;
+        let before = null, after = null;
+        for (const k of skKfs) {
+            if (k.frame <= frame) before = k;
+            if (k.frame >= frame && !after) after = k;
+        }
+        let state;
+        if (before && after) {
+            state = before.frame === after.frame
+                ? before.shapeKeys
+                : lerpShapeKeysState(before.shapeKeys, after.shapeKeys, (frame - before.frame) / (after.frame - before.frame));
+        } else {
+            state = (before ?? after).shapeKeys;
+        }
+        keys.forEach(k => {
+            if (state[k.name] !== undefined) k.setValue?.(state[k.name]);
+        });
     }
 
     // ----------------------------------------------------------------
@@ -514,6 +572,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
             currentFrame = clampFrame(editor.getVRMATime() * fps);
             frameInput.value = String(currentFrame);
             applyCameraForFrame(currentFrame);
+            applyShapeKeysForFrame(currentFrame);
             drawTimeline();
             _uiSyncId = requestAnimationFrame(tick);
         };
@@ -626,6 +685,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
         drawTimeline();
         updateStatus();
         applyCameraForFrame(0);
+        applyShapeKeysForFrame(0);
         schedulePreviewRefresh();
     }
 

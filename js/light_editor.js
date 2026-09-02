@@ -48,7 +48,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose) {
     overlay.focus();
 
     let resizeObserver = null;
-    const keyframePanel = buildKeyframePanel(editor, () => vrmBuffer);
+    const keyframePanel = buildKeyframePanel(editor, () => vrmBuffer, getShapeKeys, () => {
+        // シーク/再生でシェイプキー値が変わった際、Poseタブ表示中ならスライダー表示も追従させる
+        if (activeMainTab === "pose") rebuildShapeKeySliders();
+    });
 
     // モーダルを開いている間に呼び出し元の状態が変化し、cvsWrapperの元の親要素が既にDOMから
     // 失われている（文書に属さなくなっている）ケースがあり得る。この場合でも必ずモーダルを
