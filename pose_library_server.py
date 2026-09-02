@@ -62,7 +62,7 @@ def _file_id(filepath: str) -> str:
 async def list_poses(request):
     """
     GET /pose_library/list[?subdir=<name>]
-    poses/ (またはサブディレクトリ) の .json/.vroidpose 一覧を返す。
+    poses/ (またはサブディレクトリ) の .json/.vroidpose/.vrma 一覧を返す。
     サブディレクトリは再帰スキャンせず1階層のみ。
     """
     subdir = request.rel_url.query.get("subdir", "")
@@ -84,7 +84,7 @@ async def list_poses(request):
     # subdir 指定なし（すべて）は再帰スキャン、指定ありは1階層のみ
     scan = target.rglob if not subdir else target.glob
 
-    for ext in ("*.json", "*.vroidpose"):
+    for ext in ("*.json", "*.vroidpose", "*.vrma"):
         for p in sorted(scan(ext)):
             fid = _file_id(str(p))
             m   = meta.get(fid, {})
@@ -196,6 +196,30 @@ async def get_pose_content(request):
 
 
 # ----------------------------------------------------------------
+# API: VRMAファイル内容取得(バイナリ)
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.get("/pose_library/vrma_content")
+async def get_vrma_content(request):
+    """GET /pose_library/vrma_content?path=... — .vrma(glbバイナリ)をそのまま返す"""
+    filepath = request.rel_url.query.get("path", "")
+    if not filepath:
+        return web.json_response({"error": "path required"}, status=400)
+    p = Path(filepath)
+    try:
+        p.resolve().relative_to(POSES_DIR.resolve())
+    except ValueError:
+        return web.json_response({"error": "access denied"}, status=403)
+    if not p.exists():
+        return web.json_response({"error": "file not found"}, status=404)
+    try:
+        data = p.read_bytes()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+    return web.Response(body=data, content_type="model/gltf-binary")
+
+
+# ----------------------------------------------------------------
 # API: ポーズJSON保存
 # ----------------------------------------------------------------
 
@@ -234,6 +258,52 @@ async def save_pose(request):
         dest = save_dir / f"p_{ts}_{int(datetime.now().microsecond / 1000):03d}.json"
 
     dest.write_text(pose_json, encoding="utf-8")
+    return web.json_response({"ok": True, "path": str(dest), "name": dest.stem})
+
+
+# ----------------------------------------------------------------
+# API: VRMA保存(バイナリ、base64)
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/pose_library/save_vrma")
+async def save_vrma(request):
+    """
+    POST /pose_library/save_vrma
+    body: { "data": "<base64 glb>", "subdir": "<optional subdir>" }
+    poses/ (またはサブディレクトリ) に v_HHMMSS.vrma で保存。
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    b64 = body.get("data", "")
+    if not b64:
+        return web.json_response({"error": "data required"}, status=400)
+    try:
+        vrma_bytes = base64.b64decode(b64)
+    except Exception as e:
+        return web.json_response({"error": f"invalid base64: {e}"}, status=400)
+
+    subdir = body.get("subdir", "")
+    if subdir:
+        save_dir = POSES_DIR / subdir
+        try:
+            save_dir.resolve().relative_to(POSES_DIR.resolve())
+        except ValueError:
+            return web.json_response({"error": "access denied"}, status=403)
+        save_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        save_dir = POSES_DIR
+
+    ts       = datetime.now().strftime("%H%M%S")
+    filename = f"v_{ts}.vrma"
+    # 同名衝突回避
+    dest = save_dir / filename
+    if dest.exists():
+        dest = save_dir / f"v_{ts}_{int(datetime.now().microsecond / 1000):03d}.vrma"
+
+    dest.write_bytes(vrma_bytes)
     return web.json_response({"ok": True, "path": str(dest), "name": dest.stem})
 
 

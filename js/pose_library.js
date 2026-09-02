@@ -32,7 +32,7 @@ function buildModal(editor, vrmBuffer) {
         style: "position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:99999;" +
                "display:flex;align-items:center;justify-content:center;",
     });
-    overlay.addEventListener("keydown", e => { if (e.key === "Escape") overlay.remove(); });
+    overlay.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
     // モーダル外クリックでの誤クローズを防ぐため、背景クリックでは閉じない(✕ボタン/Escapeのみ)
 
     const dialog = el("div", {
@@ -52,7 +52,7 @@ function buildModal(editor, vrmBuffer) {
     const closeBtn = el("button", {
         style: "background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;padding:4px 8px;",
     }, "✕");
-    closeBtn.onclick = () => overlay.remove();
+    closeBtn.onclick = () => closeModal();
     header.append(titleEl, reloadBtn, closeBtn);
 
     // ---- ツールバー ----
@@ -81,7 +81,7 @@ function buildModal(editor, vrmBuffer) {
         style: "background:#111;border:1px solid #444;color:#ddd;padding:5px 6px;" +
                "border-radius:4px;font-size:12px;cursor:pointer;",
     });
-    [["all","All"],["favorite","⭐ Favorites"],["json",".json"],["vroidpose",".vroidpose"]]
+    [["all","All"],["favorite","⭐ Favorites"],["json",".json"],["vroidpose",".vroidpose"],["vrma",".vrma"]]
         .forEach(([v,t]) => filterSel.appendChild(el("option", { value: v }, t)));
 
     // Thumbnail size
@@ -100,6 +100,31 @@ function buildModal(editor, vrmBuffer) {
 
     toolbar.append(subdirSel, searchInput, filterSel, sizeSel, savePoseBtn);
 
+    // ---- VRMAミニプレイヤー(通常は非表示、.vrmaカードクリック時のみ表示) ----
+    const vrmaPlayer = el("div", {
+        style: "display:none;align-items:center;gap:8px;padding:6px 12px;" +
+               "background:#16213e;border-bottom:1px solid #2a2a4a;flex-shrink:0;",
+    });
+    const vrmaNameLabel = el("span", {
+        style: "font-size:11px;color:#ccc;white-space:nowrap;overflow:hidden;" +
+               "text-overflow:ellipsis;max-width:160px;flex-shrink:0;",
+    }, "");
+    const vrmaPlayBtn = el("button", {
+        style: "padding:4px 10px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
+               "cursor:pointer;font-size:12px;flex-shrink:0;",
+    }, "▶");
+    const vrmaSeek = el("input", {
+        type: "range", min: "0", max: "1", step: "0.001", value: "0",
+        style: "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;",
+    });
+    const vrmaTimeLabel = el("span", { style: "font-size:10px;color:#aaa;white-space:nowrap;flex-shrink:0;" }, "0.0 / 0.0s");
+    const vrmaEjectBtn = el("button", {
+        style: "padding:4px 8px;background:#5a3a3a;color:#fff;border:none;border-radius:3px;" +
+               "cursor:pointer;font-size:11px;flex-shrink:0;",
+        title: "Unload VRMA",
+    }, "✕");
+    vrmaPlayer.append(vrmaNameLabel, vrmaPlayBtn, vrmaSeek, vrmaTimeLabel, vrmaEjectBtn);
+
     // ---- コンテンツ ----
     const content = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;box-sizing:border-box;" });
     const grid    = el("div", { id: "plb-grid" });
@@ -115,8 +140,78 @@ function buildModal(editor, vrmBuffer) {
     const statusPath = el("span", { style: "color:#3a5a7a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;" });
     statusBar.append(statusMsg, statusPath);
 
-    dialog.append(header, toolbar, content, statusBar);
+    dialog.append(header, toolbar, vrmaPlayer, content, statusBar);
     overlay.appendChild(dialog);
+
+    // ----------------------------------------------------------------
+    // VRMAミニプレイヤー ロジック
+    // ----------------------------------------------------------------
+    let vrmaLoaded    = false;
+    let _vrmaUISyncId = null;
+
+    function _formatVrmaTime() {
+        const dur = editor.getVRMADuration();
+        const t   = editor.getVRMATime();
+        vrmaTimeLabel.textContent = `${t.toFixed(1)} / ${dur.toFixed(1)}s`;
+        vrmaSeek.max   = String(dur);
+        vrmaSeek.value = String(t);
+    }
+    function _startVrmaUISync() {
+        if (_vrmaUISyncId !== null) return;
+        const tick = () => {
+            if (!editor.isVRMAPlaying()) { _vrmaUISyncId = null; return; }
+            _formatVrmaTime();
+            _vrmaUISyncId = requestAnimationFrame(tick);
+        };
+        _vrmaUISyncId = requestAnimationFrame(tick);
+    }
+    function _setVrmaPlayingUI(playing) {
+        vrmaPlayBtn.textContent = playing ? "⏸" : "▶";
+        if (playing) _startVrmaUISync();
+    }
+
+    async function openVrmaInPlayer(pose) {
+        try {
+            const buf = await loadVrmaBinary(pose.path);
+            await new Promise((resolve, reject) => {
+                editor.loadVRMAFromBuffer(buf, resolve, (msg) => reject(new Error(msg)));
+            });
+            vrmaLoaded = true;
+            vrmaNameLabel.textContent = pose.name;
+            vrmaPlayer.style.display = "flex";
+            _formatVrmaTime();
+            _setVrmaPlayingUI(false);
+        } catch (e) {
+            alert("Failed to load VRMA: " + e.message);
+        }
+    }
+
+    vrmaPlayBtn.onclick = () => {
+        if (!editor.hasVRMA()) return;
+        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setVrmaPlayingUI(false); }
+        else { editor.playVRMA(); _setVrmaPlayingUI(true); }
+    };
+    vrmaSeek.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+    vrmaSeek.addEventListener("pointerdown", () => {
+        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setVrmaPlayingUI(false); }
+    });
+    vrmaSeek.addEventListener("input", () => {
+        if (!editor.hasVRMA()) return;
+        editor.seekVRMA(parseFloat(vrmaSeek.value));
+        _formatVrmaTime();
+    });
+    vrmaEjectBtn.onclick = () => {
+        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+        editor.clearVRMA();
+        vrmaLoaded = false;
+        vrmaPlayer.style.display = "none";
+    };
+
+    function closeModal() {
+        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+        if (vrmaLoaded) editor.clearVRMA();
+        overlay.remove();
+    }
 
     // ----------------------------------------------------------------
     // 状態
@@ -202,6 +297,12 @@ function buildModal(editor, vrmBuffer) {
         return res.text();
     }
 
+    async function loadVrmaBinary(path) {
+        const res = await fetch(`/pose_library/vrma_content?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.arrayBuffer();
+    }
+
     // ----------------------------------------------------------------
     // フィルタリング
     // ----------------------------------------------------------------
@@ -213,6 +314,7 @@ function buildModal(editor, vrmBuffer) {
             if (f === "favorite" && !p.favorite)        return false;
             if (f === "json"      && p.ext !== ".json")      return false;
             if (f === "vroidpose" && p.ext !== ".vroidpose") return false;
+            if (f === "vrma"      && p.ext !== ".vrma")      return false;
             return true;
         });
     }
@@ -300,7 +402,10 @@ function buildModal(editor, vrmBuffer) {
             thumbArea.appendChild(img);
         }
 
-        if (pose.thumb) {
+        if (pose.ext === ".vrma") {
+            // アニメーションのため静止ポーズと同じ自動サムネイル生成は行わない
+            thumbArea.appendChild(placeholderEl(px, "🎬"));
+        } else if (pose.thumb) {
             setThumbImg(pose.thumb + "?t=" + Date.now());
         } else {
             thumbArea.appendChild(placeholderEl(px));
@@ -346,8 +451,14 @@ function buildModal(editor, vrmBuffer) {
 
         card.append(thumbArea, starBtn, info);
 
-        // クリック → ポーズ適用
+        // クリック → ポーズ適用 (.vrmaはミニプレイヤーで読込・再生)
         card.addEventListener("click", async () => {
+            if (pose.ext === ".vrma") {
+                await openVrmaInPlayer(pose);
+                card.style.borderColor = "#28a745";
+                setTimeout(() => { card.style.borderColor = "transparent"; }, 700);
+                return;
+            }
             try {
                 const content = await loadPoseContent(pose.path);
                 editor.importPose(content);
@@ -370,11 +481,11 @@ function buildModal(editor, vrmBuffer) {
     // ----------------------------------------------------------------
     // プレースホルダー
     // ----------------------------------------------------------------
-    function placeholderEl(px) {
+    function placeholderEl(px, icon = "🧍") {
         return el("div", {
             style: `width:${px}px;height:${px}px;display:flex;align-items:center;` +
                    "justify-content:center;font-size:28px;color:#333;",
-        }, "🧍");
+        }, icon);
     }
 
     // ----------------------------------------------------------------
@@ -409,19 +520,21 @@ function buildModal(editor, vrmBuffer) {
                 renderGrid();
             }
         ));
-        menu.appendChild(menuItem("↔️ Mirror & Apply", async () => {
-            try {
-                const content = await loadPoseContent(pose.path);
-                editor.importPose(content);
-                editor.mirrorPose();
-            } catch (e) {
-                alert("Failed to apply mirrored pose: " + e.message);
-            }
-        }));
+        if (pose.ext !== ".vrma") {
+            menu.appendChild(menuItem("↔️ Mirror & Apply", async () => {
+                try {
+                    const content = await loadPoseContent(pose.path);
+                    editor.importPose(content);
+                    editor.mirrorPose();
+                } catch (e) {
+                    alert("Failed to apply mirrored pose: " + e.message);
+                }
+            }));
+        }
         menu.appendChild(menuItem("📝 Edit Memo",    () => showMemoDlg(pose)));
         menu.appendChild(menuItem("✏️ Rename File",  () => showRenameDlg(pose)));
 
-        if (vrmBuffer) {
+        if (vrmBuffer && pose.ext !== ".vrma") {
             menu.appendChild(menuItem("🖼 Regenerate Thumbnail (Front)", async () => {
                 const dataUrl = await generateThumbnail(pose, vrmBuffer, false);
                 if (!dataUrl) { alert("Thumbnail generation failed."); return; }

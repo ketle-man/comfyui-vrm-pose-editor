@@ -717,6 +717,42 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     window.addEventListener("pointerup", _endCtrlRightDrag);
     window.addEventListener("blur", _endCtrlRightDrag);
 
+    // ---- カメラロール(Alt+右ドラッグ) ----
+    // camera.up を視線方向(forward)まわりに回転させることでロールを実現する。
+    // orbit.update()が毎フレームobject.lookAt(target)するため、position/targetは変えず
+    // upだけ回せば見た目のロールになる。Ctrl+右ドラッグズームと同じ「一時的にOrbitControlsの
+    // 既定動作(RIGHT=PAN)を無効化してドラッグを横取りする」パターンを踏襲する。
+    let _altRightDrag = false;
+    let _altRightDragLastX = 0;
+
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+        if (e.button !== 2 || !e.altKey) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _altRightDrag = true;
+        _altRightDragLastX = e.clientX;
+        orbit.enableRotate = false;
+        orbit.enablePan    = false;
+    }, true);
+
+    renderer.domElement.addEventListener("pointermove", (e) => {
+        if (!_altRightDrag) return;
+        const dx = e.clientX - _altRightDragLastX;
+        _altRightDragLastX = e.clientX;
+        const forward = new THREE.Vector3().subVectors(orbit.target, perspCamera.position).normalize();
+        perspCamera.up.applyAxisAngle(forward, dx * 0.005);
+        orbit.update();
+    }, true);
+
+    function _endAltRightDrag() {
+        if (!_altRightDrag) return;
+        _altRightDrag = false;
+        orbit.enableRotate = true;
+        orbit.enablePan    = true;
+    }
+    window.addEventListener("pointerup", _endAltRightDrag);
+    window.addEventListener("blur", _endAltRightDrag);
+
     // ---- Node2.0時のみイベント制御 ----
     if (isModern) {
         // wheel/contextmenu がComfyUIキャンバスに伝播しないよう阻止

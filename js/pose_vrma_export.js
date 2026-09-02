@@ -89,7 +89,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         style: "padding:4px 10px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
                "cursor:pointer;font-size:12px;flex-shrink:0;",
     }, "▶");
-    const downloadBtn = mkBtn("⬇️ Download .vrma", "#4a7a4a", "Export and download the animation as .vrma");
+    const downloadBtn = mkBtn("💾 Save .vrma", "#4a7a4a", "Export and save the animation to poses/ (visible in Pose Library)");
     previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, statusMsg, playBtn, downloadBtn);
 
     panel.append(toolbar, libView, projView, timelineWrap, previewPanel);
@@ -244,11 +244,20 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     camDelBtn.onclick = deleteCameraAtCurrentFrame;
 
     function lerp(a, b, t) { return a + (b - a) * t; }
+    function lerpVec3(a, b, t) {
+        return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) };
+    }
+    function normalizeVec3(v) {
+        const len = Math.hypot(v.x, v.y, v.z) || 1;
+        return { x: v.x / len, y: v.y / len, z: v.z / len };
+    }
     function lerpCameraState(a, b, t) {
         return {
-            position: { x: lerp(a.position.x, b.position.x, t), y: lerp(a.position.y, b.position.y, t), z: lerp(a.position.z, b.position.z, t) },
-            target:   { x: lerp(a.target.x, b.target.x, t),     y: lerp(a.target.y, b.target.y, t),     z: lerp(a.target.z, b.target.z, t) },
-            fov: lerp(a.fov, b.fov, t),
+            position: lerpVec3(a.position, b.position, t),
+            target:   lerpVec3(a.target, b.target, t),
+            // upを補間することでカメラロール(視軸まわりの傾き)もKF間で滑らかに遷移する
+            up:       normalizeVec3(lerpVec3(a.up ?? { x: 0, y: 1, z: 0 }, b.up ?? { x: 0, y: 1, z: 0 }, t)),
+            fov:      lerp(a.fov, b.fov, t),
         };
     }
 
@@ -331,7 +340,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             backRow.appendChild(backBtn);
             libView.appendChild(backRow);
 
-            const poses = data.poses ?? [];
+            // このピッカーは静止ポーズ専用(.vrmaはeditor.importPose()に渡すと壊れるため除外)
+            const poses = (data.poses ?? []).filter(p => p.ext !== ".vrma");
             if (poses.length === 0) {
                 libView.appendChild(el("div", { style: "font-size:11px;color:#666;padding:8px;" }, "No poses found in poses/."));
                 return;
@@ -622,16 +632,16 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         downloadBtn.textContent = "⏳";
         try {
             const buf = await editor.exportVrma(poseKfs.map(k => ({ time: k.frame / fps, bones: k.bones })));
-            const blob = new Blob([buf], { type: "model/gltf-binary" });
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = "animation.vrma";
-            a.click();
-            URL.revokeObjectURL(a.href);
+            await apiFetchJson("/pose_library/save_vrma", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ data: arrayBufferToBase64(buf) }),
+            });
+            downloadBtn.textContent = "✅ Saved";
+            setTimeout(() => { downloadBtn.textContent = "💾 Save .vrma"; }, 1500);
         } catch (e) {
-            alert("Export failed: " + e.message);
-        } finally {
-            downloadBtn.textContent = "⬇️ Download .vrma";
+            alert("Save failed: " + e.message);
+            downloadBtn.textContent = "💾 Save .vrma";
         }
     };
 
@@ -849,6 +859,18 @@ function mkNumInput(min, max, step, value) {
 
 function sep() {
     return el("span", { style: "color:#333;margin:0 2px;" }, "|");
+}
+
+// ArrayBuffer(.vrma glbバイナリ)をbase64文字列に変換する。
+// 大きいファイルでのコールスタックオーバーフローを避けるためチャンク単位でString.fromCharCodeする
+function arrayBufferToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    const chunkSize = 0x8000;
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
 }
 
 // 自作オーバーレイダイアログ(確認/名前入力)。window.alert/confirm/promptは使わない
