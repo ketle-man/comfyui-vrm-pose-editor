@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 import { initPoseEditor3D } from './pose_editor_core.js';
 import { openPoseLibrary } from './pose_library.js';
 import { openLightEditor } from './light_editor.js';
+import { openVrmaTimelineEditor } from './pose_vrma_export.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -86,6 +87,10 @@ app.registerExtension({
             // ライトエディタボタン
             const lightBtn = makeSmallButton("💡", "#7a6a2a", "Open Light Editor");
             lightBtn.style.minWidth = "60px";
+
+            // VRMAタイムラインエディタ(複数ポーズを繋いで.vrmaとしてエクスポート)ボタン
+            const vrmaExportBtn = makeSmallButton("🎬", "#4a4a6a", "Open VRMA Timeline Editor (export animation)");
+            vrmaExportBtn.style.minWidth = "60px";
 
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
@@ -179,6 +184,7 @@ app.registerExtension({
             // ---- 2行目: ライブラリ・ライト + 背景系 ----
             btnRow2.appendChild(libraryBtn);
             btnRow2.appendChild(lightBtn);
+            btnRow2.appendChild(vrmaExportBtn);
             btnRow2.appendChild(bgBtn);
             btnRow2.appendChild(bgClearBtn);
             btnRow2.appendChild(bgColorInput);
@@ -659,6 +665,10 @@ app.registerExtension({
                     windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
                     windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
                 });
+            };
+
+            vrmaExportBtn.onclick = () => {
+                openVrmaTimelineEditor(editor, _currentVrmBuffer);
             };
 
             // ---- VRMAタイムライン制御 ----

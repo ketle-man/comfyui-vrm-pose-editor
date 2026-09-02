@@ -40,6 +40,7 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 |--------|----------|
 | 📚 | Open Pose Library |
 | 💡 | Open Light Editor |
+| 🎬 | Open VRMA Timeline Editor (chain poses into a `.vrma` animation, see [VRMA Export](#vrma-export-) below) |
 | BG | Load background image from local disk |
 | ✕ | Clear background image **and** background color |
 | 🎨 | Scene background color picker |
@@ -94,6 +95,22 @@ Notes:
 
 - Loading a new VRM/GLB/GLTF model clears the currently loaded VRMA.
 - While a VRMA is loaded, the 👁 LookAt marker is temporarily disabled (its target is cleared) to avoid fighting with the animation's own look-at track, if any. It's restored automatically once the VRMA is unloaded.
+
+#### VRMA Export (🎬)
+
+Chain several still poses into a simple animation and export it as a `.vrma` file.
+
+1. Click **🎬** to open the VRMA Timeline Editor.
+2. Add keyframes with **📚 + From Library** (pick a saved pose) or **✚ + Current Pose** (use whatever is currently posed in the editor).
+3. Adjust each keyframe's time (seconds) — the list re-sorts automatically.
+4. Use the **▶ / ⏸** and seek bar to preview the resulting animation (it's rendered live by temporarily loading the generated clip through the same VRMA playback engine described above).
+5. Click **⬇️ Download .vrma** to save the animation.
+
+Notes:
+
+- Only bone rotations are exported (no hips translation, expressions, or LookAt track).
+- **VRM1 models are recommended.** VRM0 export applies an axis-flip correction that has not been verified on real VRM0 models yet — treat VRM0 output as experimental.
+- Server-side saving isn't implemented yet; export is browser-download only.
 
 #### Timer Capture (⏱)
 
@@ -304,6 +321,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 |--------|------|
 | 📚 | ポーズライブラリを開く |
 | 💡 | ライトエディタを開く |
+| 🎬 | VRMAタイムラインエディタを開く（複数ポーズを繋いで`.vrma`アニメーションを書き出す。後述の[VRMAエクスポート](#vrmaエクスポート🎬)を参照） |
 | BG | 背景画像をローカルから読み込む |
 | ✕ | 背景画像**および**背景色をクリア |
 | 🎨 | シーン背景色ピッカー |
@@ -358,6 +376,22 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 - 新しいVRM/GLB/GLTFモデルを読み込むと、読み込み中のVRMAはクリアされます。
 - VRMAが読み込まれている間、👁視線ターゲットマーカーは一時的に無効化されます（targetがクリアされます）。これはアニメーション自身が持つ視線トラックとの競合を避けるためです。VRMAをアンロードすると自動的に復元されます。
+
+#### VRMAエクスポート（🎬）
+
+複数の静止ポーズを繋いで簡易アニメーションを作り、`.vrma`ファイルとしてエクスポートします。
+
+1. **🎬** をクリックしてVRMAタイムラインエディタを開く。
+2. **📚 + From Library**（保存済みポーズから選択）または **✚ + Current Pose**（現在エディタで編集中のポーズを使用）でキーフレームを追加。
+3. 各キーフレームの時刻（秒）を調整する — リストは自動的に時刻順に並び替わります。
+4. **▶ / ⏸** とシークバーで結果のアニメーションをプレビューできます（上述のVRMA再生エンジンを使って、生成したクリップをその場で一時的に読み込んでライブ描画しています）。
+5. **⬇️ Download .vrma** をクリックしてアニメーションを保存。
+
+注意点:
+
+- ボーンの回転のみがエクスポートされます（hips位置・表情・LookAtトラックは含まれません）。
+- **VRM1モデルでの使用を推奨します。** VRM0でのエクスポートは軸反転補正を適用していますが、実機のVRM0モデルでの検証はまだ行っていません — VRM0での出力は実験的なものとして扱ってください。
+- サーバー側への保存機能は未実装です。エクスポートはブラウザダウンロードのみです。
 
 #### タイマーキャプチャ（⏱）
 
@@ -532,6 +566,7 @@ Left/Right ボーンペアを入れ替え、クォータニオンを YZ 反転 `
 - **Wind effect**: implemented entirely in `pose_editor_core.js` by overwriting each `VRMSpringBoneJoint`'s `settings.gravityDir`/`gravityPower` every frame (`_applyWindToSpringBones()`), computed as "the joint's original gravity vector (captured on model load) + a wind vector"; the vendor `three-vrm` module is unmodified. The wind vector is a sum of sine waves at several periods so strength and direction gust gently over time (`_computeWindVector()` for the angle-slider mode, `_computeWindVectorFromSource()` for the marker mode — the latter builds a pseudo-up axis orthogonal to the marker→reference-point direction and rotates the gust around it, so it generalizes cleanly to any 3D direction). Has no effect while spring bone physics is OFF, since `VRMSpringBoneJoint.update()` returns immediately when `delta <= 0`.
 - **Wind source marker**: a cone mesh (`windSourceHelperMesh`) added to the scene and hidden by default, reusing the exact same pointerdown/move/up drag-on-a-camera-facing-plane logic as the 👁 LookAt marker. It is excluded from `capture()` output the same way the LookAt marker is.
 - **VRMA playback**: [@pixiv/three-vrm-animation 2.1.0](https://github.com/pixiv/three-vrm/tree/release/packages/three-vrm-animation) (bundled locally in `js/vendor/`, matching the existing three-vrm 2.1.0). `.vrma` files are loaded through a dedicated `GLTFLoader` instance with `VRMAnimationLoaderPlugin` registered, retargeted onto the current VRM's normalized humanoid bones via `createVRMAnimationClip()`, and played with a `THREE.AnimationMixer(vrm.scene)`. Playback is driven by an explicit `_vrmaPlaying` flag rather than `AnimationAction.paused` (the latter also zeroes out `deltaTime` during a `mixer.update()`-based seek, which would break scrubbing); pausing simply stops calling `mixer.update()` each frame, so `exportPose()`/`capture()` see the frozen bone quaternions with no changes needed on their end. Because a VRMA's own LookAt track (if present) drives `vrm.lookAt` directly via `VRMLookAtQuaternionProxy`, the 👁 LookAt marker's `target` is cleared for the duration a VRMA is loaded to avoid the two fighting over the same output.
+- **VRMA export**: [three.js `GLTFExporter`](https://github.com/mrdoob/three.js/blob/r160/examples/jsm/exporters/GLTFExporter.js) (bundled locally as `js/vendor/GLTFExporter.js`, matching the existing three.js r160; its `TextureUtils.js` dependency lives in `js/utils/`). Keyframe poses (`{boneName:{qx,qy,qz,qw}}`, the same shape `exportPose()` produces) are converted into a `THREE.AnimationClip` of per-bone `QuaternionKeyframeTrack`s named `` `${normalizedBoneNode.name}.quaternion` ``, matching the naming `GLTFExporter` resolves against the exported scene automatically. The export target is `humanoid.normalizedHumanBonesRoot` (bones only, no mesh/material data), temporarily reset to its T-pose via `resetNormalizedPose()`/`setNormalizedPose()` for the duration of the export (VRMA's reference skeleton must be a rest pose) and restored immediately after. A custom exporter plugin (`VRMCVrmAnimationExporterPlugin`, registered via `GLTFExporter.register()`) adds the `VRMC_vrm_animation` extension in its `afterParse` hook, resolving each bone's node index from `writer.nodeMap` (populated by the time `afterParse` runs). Source poses from a VRM0 model have their quaternion x/z components flipped before being written, since the VRMA spec's reference space is VRM1-canonical (mirroring the flip `createVRMAnimationHumanoidTracks` applies at load time when the *playback* target is VRM0) — this path is implemented but not yet verified against a real VRM0 model.
 
 ---
 

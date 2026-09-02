@@ -6,6 +6,7 @@ import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from './vendor/three-vrm-animation.module.js';
+import { GLTFExporter } from './vendor/GLTFExporter.js';
 
 // ---- Three.js エディタ本体 ----
 export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isModern, onModelReady) {
@@ -1105,6 +1106,111 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         });
     }
 
+    // ================================================================
+    // VRMA export (複数の静止ポーズをキーフレームとして繋ぎ .vrma として書き出す)
+    // ================================================================
+    // GLTFExporterのプラグイン機構(afterParseフック)でVRMC_vrm_animation拡張を付与する。
+    // afterParse時点ではシーン/アニメーション処理が完了しているため、
+    // writer.nodeMap(Object3D→ノードindex)とwriter.json.animationsの両方が確定済み。
+    class VRMCVrmAnimationExporterPlugin {
+        constructor(writer, boneNameMap) {
+            this.writer = writer;
+            this.name = "VRMC_vrm_animation";
+            this.boneNameMap = boneNameMap;
+        }
+        afterParse() {
+            const { writer, boneNameMap } = this;
+            const humanBones = {};
+            for (const [boneName, node] of boneNameMap) {
+                const idx = writer.nodeMap.get(node);
+                if (idx != null) humanBones[boneName] = { node: idx };
+            }
+            if (!Object.keys(humanBones).length) return;
+            writer.json.extensions = writer.json.extensions || {};
+            writer.json.extensions[this.name] = { specVersion: "1.0", humanoid: { humanBones } };
+            writer.extensionsUsed[this.name] = true; // write()終端でjson.extensionsUsedへ自動反映される
+        }
+    }
+
+    // interactableBones(ロード中モデルが実際に持つボーンのヒットボックス配列)から
+    // ボーン名→normalizedBoneNodeのMapを作る。exportPose()と同じ走査パターン
+    function _boneNameMap() {
+        const map = new Map();
+        interactableBones.forEach(h => {
+            const key = h.userData.boneName ?? h.userData.bone.name;
+            if (key) map.set(key, h.userData.bone);
+        });
+        return map;
+    }
+
+    // keyframeList: [{ time: number, bones: {boneName: {qx,qy,qz,qw}} }, ...]
+    // (bonesの中身はexportPose()が返すJSONのbonesフィールドと同じ形式)
+    function _buildVrmaAnimationClip(keyframeList, boneNameMap) {
+        const sorted = [...keyframeList].sort((a, b) => a.time - b.time);
+        for (let i = 1; i < sorted.length; i++) {
+            if (sorted[i].time <= sorted[i - 1].time) sorted[i].time = sorted[i - 1].time + 0.0001;
+        }
+        const times = sorted.map(k => k.time);
+        const duration = Math.max(times[times.length - 1] ?? 0, 0.001);
+
+        // VRMAファイルに保存する値は常にVRM1正準空間である前提(three-vrm-animation側の
+        // 読込ロジックがVRM0再生時のみx,z反転する実装になっているため)。
+        // ソースがVRM0モデルの場合はここで先に反転して正準化しておく。
+        const isSourceVrm0 = currentVRM?.meta?.metaVersion === "0";
+
+        const tracks = [];
+        for (const [boneName, node] of boneNameMap) {
+            if (!sorted.some(k => k.bones[boneName])) continue; // どのキーフレームにも無いボーンはトラック化しない
+            const values = new Float32Array(sorted.length * 4);
+            sorted.forEach((k, i) => {
+                const bd = k.bones[boneName];
+                let qx = bd?.qx ?? 0, qy = bd?.qy ?? 0, qz = bd?.qz ?? 0, qw = bd?.qw ?? 1;
+                if (isSourceVrm0) { qx = -qx; qz = -qz; }
+                values.set([qx, qy, qz, qw], i * 4);
+            });
+            tracks.push(new THREE.QuaternionKeyframeTrack(`${node.name}.quaternion`, times, values, THREE.InterpolateLinear));
+        }
+        return new THREE.AnimationClip("VRMAExport", duration, tracks);
+    }
+
+    async function exportVrma(keyframeList) {
+        if (!currentVRM || !currentVRM.humanoid) {
+            throw new Error("A VRM model (with humanoid bones) must be loaded before exporting a VRMA animation.");
+        }
+        if (!keyframeList || keyframeList.length === 0) {
+            throw new Error("At least one keyframe pose is required to export a VRMA animation.");
+        }
+
+        const boneNameMap = _boneNameMap();
+        const clip = _buildVrmaAnimationClip(keyframeList, boneNameMap);
+
+        // Tポーズへ退避(VRMAの参照スケルトンはレスト姿勢である必要がある)＋
+        // ヒットボックスメッシュを一時非表示化(エクスポート結果への混入防止)
+        const savedPose = currentVRM.humanoid.getNormalizedPose();
+        currentVRM.humanoid.resetNormalizedPose();
+        const hitboxes = [];
+        boneNameMap.forEach(node => {
+            node.children.forEach(c => { if (c.userData?.isHitbox) { hitboxes.push(c); c.visible = false; } });
+        });
+
+        try {
+            const exporter = new GLTFExporter();
+            exporter.register(writer => new VRMCVrmAnimationExporterPlugin(writer, boneNameMap));
+            const glb = await exporter.parseAsync(currentVRM.humanoid.normalizedHumanBonesRoot, {
+                binary: true,
+                animations: [clip],
+                onlyVisible: true,
+            });
+            return glb; // ArrayBuffer (.vrma = glbバイナリ)
+        } finally {
+            hitboxes.forEach(h => { h.visible = true; });
+            currentVRM.humanoid.setNormalizedPose(savedPose);
+            currentVRM.humanoid.update();
+            currentVRM.scene.updateMatrixWorld(true);
+            _settleSpringBoneAnchor();
+        }
+    }
+
     // ---- ボーンドラッグ回転 ----
     const DRAG_SENSITIVITY = 0.01;
     const raycaster = new THREE.Raycaster();
@@ -1456,6 +1562,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             _vrmaMixer.update(0); // その場でポーズを反映（進行はしない）
         },
         clearVRMA() { _clearVRMA(); },
+        exportVrma,
         setPointSize(scale) {
             pointSize = scale;
             interactableBones.forEach(h => {
