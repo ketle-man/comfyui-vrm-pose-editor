@@ -90,7 +90,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                "cursor:pointer;font-size:12px;flex-shrink:0;",
     }, "▶");
     const downloadBtn = mkBtn("💾 Save .vrma", "#4a7a4a", "Export and save the animation to poses/ (visible in Pose Library)");
-    previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, statusMsg, playBtn, downloadBtn);
+    const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
+    const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
+    previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, statusMsg, playBtn, downloadBtn, webmBtn, gifBtn);
 
     panel.append(toolbar, libView, projView, timelineWrap, previewPanel);
 
@@ -644,6 +646,113 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             downloadBtn.textContent = "💾 Save .vrma";
         }
     };
+
+    // ----------------------------------------------------------------
+    // WebM / GIF 書き出し
+    // - .vrma書き出し(exportVrma)と異なり、ポーズ・カメラ・シェイプキーすべてを含むタイムライン全体を
+    //   フレームごとにseekToFrame()でシークしながら1枚ずつレンダリングして動画/GIF化する
+    //   (glTF標準の.vrmaはFOV/カメラアニメーション非対応のため、それらを含めたい場合はこちらを使う)
+    // - editor.renderClean()はcapture()と同じくボーンハンドル等のヘルパーを隠してレンダリングするが、
+    //   PNGエンコード/デコードを挟まない分軽い(capture()はキャンバス直読みができない用途向けの薄いラッパー)
+    // ----------------------------------------------------------------
+    function computeExportSize(maxDim) {
+        const src = editor.getCanvas();
+        const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
+        return {
+            outW: Math.max(1, Math.round(src.width * scale)),
+            outH: Math.max(1, Math.round(src.height * scale)),
+        };
+    }
+
+    // ヘルパーを隠した状態で現在フレームをdestCanvas(2D)へ描画する(WebM/GIF共通)
+    function renderFrameToOffscreen(destCanvas, outW, outH) {
+        editor.renderClean();
+        const src = editor.getCanvas();
+        if (destCanvas.width !== outW) destCanvas.width = outW;
+        if (destCanvas.height !== outH) destCanvas.height = outH;
+        const ctx = destCanvas.getContext("2d");
+        ctx.clearRect(0, 0, outW, outH);
+        ctx.drawImage(src, 0, 0, src.width, src.height, 0, 0, outW, outH);
+        return ctx;
+    }
+
+    function downloadBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = el("a", { href: url, download: filename });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // アニメーション全体(0〜totalFrames)をWebM動画としてエクスポートする。
+    // MediaRecorder + captureStream(0)の手動requestFrame()方式(1フレームごとに描画→push)。
+    async function exportVideoWebM(onProgress) {
+        const { outW, outH } = computeExportSize(768);
+        const offCanvas = document.createElement("canvas");
+        offCanvas.width = outW; offCanvas.height = outH;
+
+        const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+            ? "video/webm;codecs=vp9" : "video/webm";
+        const stream   = offCanvas.captureStream(0);
+        const track    = stream.getVideoTracks()[0];
+        const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+        const chunks   = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+        recorder.start();
+        for (let f = 0; f <= totalFrames; f++) {
+            seekToFrame(f, { silent: true });
+            renderFrameToOffscreen(offCanvas, outW, outH);
+            track.requestFrame();
+            onProgress?.(f + 1, totalFrames + 1);
+            await new Promise(r => setTimeout(r, 0)); // レコーダーにフレームを渡す時間を確保
+        }
+        recorder.stop();
+        await new Promise(r => { recorder.onstop = r; });
+        return new Blob(chunks, { type: "video/webm" });
+    }
+
+    // アニメーション全体を透過GIFとしてエクスポートする(gif_encoder.jsを動的import)。
+    async function exportAnimatedGif(onProgress) {
+        const { AnimGifEncoder } = await import("./gif_encoder.js");
+        const { outW, outH } = computeExportSize(480); // GIFは色量子化コストが大きいため控えめな解像度
+        const offCanvas = document.createElement("canvas");
+        offCanvas.width = outW; offCanvas.height = outH;
+        const ctx = offCanvas.getContext("2d");
+
+        const enc = new AnimGifEncoder(outW, outH);
+        enc.setFps(fps);
+        enc.setQuality(4);
+
+        for (let f = 0; f <= totalFrames; f++) {
+            seekToFrame(f, { silent: true });
+            renderFrameToOffscreen(offCanvas, outW, outH);
+            enc.addFrame(ctx.getImageData(0, 0, outW, outH));
+            onProgress?.(f + 1, totalFrames + 1);
+            await new Promise(r => setTimeout(r, 0));
+        }
+        return new Blob([enc.encode()], { type: "image/gif" });
+    }
+
+    async function runExport(btn, otherBtn, exportFn, filename) {
+        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setPlayingUI(false); }
+        const savedFrame = currentFrame;
+        const origLabel = btn.textContent;
+        btn.disabled = true; otherBtn.disabled = true;
+        try {
+            const blob = await exportFn((f, total) => { btn.textContent = `⏳ ${f}/${total}`; });
+            downloadBlob(blob, filename);
+        } catch (e) {
+            alert("Export failed: " + e.message);
+        } finally {
+            btn.textContent = origLabel;
+            btn.disabled = false; otherBtn.disabled = false;
+            seekToFrame(savedFrame);
+        }
+    }
+    webmBtn.onclick = () => runExport(webmBtn, gifBtn, exportVideoWebM, "animation.webm");
+    gifBtn.onclick  = () => runExport(gifBtn, webmBtn, exportAnimatedGif, "animation.gif");
 
     // ----------------------------------------------------------------
     // New (タイムラインの全クリア)

@@ -1401,6 +1401,28 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         }
     }
 
+    // capture()/renderClean() 共通: ボーンハンドル・ライトギズモ・LookAt/風マーカーを隠した状態で
+    // 現在のシーンを同期的にレンダリングし、表示状態を元に戻す関数を返す。
+    function _hideHelpersAndRender() {
+        interactableBones.forEach(h => h.visible = false);
+        const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
+        managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
+        const lookAtHelperVisBefore = lookAtHelperMesh.visible;
+        lookAtHelperMesh.visible = false;
+        const windSourceHelperVisBefore = windSourceHelperMesh.visible;
+        windSourceHelperMesh.visible = false;
+
+        if (currentVRM) currentVRM.update(0);
+        renderer.render(scene, camera);
+
+        return () => {
+            interactableBones.forEach(h => h.visible = true);
+            managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
+            lookAtHelperMesh.visible = lookAtHelperVisBefore;
+            windSourceHelperMesh.visible = windSourceHelperVisBefore;
+        };
+    }
+
     return {
         loadBgImage,
         clearBgImage,
@@ -1518,17 +1540,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         },
 
         capture(frameRect, displaySize) {
-            interactableBones.forEach(h => h.visible = false);
-            // Save and hide light helper visibility
-            const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
-            managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
-            const lookAtHelperVisBefore = lookAtHelperMesh.visible;
-            lookAtHelperMesh.visible = false;
-            const windSourceHelperVisBefore = windSourceHelperMesh.visible;
-            windSourceHelperMesh.visible = false;
-
-            if (currentVRM) currentVRM.update(0);
-            renderer.render(scene, camera);
+            const restoreHelpers = _hideHelpersAndRender();
 
             // frameRect はディスプレイ座標系 (displaySize px) なので
             // 実キャンバスピクセル座標に変換してクロップ
@@ -1545,12 +1557,13 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             crop.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
             const data = crop.toDataURL("image/png");
 
-            interactableBones.forEach(h => h.visible = true);
-            managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
-            lookAtHelperMesh.visible = lookAtHelperVisBefore;
-            windSourceHelperMesh.visible = windSourceHelperVisBefore;
+            restoreHelpers();
             return data;
         },
+        // ヘルパー類(ボーンハンドル・ライトギズモ等)を隠した状態でキャンバスへ1フレーム分レンダリングするだけの
+        // 軽量版(PNGエンコード無し)。呼び出し元がcanvas(getCanvas())のピクセルを直接読み出す用途向け
+        // (WebM/GIF書き出しでの連続フレームキャプチャ等、capture()のtoDataURL()往復を毎フレーム避けたい場合)。
+        renderClean() { _hideHelpersAndRender()(); },
         resetPose() {
             initialPoses.forEach((val, bone) => {
                 bone.rotation.copy(val.rot);
