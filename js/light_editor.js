@@ -44,7 +44,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose) {
     });
     overlay.tabIndex = -1;
     overlay.addEventListener("keydown", e => { if (e.key === "Escape") cleanup(); });
-    overlay.addEventListener("click",   e => { if (e.target === overlay) cleanup(); });
+    // モーダル外クリックでの誤クローズを防ぐため、背景クリックでは閉じない(✕ボタン/Escapeのみ)
     overlay.focus();
 
     let resizeObserver = null;

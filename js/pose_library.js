@@ -33,7 +33,7 @@ function buildModal(editor, vrmBuffer) {
                "display:flex;align-items:center;justify-content:center;",
     });
     overlay.addEventListener("keydown", e => { if (e.key === "Escape") overlay.remove(); });
-    overlay.addEventListener("click",   e => { if (e.target === overlay) overlay.remove(); });
+    // モーダル外クリックでの誤クローズを防ぐため、背景クリックでは閉じない(✕ボタン/Escapeのみ)
 
     const dialog = el("div", {
         style: "background:#1e1e2e;color:#ccc;border-radius:10px;" +
