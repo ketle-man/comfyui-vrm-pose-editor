@@ -1539,6 +1539,45 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         getFov() { return perspCamera.fov; },
         setNear,
         getNear() { return perspCamera.near; },
+        // カメラキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)向けの状態取得/設定。
+        // quaternionはOrbitControls.update()内のobject.lookAt(target)で実質再構築されるが、
+        // position/target/up不整合時のフォールバックとして保持しておく。
+        getCameraState() {
+            return {
+                position:   { x: perspCamera.position.x, y: perspCamera.position.y, z: perspCamera.position.z },
+                quaternion: { x: perspCamera.quaternion.x, y: perspCamera.quaternion.y, z: perspCamera.quaternion.z, w: perspCamera.quaternion.w },
+                target:     { x: orbit.target.x, y: orbit.target.y, z: orbit.target.z },
+                up:         { x: perspCamera.up.x, y: perspCamera.up.y, z: perspCamera.up.z },
+                fov: perspCamera.fov,
+            };
+        },
+        setCameraState(state) {
+            if (!state) return;
+            if (state.position)   perspCamera.position.set(state.position.x, state.position.y, state.position.z);
+            if (state.quaternion) perspCamera.quaternion.set(state.quaternion.x, state.quaternion.y, state.quaternion.z, state.quaternion.w);
+            if (state.up)         perspCamera.up.set(state.up.x, state.up.y, state.up.z);
+            if (state.target)     orbit.target.set(state.target.x, state.target.y, state.target.z);
+            if (typeof state.fov === "number") {
+                perspCamera.fov = Math.min(170, Math.max(1, state.fov));
+                perspCamera.updateProjectionMatrix();
+            }
+            if (isOrtho) {
+                // switchCamera(true)と同じ計算式だが、常に最新のperspCamera.position基準で計算し直す
+                // (isOrtho中はcamera===orthoCameraのため、switchCameraをそのまま呼ぶとortho側の古い
+                // position距離が使われてしまう)
+                const dist = perspCamera.position.distanceTo(orbit.target);
+                const halfH = dist * Math.tan((perspCamera.fov / 2) * Math.PI / 180);
+                orthoCamera.left = -halfH; orthoCamera.right = halfH; orthoCamera.top = halfH; orthoCamera.bottom = -halfH;
+                orthoCamera.updateProjectionMatrix();
+                orthoCamera.position.copy(perspCamera.position);
+                orthoCamera.quaternion.copy(perspCamera.quaternion);
+                orthoCamera.up.copy(perspCamera.up);
+                orbit.object = orthoCamera;
+            } else {
+                orbit.object = perspCamera;
+            }
+            orbit.update();
+        },
         loadVRM,
         loadVRMFromBuffer(buffer, url, onComplete) {
             lastLoadedBuffer = buffer;

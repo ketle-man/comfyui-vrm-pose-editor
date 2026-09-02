@@ -33,6 +33,8 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "現在フレームに、今のポーズをキーフレームとして追加/上書き");
     const delBtn = mkBtn("− Delete KF", "#5a3a3a", "現在フレームのキーフレームを削除");
     const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
+    const camAddBtn = mkBtn("📷 + Cam KF", "#3a6a8a", "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き");
+    const camDelBtn = mkBtn("📷 − Cam KF", "#5a3a3a", "現在フレームのカメラキーフレームを削除");
     const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上のマーカーをドラッグして移動できます");
 
     const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
@@ -44,6 +46,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
 
     toolbar.append(
         titleEl, addBtn, delBtn, addFromLibBtn,
+        sep(), camAddBtn, camDelBtn,
         sep(), moveBtn,
         sep(), gotoStartBtn, prevBtn, frameInput, slashLbl, totalInput, nextBtn,
     );
@@ -51,6 +54,12 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     // ---- ライブラリピッカー(サブビュー、通常は非表示) ----
     const libView = el("div", {
         style: "display:none;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto;" +
+               "padding:6px 12px;background:#111118;border-bottom:1px solid #2a2a4a;flex-shrink:0;box-sizing:border-box;",
+    });
+
+    // ---- プロジェクト保存/読込パネル(サブビュー、通常は非表示。libViewと排他表示) ----
+    const projView = el("div", {
+        style: "display:none;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto;" +
                "padding:6px 12px;background:#111118;border-bottom:1px solid #2a2a4a;flex-shrink:0;box-sizing:border-box;",
     });
 
@@ -69,20 +78,22 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     });
     const fpsLbl = el("span", { style: "font-size:10px;color:#888;" }, "FPS:");
     const fpsInput = mkNumInput(1, 60, 1, 24);
+    const newBtn = mkBtn("🆕 New", "#5a4a3a", "現在のタイムラインをすべてクリアして新規作成");
+    const projBtn = mkBtn("💾 Proj", "#4a4a8a", "タイムラインをプロジェクトとして保存/読込");
     const statusMsg = el("span", { style: "flex:1;font-size:11px;color:#888;min-width:80px;" }, "0 keyframes");
     const playBtn = el("button", {
         style: "padding:4px 10px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
                "cursor:pointer;font-size:12px;flex-shrink:0;",
     }, "▶");
     const downloadBtn = mkBtn("⬇️ Download .vrma", "#4a7a4a", "Export and download the animation as .vrma");
-    previewPanel.append(fpsLbl, fpsInput, statusMsg, playBtn, downloadBtn);
+    previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, statusMsg, playBtn, downloadBtn);
 
-    panel.append(toolbar, libView, timelineWrap, previewPanel);
+    panel.append(toolbar, libView, projView, timelineWrap, previewPanel);
 
     // ----------------------------------------------------------------
     // 状態
     // ----------------------------------------------------------------
-    let keyframes = [];      // { frame:number, label:string, bones } (frame昇順)
+    let keyframes = [];      // { frame:number, label?:string, bones?, camera? } (frame昇順、bones/cameraいずれかまたは両方)
     let fps = 24;
     let totalFrames = 60;
     let currentFrame = 0;
@@ -118,7 +129,9 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     }
 
     function updateStatus() {
-        statusMsg.textContent = `${keyframes.length} keyframe${keyframes.length === 1 ? "" : "s"}`;
+        const poseCount = keyframes.filter(k => k.bones).length;
+        const camCount  = keyframes.filter(k => k.camera).length;
+        statusMsg.textContent = `${poseCount} pose · ${camCount} camera`;
     }
 
     // ----------------------------------------------------------------
@@ -130,6 +143,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
         if (editor.hasVRMA()) {
             editor.seekVRMA(currentFrame / fps);
         }
+        applyCameraForFrame(currentFrame);
         if (!opts.silent) drawTimeline();
     }
 
@@ -158,16 +172,83 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     }
     addBtn.onclick = () => captureAtCurrentFrame();
 
+    // ポーズのフィールドだけを削除する(cameraが残っていればエントリ自体は維持)。
+    // PSD-Figure-Creatorのdeleteキーフレーム実装(pose/camera独立管理)を踏襲。
     function deleteAtCurrentFrame() {
-        const before = keyframes.length;
-        keyframes = keyframes.filter(k => k.frame !== currentFrame);
-        if (keyframes.length !== before) {
-            drawTimeline();
-            updateStatus();
-            schedulePreviewRefresh();
-        }
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.bones) return;
+        delete kf.bones;
+        delete kf.label;
+        if (!kf.camera) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        schedulePreviewRefresh();
     }
     delBtn.onclick = deleteAtCurrentFrame;
+
+    // ----------------------------------------------------------------
+    // カメラキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)
+    // ----------------------------------------------------------------
+    function captureCameraAtCurrentFrame() {
+        const state = editor.getCameraState?.();
+        if (!state) return;
+        const existing = keyframes.find(k => k.frame === currentFrame);
+        if (existing) {
+            existing.camera = state;
+        } else {
+            keyframes.push({ frame: currentFrame, camera: state });
+            keyframes.sort((a, b) => a.frame - b.frame);
+        }
+        ensureTotalFrames();
+        drawTimeline();
+        updateStatus();
+    }
+    camAddBtn.onclick = captureCameraAtCurrentFrame;
+
+    function deleteCameraAtCurrentFrame() {
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.camera) return;
+        delete kf.camera;
+        if (!kf.bones) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        applyCameraForFrame(currentFrame);
+    }
+    camDelBtn.onclick = deleteCameraAtCurrentFrame;
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function lerpCameraState(a, b, t) {
+        return {
+            position: { x: lerp(a.position.x, b.position.x, t), y: lerp(a.position.y, b.position.y, t), z: lerp(a.position.z, b.position.z, t) },
+            target:   { x: lerp(a.target.x, b.target.x, t),     y: lerp(a.target.y, b.target.y, t),     z: lerp(a.target.z, b.target.z, t) },
+            fov: lerp(a.fov, b.fov, t),
+        };
+    }
+
+    // camera を持つエントリだけを対象に、指定フレームの状態を前後から線形補間してカメラへ適用する。
+    // カメラKFが1つも無ければ何もしない(ユーザーの手動オービットを妨げない)。
+    function applyCameraForFrame(frame) {
+        const camKfs = keyframes.filter(k => k.camera).sort((a, b) => a.frame - b.frame);
+        if (camKfs.length === 0) return;
+        let before = null, after = null;
+        for (const k of camKfs) {
+            if (k.frame <= frame) before = k;
+            if (k.frame >= frame && !after) after = k;
+        }
+        let state;
+        if (before && after) {
+            state = before.frame === after.frame
+                ? before.camera
+                : lerpCameraState(before.camera, after.camera, (frame - before.frame) / (after.frame - before.frame));
+        } else {
+            state = (before ?? after).camera;
+        }
+        editor.setCameraState?.(state);
+    }
 
     // ----------------------------------------------------------------
     // 「ポーズライブラリから追加」(簡易一覧サブビュー)
@@ -179,6 +260,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     }
 
     async function openLibraryPicker() {
+        projView.style.display = "none";
         libView.style.display = "flex";
         libView.innerHTML = "";
         libView.appendChild(el("div", { style: "font-size:11px;color:#888;padding:4px 0;" }, "Loading poses…"));
@@ -267,11 +349,13 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
             const x = xForFrame(kf.frame, cssW);
             const isCurrent = kf.frame === currentFrame;
             const size = isCurrent ? 9 : 7;
+            // 両方=緑、ポーズのみ=黄、カメラのみ=紫 (PSD-Figure-Creatorのマーカー色分けを踏襲)
+            const baseColor = kf.bones && kf.camera ? "#44ee88" : kf.camera ? "#cc66ff" : "#ffdd44";
             ctx.save();
             ctx.translate(x, midY);
             ctx.rotate(Math.PI / 4);
-            if (isCurrent) { ctx.shadowColor = "#ffe066"; ctx.shadowBlur = 8; }
-            ctx.fillStyle = isCurrent ? "#ffe066" : "#ffdd44";
+            if (isCurrent) { ctx.shadowColor = baseColor; ctx.shadowBlur = 8; }
+            ctx.fillStyle = baseColor;
             ctx.fillRect(-size / 2, -size / 2, size, size);
             ctx.restore();
         });
@@ -429,6 +513,7 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
             if (!editor.isVRMAPlaying()) { _uiSyncId = null; return; }
             currentFrame = clampFrame(editor.getVRMATime() * fps);
             frameInput.value = String(currentFrame);
+            applyCameraForFrame(currentFrame);
             drawTimeline();
             _uiSyncId = requestAnimationFrame(tick);
         };
@@ -440,12 +525,14 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     }
 
     async function refreshPreview() {
-        if (keyframes.length === 0) {
+        // camera専用エントリはbonesを持たないためexportVrmaへは渡さない(渡すと例外になる)
+        const poseKfs = keyframes.filter(k => k.bones);
+        if (poseKfs.length === 0) {
             editor.clearVRMA();
             return;
         }
         try {
-            const buf = await editor.exportVrma(keyframes.map(k => ({ time: k.frame / fps, bones: k.bones })));
+            const buf = await editor.exportVrma(poseKfs.map(k => ({ time: k.frame / fps, bones: k.bones })));
             await new Promise((resolve, reject) => {
                 editor.loadVRMAFromBuffer(buf, resolve, (msg) => reject(new Error(msg)));
             });
@@ -471,10 +558,11 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
     // ダウンロード
     // ----------------------------------------------------------------
     downloadBtn.onclick = async () => {
-        if (keyframes.length === 0) { alert("Add at least one keyframe pose first."); return; }
+        const poseKfs = keyframes.filter(k => k.bones);
+        if (poseKfs.length === 0) { alert("Add at least one keyframe pose first."); return; }
         downloadBtn.textContent = "⏳";
         try {
-            const buf = await editor.exportVrma(keyframes.map(k => ({ time: k.frame / fps, bones: k.bones })));
+            const buf = await editor.exportVrma(poseKfs.map(k => ({ time: k.frame / fps, bones: k.bones })));
             const blob = new Blob([buf], { type: "model/gltf-binary" });
             const a = document.createElement("a");
             a.href = URL.createObjectURL(blob);
@@ -486,6 +574,154 @@ export function buildKeyframePanel(editor, getVrmBuffer) {
         } finally {
             downloadBtn.textContent = "⬇️ Download .vrma";
         }
+    };
+
+    // ----------------------------------------------------------------
+    // New (タイムラインの全クリア)
+    // ----------------------------------------------------------------
+    newBtn.onclick = () => {
+        showOverlayDialog({
+            title: "🆕 New Timeline",
+            message: "現在のキーフレーム(ポーズ・カメラ)をすべて削除して新規作成します。保存していない変更は失われます。",
+            okLabel: "Clear",
+            okBg: "#8a3a3a",
+            onOk: () => {
+                keyframes = [];
+                fps = 24; fpsInput.value = "24";
+                totalFrames = 60; totalInput.value = "60";
+                currentFrame = 0; frameInput.value = "0";
+                poseCounter = 1;
+                editor.clearVRMA();
+                drawTimeline();
+                updateStatus();
+            },
+        });
+    };
+
+    // ----------------------------------------------------------------
+    // Proj (プロジェクト保存/読込、サーバー側 .kf_projects/ を使用)
+    // ----------------------------------------------------------------
+    async function apiFetchJson(url, opts) {
+        const res = await fetch(url, opts);
+        if (!res.ok) {
+            const t = await res.text().catch(() => "");
+            throw new Error(`HTTP ${res.status}: ${t.slice(0, 120)}`);
+        }
+        return res.json();
+    }
+
+    function currentProjectPayload() {
+        return { fps, totalFrames, keyframes: JSON.parse(JSON.stringify(keyframes)) };
+    }
+
+    function applyProject(data) {
+        fps = data.fps ?? 24;
+        totalFrames = data.totalFrames ?? 60;
+        keyframes = Array.isArray(data.keyframes) ? data.keyframes : [];
+        keyframes.sort((a, b) => a.frame - b.frame);
+        currentFrame = 0;
+        fpsInput.value = String(fps);
+        totalInput.value = String(totalFrames);
+        frameInput.value = "0";
+        drawTimeline();
+        updateStatus();
+        applyCameraForFrame(0);
+        schedulePreviewRefresh();
+    }
+
+    async function renderProjectList() {
+        projView.innerHTML = "";
+        const topRow = el("div", { style: "display:flex;gap:6px;margin-bottom:4px;" });
+        const backBtn = mkBtn("← Back", "#444");
+        backBtn.onclick = () => { projView.style.display = "none"; };
+        const saveBtn2 = mkBtn("💾 Save Current as New Project", "#2a5a3a");
+        saveBtn2.onclick = () => {
+            showOverlayDialog({
+                title: "💾 プロジェクト名を入力",
+                showInput: true,
+                okLabel: "Save",
+                okBg: "#2a5a3a",
+                onOk: async (name) => {
+                    try {
+                        await apiFetchJson("/kf_project/save", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ name, project: currentProjectPayload() }),
+                        });
+                        renderProjectList();
+                    } catch (e) {
+                        console.error("[KeyframePanel] project save failed:", e);
+                    }
+                },
+            });
+        };
+        topRow.append(backBtn, saveBtn2);
+        projView.appendChild(topRow);
+
+        const listWrap = el("div", { style: "display:flex;flex-direction:column;gap:4px;" });
+        listWrap.appendChild(el("div", { style: "font-size:11px;color:#888;padding:4px 0;" }, "Loading projects…"));
+        projView.appendChild(listWrap);
+
+        try {
+            const data = await apiFetchJson("/kf_project/list");
+            listWrap.innerHTML = "";
+            const projects = data.projects ?? [];
+            if (projects.length === 0) {
+                listWrap.appendChild(el("div", { style: "font-size:11px;color:#666;padding:4px 0;" }, "No saved projects."));
+            }
+            for (const proj of projects) {
+                const row = el("div", {
+                    style: "display:flex;align-items:center;gap:6px;padding:5px 8px;" +
+                           "background:#2a2a3e;border-radius:4px;cursor:pointer;",
+                });
+                const info = el("div", { style: "flex:1;overflow:hidden;" });
+                info.appendChild(el("div", {
+                    style: "font-size:11px;color:#ccc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+                }, proj.name));
+                info.appendChild(el("div", { style: "font-size:9px;color:#666;" },
+                    `${proj.keyframeCount} KF · ${proj.fps}fps · ${proj.totalFrames}f`));
+                const delBtn2 = el("button", {
+                    style: "padding:2px 7px;background:#5a3a3a;color:#fff;border:none;border-radius:3px;" +
+                           "cursor:pointer;font-size:11px;flex-shrink:0;",
+                }, "✕");
+                delBtn2.onclick = async (e) => {
+                    e.stopPropagation();
+                    try {
+                        await apiFetchJson("/kf_project/delete", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ id: proj.id }),
+                        });
+                        renderProjectList();
+                    } catch (err) {
+                        console.error("[KeyframePanel] project delete failed:", err);
+                    }
+                };
+                row.addEventListener("mouseenter", () => row.style.background = "#3a3a52");
+                row.addEventListener("mouseleave", () => row.style.background = "#2a2a3e");
+                row.addEventListener("click", async () => {
+                    try {
+                        const full = await apiFetchJson(`/kf_project/get/${proj.id}`);
+                        applyProject(full);
+                        projView.style.display = "none";
+                    } catch (err) {
+                        console.error("[KeyframePanel] project load failed:", err);
+                    }
+                });
+                row.append(info, delBtn2);
+                listWrap.appendChild(row);
+            }
+        } catch (e) {
+            listWrap.innerHTML = "";
+            listWrap.appendChild(el("div", { style: "font-size:11px;color:#e07a7a;padding:8px;" }, "Error: " + e.message));
+        }
+    }
+
+    projBtn.onclick = () => {
+        libView.style.display = "none";
+        const willShow = projView.style.display === "none";
+        projView.style.display = willShow ? "flex" : "none";
+        if (willShow) renderProjectList();
     };
 
     // ----------------------------------------------------------------
@@ -553,4 +789,62 @@ function mkNumInput(min, max, step, value) {
 
 function sep() {
     return el("span", { style: "color:#333;margin:0 2px;" }, "|");
+}
+
+// 自作オーバーレイダイアログ(確認/名前入力)。window.alert/confirm/promptは使わない
+// (ブラウザ自動操作環境でnative dialogがタブをブロックする問題を避けるため)。
+function showOverlayDialog({ title, message, showInput = false, inputValue = "", okLabel = "OK", okBg = "#2a5a8a", onOk }) {
+    const dlg = el("div", {
+        style: "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;" +
+               "display:flex;align-items:center;justify-content:center;",
+    });
+    const box = el("div", {
+        style: "background:#1e1e3a;border-radius:8px;padding:16px;min-width:260px;" +
+               "box-shadow:0 6px 24px rgba(0,0,0,0.7);font-family:sans-serif;",
+    });
+    box.appendChild(el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, title));
+    if (message) {
+        box.appendChild(el("div", { style: "font-size:12px;color:#ccc;margin-bottom:10px;max-width:280px;" }, message));
+    }
+    let input = null;
+    if (showInput) {
+        input = el("input", {
+            type: "text", value: inputValue, placeholder: "例: シーン1",
+            style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #555;" +
+                   "color:#ddd;padding:6px 10px;border-radius:4px;font-size:13px;",
+        });
+        input.addEventListener("keydown", e => {
+            e.stopPropagation();
+            if (e.key === "Enter") ok();
+            if (e.key === "Escape") dlg.remove();
+        });
+        box.appendChild(input);
+    }
+    const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;margin-top:10px;" });
+    const cancelBtn = el("button", {
+        style: "padding:5px 12px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;",
+    }, "Cancel");
+    const okBtn = el("button", {
+        style: `padding:5px 12px;background:${okBg};color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;`,
+    }, okLabel);
+    function ok() {
+        if (showInput) {
+            const val = input.value.trim();
+            if (!val) { input.style.border = "1px solid #a55"; return; }
+            dlg.remove();
+            onOk(val);
+        } else {
+            dlg.remove();
+            onOk();
+        }
+    }
+    cancelBtn.onclick = () => dlg.remove();
+    okBtn.onclick = ok;
+    btnRow.append(cancelBtn, okBtn);
+    box.appendChild(btnRow);
+    dlg.appendChild(box);
+    dlg.addEventListener("click", e => { if (e.target === dlg) dlg.remove(); });
+    document.body.appendChild(dlg);
+    setTimeout(() => { (input ?? okBtn).focus(); input?.select(); }, 0);
+    return dlg;
 }

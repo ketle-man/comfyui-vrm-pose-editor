@@ -467,3 +467,174 @@ async def light_library_delete(request):
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=500)
     return web.json_response({"error": "not found"}, status=404)
+
+
+# ================================================================
+# Keyframe Project Library API
+# キーフレームタイムライン全体(ポーズKF+カメラKF+fps+総フレーム数)を .kf_projects/ フォルダに
+# 保存・管理する。Light Library APIと完全に同じパターン。
+# ================================================================
+
+_KF_PROJECT_DIR = _NODE_DIR / ".kf_projects"
+_KF_PROJECT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _kf_project_id(filepath: str) -> str:
+    return hashlib.md5(filepath.encode("utf-8")).hexdigest()
+
+
+# ----------------------------------------------------------------
+# API: プロジェクト一覧取得
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.get("/kf_project/list")
+async def kf_project_list(request):
+    """GET /kf_project/list  — プロジェクト一覧を返す"""
+    projects = []
+    for p in sorted(_KF_PROJECT_DIR.glob("*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        pid = _kf_project_id(str(p))
+        kfs = data.get("keyframes", [])
+        projects.append({
+            "id":          pid,
+            "path":        str(p),
+            "name":        data.get("name", p.stem),
+            "createdAt":   data.get("createdAt", ""),
+            "fps":         data.get("fps", 24),
+            "totalFrames": data.get("totalFrames", 60),
+            "keyframeCount": len(kfs),
+        })
+    return web.json_response({"projects": projects})
+
+
+# ----------------------------------------------------------------
+# API: プロジェクト保存
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/kf_project/save")
+async def kf_project_save(request):
+    """
+    POST /kf_project/save
+    body: { "name": "<project name>", "project": { fps, totalFrames, keyframes: [...] } }
+    .kf_projects/ に kp_HHMMSS.json で保存。
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    name    = body.get("name", "").strip()
+    project = body.get("project")
+    if not name:
+        return web.json_response({"error": "name required"}, status=400)
+    if project is None:
+        return web.json_response({"error": "project required"}, status=400)
+
+    ts       = datetime.now().strftime("%H%M%S")
+    filename = f"kp_{ts}.json"
+    dest     = _KF_PROJECT_DIR / filename
+    # 同名衝突回避
+    if dest.exists():
+        dest = _KF_PROJECT_DIR / f"kp_{ts}_{int(datetime.now().microsecond / 1000):03d}.json"
+
+    data = {
+        "version":   1,
+        "name":      name,
+        "createdAt": datetime.utcnow().isoformat() + "Z",
+        **project,
+    }
+    dest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    pid = _kf_project_id(str(dest))
+    return web.json_response({
+        "ok":        True,
+        "id":        pid,
+        "path":      str(dest),
+        "name":      name,
+        "createdAt": data["createdAt"],
+    })
+
+
+# ----------------------------------------------------------------
+# API: プロジェクト内容取得
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.get("/kf_project/get/{project_id}")
+async def kf_project_get(request):
+    """GET /kf_project/get/{project_id}  — プロジェクト内容を返す"""
+    pid = request.match_info["project_id"]
+    for p in _KF_PROJECT_DIR.glob("*.json"):
+        if _kf_project_id(str(p)) == pid:
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                return web.json_response(data)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"error": "not found"}, status=404)
+
+
+# ----------------------------------------------------------------
+# API: プロジェクト名変更
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/kf_project/rename")
+async def kf_project_rename(request):
+    """
+    POST /kf_project/rename
+    body: { "id": "<project_id>", "new_name": "<new display name>" }
+    ファイル名は変更せず、JSON内のnameフィールドのみ更新。
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    pid      = body.get("id", "")
+    new_name = body.get("new_name", "").strip()
+    if not pid:
+        return web.json_response({"error": "id required"}, status=400)
+    if not new_name:
+        return web.json_response({"error": "new_name required"}, status=400)
+
+    for p in _KF_PROJECT_DIR.glob("*.json"):
+        if _kf_project_id(str(p)) == pid:
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                data["name"] = new_name
+                p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                return web.json_response({"ok": True, "id": pid, "name": new_name})
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"error": "not found"}, status=404)
+
+
+# ----------------------------------------------------------------
+# API: プロジェクト削除
+# ----------------------------------------------------------------
+
+@server.PromptServer.instance.routes.post("/kf_project/delete")
+async def kf_project_delete(request):
+    """
+    POST /kf_project/delete
+    body: { "id": "<project_id>" }
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    pid = body.get("id", "")
+    if not pid:
+        return web.json_response({"error": "id required"}, status=400)
+
+    for p in _KF_PROJECT_DIR.glob("*.json"):
+        if _kf_project_id(str(p)) == pid:
+            try:
+                p.unlink()
+                return web.json_response({"ok": True})
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"error": "not found"}, status=404)
