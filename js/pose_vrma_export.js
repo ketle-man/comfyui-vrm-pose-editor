@@ -705,7 +705,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             seekToFrame(f, { silent: true });
             renderFrameToOffscreen(offCanvas, outW, outH);
             track.requestFrame();
-            onProgress?.(f + 1, totalFrames + 1);
+            onProgress?.(`⏳ ${f + 1}/${totalFrames + 1}`);
             await new Promise(r => setTimeout(r, 0)); // レコーダーにフレームを渡す時間を確保
         }
         recorder.stop();
@@ -729,10 +729,13 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             seekToFrame(f, { silent: true });
             renderFrameToOffscreen(offCanvas, outW, outH);
             enc.addFrame(ctx.getImageData(0, 0, outW, outH));
-            onProgress?.(f + 1, totalFrames + 1);
+            onProgress?.(`⏳ Capture ${f + 1}/${totalFrames + 1}`);
             await new Promise(r => setTimeout(r, 0));
         }
-        return new Blob([enc.encode()], { type: "image/gif" });
+        // encode()はフレームごとにNeuQuant量子化(重い同期処理)を行うが内部でawaitして
+        // イベントループへ制御を返すため、ここで長時間メインスレッドをブロックしない
+        const bytes = await enc.encode((done, total) => onProgress?.(`⏳ Encode ${done}/${total}`));
+        return new Blob([bytes], { type: "image/gif" });
     }
 
     async function runExport(btn, otherBtn, exportFn, filename) {
@@ -741,7 +744,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const origLabel = btn.textContent;
         btn.disabled = true; otherBtn.disabled = true;
         try {
-            const blob = await exportFn((f, total) => { btn.textContent = `⏳ ${f}/${total}`; });
+            const blob = await exportFn(text => { btn.textContent = text; });
             downloadBlob(blob, filename);
         } catch (e) {
             alert("Export failed: " + e.message);

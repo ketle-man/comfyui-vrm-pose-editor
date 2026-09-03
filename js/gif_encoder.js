@@ -161,7 +161,12 @@ export class AnimGifEncoder {
     setQuality(q) { this._q   = Math.max(1, Math.min(30, q)); }
     addFrame(img) { this._f.push(new Uint8ClampedArray(img.data)); }
 
-    encode() {
+    // 非同期版: 1フレームのエンコード(NeuQuant量子化+LZW、フレームあたり最大で数百ms級の
+    // 重い同期処理)ごとにイベントループへ制御を返す。フレーム数が多いGIFで
+    // メインスレッドを長時間ブロックしてブラウザが無応答に見える問題を避けるため
+    // (量子化コストの大部分を占める64^3 LUT構築がフレームごとに走る)。
+    // onProgress(doneCount, totalCount) は各フレームのエンコード完了直後に呼ばれる。
+    async encode(onProgress) {
         const { w, h } = this;
         const delay = Math.max(1, Math.round(100 / this._fps));
         const TR = 0; // palette index 0 reserved for transparency
@@ -177,6 +182,7 @@ export class AnimGifEncoder {
         for (const c of "NETSCAPE2.0") out.push(c.charCodeAt(0));
         out.push(0x03, 0x01); _u16(out, 0); out.push(0x00);
 
+        let done = 0;
         for (const rgba of this._f) {
             // quantize: get 256-color palette; index 0 = transparent (black)
             const { palette, map } = _neuquant(rgba, this._q);
@@ -222,6 +228,9 @@ export class AnimGifEncoder {
             // Image Data (minCodeSize=8 for 256-color palette)
             out.push(8);
             _sub(out, _lzw(idx, 8));
+
+            onProgress?.(++done, this._f.length);
+            await new Promise(r => setTimeout(r, 0));
         }
 
         out.push(0x3B); // GIF trailer
