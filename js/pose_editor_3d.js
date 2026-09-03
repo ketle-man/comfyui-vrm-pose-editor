@@ -1,7 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { initPoseEditor3D } from './pose_editor_core.js';
-import { openPoseLibrary } from './pose_library.js';
-import { openLightEditor } from './light_editor.js';
+import { openLightPoseEditor } from './light_editor.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -50,6 +49,9 @@ app.registerExtension({
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const timerBtn       = makeSmallButton("⏱ OFF",     "#555",    "Timer Capture: OFF");
+            // RP(Reset Pose)/RC(Reset Camera)はLight & Pose Editorのキーフレームパネルにも同機能の
+            // 複製ボタンがある(pose_vrma_export.js)。モーダルを開かず素早くリセットしたいという
+            // 要望により、ノード側にも設置する(両方editor.resetPose()/resetCamera()を呼ぶだけ)
             const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
             const mirrorBtn      = makeSmallButton("↔",          "#5a6a7a", "Mirror Pose (flip left/right)");
             const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
@@ -62,6 +64,13 @@ app.registerExtension({
             vrmInput.style.display = "none";
             vrmBtn.onclick = () => vrmInput.click();
 
+            const vrmaBtn = makeSmallButton("VRMA", "#3a7a9a", "Load .vrma animation onto the current VRM");
+            const vrmaInput = document.createElement("input");
+            vrmaInput.type = "file";
+            vrmaInput.accept = ".vrma";
+            vrmaInput.style.display = "none";
+            vrmaBtn.onclick = () => vrmaInput.click();
+
             const savePoseBtn    = makeSmallButton("⬇️", "#4a7a4a", "Download the pose");
             const saveToPosesBtn = makeSmallButton("💾", "#4a6a8a", "Save pose to poses/");
             const loadPoseBtn    = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
@@ -71,14 +80,12 @@ app.registerExtension({
             poseInput.style.display = "none";
             loadPoseBtn.onclick = () => poseInput.click();
 
-            // ポーズライブラリボタン
-            const libraryBtn = makeSmallButton("📚", "#4a4a8a", "Open Pose Library");
-            libraryBtn.style.minWidth = "60px";
             let _currentVrmBuffer = null; // VRMバッファへの参照（ライブラリ内サムネイル生成用）
 
-            // ライトエディタボタン
-            const lightBtn = makeSmallButton("💡", "#7a6a2a", "Open Light Editor");
-            lightBtn.style.minWidth = "60px";
+            // Light & Pose Editor統合モーダルを開くボタン(旧: 1個の🎛ボタンから、Light/Poseそれぞれの
+            // タブへ直接開ける2ボタンに分割。モーダル自体は共通で、initialTabで開始タブだけ切り替える)
+            const lightBtn = makeSmallButton("💡 Light", "#5a5a9a", "Open Light Editor");
+            const poseBtn  = makeSmallButton("🕺 Pose",  "#5a5a9a", "Open Pose Editor");
 
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
@@ -107,13 +114,13 @@ app.registerExtension({
                 springBoneBtn.title = `Spring Bone Physics: ${on ? "ON" : "OFF"}`;
             };
 
-            // 風エフェクト(Wind)トグルボタン。詳細パラメータ(強さ・向き・そよぎ)はLight Editor内で調整する
-            const windBtn = makeSmallButton("🌬 OFF", "#444", "Wind: OFF (詳細はLight Editor内で調整)");
+            // 風エフェクト(Wind)トグルボタン。詳細パラメータ(強さ・向き・そよぎ)はLight & Pose Editor内で調整する
+            const windBtn = makeSmallButton("🌬 OFF", "#444", "Wind: OFF (詳細はLight & Pose Editor内で調整)");
             windBtn.onclick = () => {
                 const on = editor.toggleWindEnabled();
                 windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
                 windBtn.style.background = on ? "#2a6a8a" : "#444";
-                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight Editor内で調整)`;
+                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight & Pose Editor内で調整)`;
             };
 
             // 風の発生源マーカー(視線と同様にドラッグ可能な3Dオブジェクトで向きを指定)トグルボタン
@@ -163,13 +170,15 @@ app.registerExtension({
             btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
+            btnRow.appendChild(vrmaBtn);
             btnRow.appendChild(ccBtn);
             btnRow.appendChild(vrmInput);
+            btnRow.appendChild(vrmaInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
-            // ---- 2行目: ライブラリ・ライト + 背景系 ----
-            btnRow2.appendChild(libraryBtn);
+            // ---- 2行目: Light & Pose Editor + 背景系 ----
             btnRow2.appendChild(lightBtn);
+            btnRow2.appendChild(poseBtn);
             btnRow2.appendChild(bgBtn);
             btnRow2.appendChild(bgClearBtn);
             btnRow2.appendChild(bgColorInput);
@@ -307,41 +316,6 @@ app.registerExtension({
 
             bgClearBtn.onclick = clearBg;
 
-            // ---- シェイプキーパネル（折りたたみ） ----
-            const morphPanel = document.createElement("div");
-            morphPanel.style.cssText = "margin-top:4px;";
-
-            const morphHeader = document.createElement("div");
-            morphHeader.style.cssText =
-                "display:flex;align-items:center;gap:6px;cursor:pointer;" +
-                "padding:3px 6px;background:#3a3a3a;border-radius:4px;user-select:none;";
-            const morphArrow = document.createElement("span");
-            morphArrow.textContent = "▶";
-            morphArrow.style.cssText = "font-size:10px;color:#aaa;transition:transform 0.15s;";
-            const morphTitle = document.createElement("span");
-            morphTitle.textContent = "Shape Keys";
-            morphTitle.style.cssText = "font-size:11px;color:#ccc;font-weight:bold;";
-            const morphCount = document.createElement("span");
-            morphCount.style.cssText = "font-size:10px;color:#888;margin-left:auto;";
-            morphCount.textContent = "0 keys";
-            morphHeader.appendChild(morphArrow);
-            morphHeader.appendChild(morphTitle);
-            morphHeader.appendChild(morphCount);
-
-            const morphBody = document.createElement("div");
-            morphBody.style.cssText =
-                "display:none;flex-direction:column;gap:3px;padding:4px 2px;" +
-                "max-height:140px;overflow-y:auto;box-sizing:border-box;";
-
-            let morphOpen = false;
-            morphHeader.onclick = () => {
-                morphOpen = !morphOpen;
-                morphBody.style.display = morphOpen ? "flex" : "none";
-                morphArrow.style.transform = morphOpen ? "rotate(90deg)" : "";
-                // パネル開閉に合わせてノードサイズを更新
-                updateNodeSize();
-            };
-
             // ---- コントロールポイントサイズパネル ----
             const cpPanel = document.createElement("div");
             cpPanel.style.cssText = "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;display:flex;align-items:center;gap:6px;";
@@ -371,6 +345,41 @@ app.registerExtension({
             cpPanel.appendChild(cpSlider);
             cpPanel.appendChild(cpValLabel);
             container.appendChild(cpPanel);
+
+            // ---- VRMAタイムラインパネル（.vrma読込後のみ表示） ----
+            const vrmaPanel = document.createElement("div");
+            vrmaPanel.style.cssText =
+                "margin-top:4px;padding:3px 6px;background:#3a3a3a;border-radius:4px;" +
+                "display:none;align-items:center;gap:6px;";
+
+            const vrmaPlayBtn = document.createElement("button");
+            vrmaPlayBtn.textContent = "▶";
+            vrmaPlayBtn.style.cssText =
+                "padding:3px 8px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
+                "cursor:pointer;font-size:11px;flex-shrink:0;";
+
+            const vrmaSeek = document.createElement("input");
+            vrmaSeek.type = "range";
+            vrmaSeek.min = "0"; vrmaSeek.max = "1"; vrmaSeek.step = "0.001"; vrmaSeek.value = "0";
+            vrmaSeek.style.cssText = "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;";
+            vrmaSeek.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+            const vrmaTimeLabel = document.createElement("span");
+            vrmaTimeLabel.style.cssText = "font-size:10px;color:#aaa;white-space:nowrap;flex-shrink:0;";
+            vrmaTimeLabel.textContent = "0.0 / 0.0s";
+
+            const vrmaEjectBtn = document.createElement("button");
+            vrmaEjectBtn.textContent = "✕";
+            vrmaEjectBtn.title = "Unload VRMA animation";
+            vrmaEjectBtn.style.cssText =
+                "padding:3px 7px;background:#5a3a3a;color:#fff;border:none;border-radius:3px;" +
+                "cursor:pointer;font-size:11px;flex-shrink:0;";
+
+            vrmaPanel.appendChild(vrmaPlayBtn);
+            vrmaPanel.appendChild(vrmaSeek);
+            vrmaPanel.appendChild(vrmaTimeLabel);
+            vrmaPanel.appendChild(vrmaEjectBtn);
+            container.appendChild(vrmaPanel);
 
             // ---- カメラFOV(画角)パネル ----
             const fovPanel = document.createElement("div");
@@ -432,10 +441,6 @@ app.registerExtension({
             nearPanel.appendChild(nearValLabel);
             container.appendChild(nearPanel);
 
-            morphPanel.appendChild(morphHeader);
-            morphPanel.appendChild(morphBody);
-            container.appendChild(morphPanel);
-
             // ノードサイズ動的更新
             function updateNodeSize() {
                 if (node.computeSize) {
@@ -443,62 +448,18 @@ app.registerExtension({
                     node.size = [430, sz[1] + 16]; // DOM要素のはみ出しを防ぐため余白を追加
                     node.setDirtyCanvas(true, true);
                 } else {
-                    const morphH = morphOpen ? Math.min(morphBody.children.length * 26 + 12, 140) : 0;
-                    node.size = [430, 624 + morphH];
+                    const vrmaH = vrmaPanel.style.display !== "none" ? 34 : 0;
+                    node.size = [430, 590 + vrmaH];
                     node.setDirtyCanvas(true, true);
                 }
             }
 
-            // シェイプキースライダーを再構築する関数（editorから呼ばれる）
-            function rebuildMorphSliders(keys) {
-                morphBody.innerHTML = "";
-                morphCount.textContent = `${keys.length} keys`;
-
-                if (keys.length === 0) {
-                    const empty = document.createElement("div");
-                    empty.style.cssText = "font-size:10px;color:#666;padding:4px;";
-                    empty.textContent = "No shape keys found.";
-                    morphBody.appendChild(empty);
-                    updateNodeSize();
-                    return;
-                }
-
-                for (const { name, getValue, setValue } of keys) {
-                    const row = document.createElement("div");
-                    row.style.cssText = "display:flex;align-items:center;gap:4px;padding:1px 2px;";
-
-                    const label = document.createElement("span");
-                    label.textContent = name;
-                    label.title = name;
-                    label.style.cssText =
-                        "font-size:10px;color:#bbb;width:100px;overflow:hidden;" +
-                        "text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;";
-
-                    const slider = document.createElement("input");
-                    slider.type = "range";
-                    slider.min = "0"; slider.max = "1"; slider.step = "0.01";
-                    slider.value = String(getValue());
-                    slider.style.cssText = "flex:1;height:14px;accent-color:#4a90d9;cursor:pointer;";
-
-                    const valLabel = document.createElement("span");
-                    valLabel.style.cssText = "font-size:10px;color:#aaa;width:28px;text-align:right;flex-shrink:0;";
-                    valLabel.textContent = Number(getValue()).toFixed(2);
-
-                    slider.addEventListener("input", () => {
-                        const v = parseFloat(slider.value);
-                        setValue(v);
-                        valLabel.textContent = v.toFixed(2);
-                    });
-
-                    // スライダーのホイール操作（ComfyUIキャンバスへの伝播を防ぐ）
-                    slider.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
-
-                    row.appendChild(label);
-                    row.appendChild(slider);
-                    row.appendChild(valLabel);
-                    morphBody.appendChild(row);
-                }
-                updateNodeSize();
+            // シェイプキー一覧を保持するだけの軽量コールバック（editorから呼ばれる）。
+            // シェイプキーの編集UI自体はLight & Pose Editorモーダルのposeタブへ完全移設したため、
+            // ノード側では最新のkeys配列を保持し、モーダルを開く際に渡すだけでよい。
+            let currentMorphKeys = [];
+            function onMorphKeysReady(keys) {
+                currentMorphKeys = keys;
             }
 
             // ---- DOM ウィジェット登録（メイン） ----
@@ -510,8 +471,8 @@ app.registerExtension({
             // ワークフロー保存時にキャプチャ画像(数百KB〜数MB)がimage_dataと二重に書き込まれる
             domWidget.serialize = false;
             domWidget.computeSize = function() {
-                const morphH = morphOpen ? Math.min((morphBody.children.length || 1) * 26 + 12, 140) : 0;
-                return [430, 624 + morphH];
+                const vrmaH = vrmaPanel.style.display !== "none" ? 34 : 0;
+                return [430, 590 + vrmaH];
             };
 
             node.resizable = false;
@@ -528,7 +489,7 @@ app.registerExtension({
             // ---- 3Dエディタ初期化 ----
             const baseUrl = new URL(".", import.meta.url).href;
             const isModern = app.ui?.settings?.getSettingValue?.("Comfy.VueNodes.Enabled", false);
-            const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, rebuildMorphSliders, isModern);
+            const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, onMorphKeysReady, isModern);
 
             // タブ切り替えによるノード再作成時にキャッシュから復元
             const cachedModel = _nodeModelCache[node.id];
@@ -596,24 +557,107 @@ app.registerExtension({
                 }
             };
 
-            libraryBtn.onclick = () => {
-                openPoseLibrary(editor, _currentVrmBuffer);
-            };
+            // Light & Pose Editorを閉じた際、モーダル内でWind状態が変更された可能性があるため
+            // ツールバー側の表示を再同期する(Light/Poseどちらのボタンから開いた場合も共通)
+            function onLightPoseEditorClosed() {
+                const on = editor.getWindEnabled();
+                windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
+                windBtn.style.background = on ? "#2a6a8a" : "#444";
+                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight & Pose Editor内で調整)`;
 
+                const srcOn = editor.getWindSourceEnabled();
+                windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
+                windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
+                windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
+
+                // Light & Pose Editor内にも複製したPoint Sizeスライダーで値が変わった可能性があるため再同期
+                const ps = editor.getPointSize();
+                cpSlider.value = String(ps);
+                cpValLabel.textContent = ps.toFixed(1);
+            }
             lightBtn.onclick = () => {
-                openLightEditor(editor, cvsWrapper, () => {
-                    // Light Editor内でWind状態が変更された可能性があるためツールバー側の表示を再同期
-                    const on = editor.getWindEnabled();
-                    windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
-                    windBtn.style.background = on ? "#2a6a8a" : "#444";
-                    windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight Editor内で調整)`;
-
-                    const srcOn = editor.getWindSourceEnabled();
-                    windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
-                    windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
-                    windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
-                });
+                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light");
             };
+            poseBtn.onclick = () => {
+                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "pose");
+            };
+
+            // ---- VRMAタイムライン制御 ----
+            let _vrmaUISyncId = null; // UI表示をplayback timeへ追従させるrAFループ
+
+            function _formatVrmaTime() {
+                const dur = editor.getVRMADuration();
+                const t = editor.getVRMATime();
+                vrmaTimeLabel.textContent = `${t.toFixed(1)} / ${dur.toFixed(1)}s`;
+                vrmaSeek.value = String(t);
+            }
+
+            function _startVrmaUISync() {
+                if (_vrmaUISyncId !== null) return;
+                const tick = () => {
+                    if (!editor.isVRMAPlaying()) { _vrmaUISyncId = null; return; }
+                    _formatVrmaTime();
+                    _vrmaUISyncId = requestAnimationFrame(tick);
+                };
+                _vrmaUISyncId = requestAnimationFrame(tick);
+            }
+
+            function _setVrmaPlayingUI(playing) {
+                vrmaPlayBtn.textContent = playing ? "⏸" : "▶";
+                if (playing) _startVrmaUISync();
+            }
+
+            vrmaPlayBtn.onclick = () => {
+                if (editor.isVRMAPlaying()) {
+                    editor.pauseVRMA();
+                    _setVrmaPlayingUI(false);
+                } else {
+                    editor.playVRMA();
+                    _setVrmaPlayingUI(true);
+                }
+            };
+
+            // スライダー操作時は自動的に一時停止してスクラブに専念させる
+            vrmaSeek.addEventListener("pointerdown", () => {
+                if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setVrmaPlayingUI(false); }
+            });
+            vrmaSeek.addEventListener("input", () => {
+                editor.seekVRMA(parseFloat(vrmaSeek.value));
+                _formatVrmaTime();
+            });
+
+            vrmaEjectBtn.onclick = () => {
+                editor.clearVRMA();
+                vrmaPanel.style.display = "none";
+                updateNodeSize();
+            };
+
+            vrmaInput.addEventListener("change", (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                loadVrmaFile(file);
+                vrmaInput.value = "";
+            });
+
+            function loadVrmaFile(file) {
+                vrmaBtn.textContent = "⏳";
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    editor.loadVRMAFromBuffer(ev.target.result, () => {
+                        vrmaBtn.textContent = "VRMA";
+                        vrmaSeek.max = String(editor.getVRMADuration());
+                        vrmaSeek.value = "0";
+                        _formatVrmaTime();
+                        vrmaPanel.style.display = "flex";
+                        _setVrmaPlayingUI(false);
+                        updateNodeSize();
+                    }, (msg) => {
+                        vrmaBtn.textContent = "VRMA";
+                        alert("VRMA load error: " + msg);
+                    });
+                };
+                reader.readAsArrayBuffer(file);
+            }
 
             bgColorInput.addEventListener("input", () => editor.setBgColor(bgColorInput.value));
 
@@ -661,6 +705,10 @@ app.registerExtension({
                         URL.revokeObjectURL(url);
                         vrmBtn.textContent = "VRM";
                         vrmBtn.style.background = "#7a5a9a";
+                        // モデル切替でコア側のVRMA状態はクリア済み(clearModel→_clearVRMA)。UI側も追従させる
+                        vrmaPanel.style.display = "none";
+                        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+                        updateNodeSize();
                     });
                 };
                 reader.readAsArrayBuffer(file);
@@ -743,6 +791,12 @@ app.registerExtension({
                         return;
                     }
                     loadVrmFile(file);
+                } else if (ext === "vrma") {
+                    if (file.size > MAX_FILE_SIZE) {
+                        alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+                        return;
+                    }
+                    loadVrmaFile(file);
                 }
             });
 
@@ -750,6 +804,7 @@ app.registerExtension({
             // ---- ノード削除時のクリーンアップ ----
             node.onRemoved = function () {
                 if (_timerCapId !== null) { clearInterval(_timerCapId); _timerCapId = null; }
+                if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
                 editor.dispose();
                 delete _nodeModelCache[node.id];
             };

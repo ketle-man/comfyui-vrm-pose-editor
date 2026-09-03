@@ -17,23 +17,37 @@ import { VRMLoaderPlugin } from './vendor/three-vrm.module.js';
 // エントリポイント
 // editor: initPoseEditor3D の戻り値（importPose / exportPose を持つ）
 // vrmBuffer: 現在ロード済みのVRMバッファ (ArrayBuffer|null)
+// cvsWrapper: 実際のWebGLキャンバスDOM(省略可)。渡された場合、モーダル内の1列分の幅の
+//   プレビュー列へ一時的に移動して表示する(.vrma再生の様子がその場で見えるようにするため)。
+//   省略時はプレビュー列を表示しない(呼び出し元がcvsWrapperを扱わない場合の後方互換)。
+// onClose: モーダルを閉じた後に呼ばれるコールバック(呼び出し元がcvsWrapperの表示を
+//   自分のプレビュー枠に合わせて再調整するためのフック)
 // ----------------------------------------------------------------
-export function openPoseLibrary(editor, vrmBuffer) {
+export function openPoseLibrary(editor, vrmBuffer, cvsWrapper, onClose) {
     if (document.getElementById("pose-library-modal")) return;
-    document.body.appendChild(buildModal(editor, vrmBuffer));
+    document.body.appendChild(buildModal(editor, vrmBuffer, cvsWrapper, onClose));
 }
 
 // ----------------------------------------------------------------
 // モーダル本体
 // ----------------------------------------------------------------
-function buildModal(editor, vrmBuffer) {
+function buildModal(editor, vrmBuffer, cvsWrapper, onClose) {
+    // ---- cvsWrapperの元のDOM位置を保存(プレビュー列に埋め込む場合、閉じる際に復元する) ----
+    const origParent      = cvsWrapper?.parentNode ?? null;
+    const origNextSibling = cvsWrapper?.nextSibling ?? null;
+    const origTransform   = cvsWrapper?.style.transform ?? "";
+    const origTransformOrigin = cvsWrapper?.style.transformOrigin ?? "";
+    const origPosition    = cvsWrapper?.style.position ?? "";
+    const origTop         = cvsWrapper?.style.top ?? "";
+    const origLeft        = cvsWrapper?.style.left ?? "";
+
     const overlay = el("div", {
         id: "pose-library-modal",
         style: "position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:99999;" +
                "display:flex;align-items:center;justify-content:center;",
     });
-    overlay.addEventListener("keydown", e => { if (e.key === "Escape") overlay.remove(); });
-    overlay.addEventListener("click",   e => { if (e.target === overlay) overlay.remove(); });
+    overlay.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+    // モーダル外クリックでの誤クローズを防ぐため、背景クリックでは閉じない(✕ボタン/Escapeのみ)
 
     const dialog = el("div", {
         style: "background:#1e1e2e;color:#ccc;border-radius:10px;" +
@@ -52,7 +66,7 @@ function buildModal(editor, vrmBuffer) {
     const closeBtn = el("button", {
         style: "background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;padding:4px 8px;",
     }, "✕");
-    closeBtn.onclick = () => overlay.remove();
+    closeBtn.onclick = () => closeModal();
     header.append(titleEl, reloadBtn, closeBtn);
 
     // ---- ツールバー ----
@@ -81,7 +95,7 @@ function buildModal(editor, vrmBuffer) {
         style: "background:#111;border:1px solid #444;color:#ddd;padding:5px 6px;" +
                "border-radius:4px;font-size:12px;cursor:pointer;",
     });
-    [["all","All"],["favorite","⭐ Favorites"],["json",".json"],["vroidpose",".vroidpose"]]
+    [["all","All"],["favorite","⭐ Favorites"],["json",".json"],["vroidpose",".vroidpose"],["vrma",".vrma"]]
         .forEach(([v,t]) => filterSel.appendChild(el("option", { value: v }, t)));
 
     // Thumbnail size
@@ -100,11 +114,63 @@ function buildModal(editor, vrmBuffer) {
 
     toolbar.append(subdirSel, searchInput, filterSel, sizeSel, savePoseBtn);
 
-    // ---- コンテンツ ----
-    const content = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;box-sizing:border-box;" });
-    const grid    = el("div", { id: "plb-grid" });
+    // ---- プレビュー列(1列分の幅。cvsWrapperをここへ一時的に埋め込み、.vrma再生の様子が
+    //   その場で見えるようにする。Light & Pose EditorのpropPanel/posePropPanelと同じ280pxで
+    //   幅を揃える(cvsWrapperが渡されない呼び出し元との後方互換のため、その場合は列自体を作らない)) ----
+    const previewCol = cvsWrapper ? el("div", {
+        style: "width:280px;flex-shrink:0;display:flex;flex-direction:column;" +
+               "border-right:1px solid #2a2a4a;background:#181826;",
+    }) : null;
+    const previewHeader = el("div", {
+        style: "font-size:11px;font-weight:bold;color:#7a9aaa;padding:7px 12px;" +
+               "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
+    }, "Preview");
+    const previewWrap = el("div", {
+        style: "flex:1;display:flex;align-items:center;justify-content:center;" +
+               "overflow:hidden;min-height:0;padding:4px;",
+    });
+
+    // ---- VRMAミニプレイヤー(通常は非表示、.vrmaカードクリック時のみ表示。プレビュー列の下部に常設) ----
+    const vrmaPlayer = el("div", {
+        style: "display:none;flex-direction:column;gap:5px;padding:6px 10px;" +
+               "background:#16213e;border-top:1px solid #2a2a4a;flex-shrink:0;",
+    });
+    const vrmaNameRow = el("div", { style: "display:flex;align-items:center;gap:6px;" });
+    const vrmaNameLabel = el("span", {
+        style: "font-size:11px;color:#ccc;white-space:nowrap;overflow:hidden;" +
+               "text-overflow:ellipsis;flex:1;min-width:0;",
+    }, "");
+    const vrmaEjectBtn = el("button", {
+        style: "padding:3px 7px;background:#5a3a3a;color:#fff;border:none;border-radius:3px;" +
+               "cursor:pointer;font-size:11px;flex-shrink:0;",
+        title: "Unload VRMA",
+    }, "✕");
+    vrmaNameRow.append(vrmaNameLabel, vrmaEjectBtn);
+    const vrmaCtrlRow = el("div", { style: "display:flex;align-items:center;gap:6px;" });
+    const vrmaPlayBtn = el("button", {
+        style: "padding:4px 9px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
+               "cursor:pointer;font-size:12px;flex-shrink:0;",
+    }, "▶");
+    const vrmaSeek = el("input", {
+        type: "range", min: "0", max: "1", step: "0.001", value: "0",
+        style: "flex:1;min-width:0;height:14px;accent-color:#4a90d9;cursor:pointer;",
+    });
+    vrmaCtrlRow.append(vrmaPlayBtn, vrmaSeek);
+    const vrmaTimeLabel = el("span", {
+        style: "font-size:10px;color:#aaa;white-space:nowrap;text-align:right;",
+    }, "0.0 / 0.0s");
+    vrmaPlayer.append(vrmaNameRow, vrmaCtrlRow, vrmaTimeLabel);
+
+    if (previewCol) previewCol.append(previewHeader, previewWrap, vrmaPlayer);
+
+    // ---- コンテンツ(左: プレビュー列(あれば) / 右: サムネイルグリッド) ----
+    const content  = el("div", { style: "flex:1;display:flex;overflow:hidden;min-height:0;" });
+    const gridWrap = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;box-sizing:border-box;min-width:0;" });
+    const grid     = el("div", { id: "plb-grid" });
     setGridCss(grid, "m");
-    content.appendChild(grid);
+    gridWrap.appendChild(grid);
+    if (previewCol) content.appendChild(previewCol);
+    content.appendChild(gridWrap);
 
     // ---- ステータスバー ----
     const statusBar = el("div", {
@@ -117,6 +183,133 @@ function buildModal(editor, vrmBuffer) {
 
     dialog.append(header, toolbar, content, statusBar);
     overlay.appendChild(dialog);
+
+    // ---- cvsWrapperをプレビュー列へ埋め込む(light_editor.jsのbuildModalと同じスケーリング方式) ----
+    let previewResizeObserver = null;
+    if (cvsWrapper && previewCol) {
+        previewWrap.appendChild(cvsWrapper);
+        cvsWrapper.style.position = "relative";
+        cvsWrapper.style.top  = "0";
+        cvsWrapper.style.left = "0";
+
+        const applyPreviewScale = () => {
+            const pw = previewWrap.clientWidth  - 8;
+            const ph = previewWrap.clientHeight - 8;
+            if (pw <= 0 || ph <= 0) return;
+            const cw = cvsWrapper.offsetWidth;
+            const ch = cvsWrapper.offsetHeight;
+            if (cw <= 0 || ch <= 0) return;
+            const scale = Math.min(pw / cw, ph / ch);
+            cvsWrapper.style.transform       = `scale(${scale.toFixed(4)})`;
+            cvsWrapper.style.transformOrigin = "center center";
+            if (scale > 1 && typeof editor.resizeRenderer === "function") {
+                const dpr = window.devicePixelRatio || 1;
+                editor.resizeRenderer(Math.round(cw * scale * dpr), Math.round(ch * scale * dpr));
+            }
+        };
+        requestAnimationFrame(() => {
+            applyPreviewScale();
+            previewResizeObserver = new ResizeObserver(applyPreviewScale);
+            previewResizeObserver.observe(previewWrap);
+        });
+    }
+
+    // ----------------------------------------------------------------
+    // VRMAミニプレイヤー ロジック
+    // ----------------------------------------------------------------
+    let vrmaLoaded    = false;
+    let _vrmaUISyncId = null;
+
+    function _formatVrmaTime() {
+        const dur = editor.getVRMADuration();
+        const t   = editor.getVRMATime();
+        vrmaTimeLabel.textContent = `${t.toFixed(1)} / ${dur.toFixed(1)}s`;
+        vrmaSeek.max   = String(dur);
+        vrmaSeek.value = String(t);
+    }
+    function _startVrmaUISync() {
+        if (_vrmaUISyncId !== null) return;
+        const tick = () => {
+            if (!editor.isVRMAPlaying()) { _vrmaUISyncId = null; return; }
+            _formatVrmaTime();
+            _vrmaUISyncId = requestAnimationFrame(tick);
+        };
+        _vrmaUISyncId = requestAnimationFrame(tick);
+    }
+    function _setVrmaPlayingUI(playing) {
+        vrmaPlayBtn.textContent = playing ? "⏸" : "▶";
+        if (playing) _startVrmaUISync();
+    }
+
+    async function openVrmaInPlayer(pose) {
+        try {
+            const buf = await loadVrmaBinary(pose.path);
+            await new Promise((resolve, reject) => {
+                editor.loadVRMAFromBuffer(buf, resolve, (msg) => reject(new Error(msg)));
+            });
+            vrmaLoaded = true;
+            vrmaNameLabel.textContent = pose.name;
+            vrmaPlayer.style.display = "flex";
+            _formatVrmaTime();
+            _setVrmaPlayingUI(false);
+        } catch (e) {
+            alert("Failed to load VRMA: " + e.message);
+        }
+    }
+
+    vrmaPlayBtn.onclick = () => {
+        if (!editor.hasVRMA()) return;
+        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setVrmaPlayingUI(false); }
+        else { editor.playVRMA(); _setVrmaPlayingUI(true); }
+    };
+    vrmaSeek.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+    vrmaSeek.addEventListener("pointerdown", () => {
+        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setVrmaPlayingUI(false); }
+    });
+    vrmaSeek.addEventListener("input", () => {
+        if (!editor.hasVRMA()) return;
+        editor.seekVRMA(parseFloat(vrmaSeek.value));
+        _formatVrmaTime();
+    });
+    vrmaEjectBtn.onclick = () => {
+        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+        editor.clearVRMA();
+        vrmaLoaded = false;
+        vrmaPlayer.style.display = "none";
+    };
+
+    function closeModal() {
+        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+        if (vrmaLoaded) editor.clearVRMA();
+        previewResizeObserver?.disconnect();
+
+        // cvsWrapperを元のDOM位置(呼び出し元、多くはLight & Pose Editorのpreview枠)へ復元する。
+        // 元の親が既にDOMから失われているケースでも、閉じるボタンが機能しなくなる不具合を防ぐため
+        // 例外を投げない(light_editor.jsのcleanup()と同じ方針)。
+        if (cvsWrapper) {
+            try {
+                cvsWrapper.style.transform       = origTransform;
+                cvsWrapper.style.transformOrigin = origTransformOrigin;
+                cvsWrapper.style.position        = origPosition;
+                cvsWrapper.style.top             = origTop;
+                cvsWrapper.style.left            = origLeft;
+                if (origParent && origParent.isConnected) {
+                    if (origNextSibling && origNextSibling.parentNode === origParent) {
+                        origParent.insertBefore(cvsWrapper, origNextSibling);
+                    } else {
+                        origParent.appendChild(cvsWrapper);
+                    }
+                } else if (!cvsWrapper.isConnected) {
+                    document.body.appendChild(cvsWrapper);
+                }
+            } catch (err) {
+                console.warn("[PoseLibrary] プレビューの復元に失敗しました:", err);
+            }
+        }
+
+        overlay.remove();
+        onClose?.();
+    }
 
     // ----------------------------------------------------------------
     // 状態
@@ -202,6 +395,12 @@ function buildModal(editor, vrmBuffer) {
         return res.text();
     }
 
+    async function loadVrmaBinary(path) {
+        const res = await fetch(`/pose_library/vrma_content?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.arrayBuffer();
+    }
+
     // ----------------------------------------------------------------
     // フィルタリング
     // ----------------------------------------------------------------
@@ -213,6 +412,7 @@ function buildModal(editor, vrmBuffer) {
             if (f === "favorite" && !p.favorite)        return false;
             if (f === "json"      && p.ext !== ".json")      return false;
             if (f === "vroidpose" && p.ext !== ".vroidpose") return false;
+            if (f === "vrma"      && p.ext !== ".vrma")      return false;
             return true;
         });
     }
@@ -300,7 +500,10 @@ function buildModal(editor, vrmBuffer) {
             thumbArea.appendChild(img);
         }
 
-        if (pose.thumb) {
+        if (pose.ext === ".vrma") {
+            // アニメーションのため静止ポーズと同じ自動サムネイル生成は行わない
+            thumbArea.appendChild(placeholderEl(px, "🎬"));
+        } else if (pose.thumb) {
             setThumbImg(pose.thumb + "?t=" + Date.now());
         } else {
             thumbArea.appendChild(placeholderEl(px));
@@ -346,8 +549,14 @@ function buildModal(editor, vrmBuffer) {
 
         card.append(thumbArea, starBtn, info);
 
-        // クリック → ポーズ適用
+        // クリック → ポーズ適用 (.vrmaはミニプレイヤーで読込・再生)
         card.addEventListener("click", async () => {
+            if (pose.ext === ".vrma") {
+                await openVrmaInPlayer(pose);
+                card.style.borderColor = "#28a745";
+                setTimeout(() => { card.style.borderColor = "transparent"; }, 700);
+                return;
+            }
             try {
                 const content = await loadPoseContent(pose.path);
                 editor.importPose(content);
@@ -370,11 +579,11 @@ function buildModal(editor, vrmBuffer) {
     // ----------------------------------------------------------------
     // プレースホルダー
     // ----------------------------------------------------------------
-    function placeholderEl(px) {
+    function placeholderEl(px, icon = "🧍") {
         return el("div", {
             style: `width:${px}px;height:${px}px;display:flex;align-items:center;` +
                    "justify-content:center;font-size:28px;color:#333;",
-        }, "🧍");
+        }, icon);
     }
 
     // ----------------------------------------------------------------
@@ -409,19 +618,21 @@ function buildModal(editor, vrmBuffer) {
                 renderGrid();
             }
         ));
-        menu.appendChild(menuItem("↔️ Mirror & Apply", async () => {
-            try {
-                const content = await loadPoseContent(pose.path);
-                editor.importPose(content);
-                editor.mirrorPose();
-            } catch (e) {
-                alert("Failed to apply mirrored pose: " + e.message);
-            }
-        }));
+        if (pose.ext !== ".vrma") {
+            menu.appendChild(menuItem("↔️ Mirror & Apply", async () => {
+                try {
+                    const content = await loadPoseContent(pose.path);
+                    editor.importPose(content);
+                    editor.mirrorPose();
+                } catch (e) {
+                    alert("Failed to apply mirrored pose: " + e.message);
+                }
+            }));
+        }
         menu.appendChild(menuItem("📝 Edit Memo",    () => showMemoDlg(pose)));
         menu.appendChild(menuItem("✏️ Rename File",  () => showRenameDlg(pose)));
 
-        if (vrmBuffer) {
+        if (vrmBuffer && pose.ext !== ".vrma") {
             menu.appendChild(menuItem("🖼 Regenerate Thumbnail (Front)", async () => {
                 const dataUrl = await generateThumbnail(pose, vrmBuffer, false);
                 if (!dataUrl) { alert("Thumbnail generation failed."); return; }

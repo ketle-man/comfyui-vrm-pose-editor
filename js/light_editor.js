@@ -1,17 +1,22 @@
 /**
- * Light Editor Panel
+ * Light & Pose Editor (統合モーダル・フェーズ1)
  * - Embeds the actual WebGL canvas (cvsWrapper) into the preview panel via DOM move + CSS scale
  *   → bone operations, camera orbit, light helper drag all work natively
- * - Multiple lights: Directional(Sun), Point, Spot, RectArea(Box), Ambient
- * - Per-light: color, intensity, position XYZ, target XYZ, angle, shadow (Directional only)
- * - Ground height (Y) / Background wall depth (Z) sliders
- * - Shadow quality selector
- * - Light Library: save/load/rename/delete presets (server-side .light_library/)
+ * - "Light" タブ: 複数ライト管理(Directional/Point/Spot/RectArea/Ambient)。左ペインを
+ *   L(ライト一覧)/E(環境: 地面・壁・風)/S(基本設定: アンチエイリアス・マウス)の3サブタブ化。
+ * - "pose" タブ: シェイプキー一覧 + ポーズライブラリボタン(既存 pose_library.js を起動するだけ)。
+ * - モーダル下部にキーフレームパネル(pose_vrma_export.js の buildKeyframePanel)を両タブ共通で常設。
+ * - Light Library: save/load/rename/delete presets (server-side .light_library/) ※Lightタブ専用。
  */
 
-export function openLightEditor(editor, cvsWrapper, onClose) {
-    if (document.getElementById("light-editor-modal")) return;
-    document.body.appendChild(buildModal(editor, cvsWrapper, onClose));
+import { openPoseLibrary } from './pose_library.js';
+import { buildKeyframePanel } from './pose_vrma_export.js';
+
+// initialTab: "light"(既定) | "pose" — モーダルを開いた直後に表示するメインタブ
+// (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
+export function openLightPoseEditor(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab) {
+    if (document.getElementById("light-pose-editor-modal")) return;
+    document.body.appendChild(buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab));
 }
 
 // ----------------------------------------------------------------
@@ -23,7 +28,7 @@ const LIGHT_TYPES = [
     { value: "ambient",     label: "🌐 Ambient" },
 ];
 
-function buildModal(editor, cvsWrapper, onClose) {
+function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab) {
     // ---- Save original DOM position of cvsWrapper ----
     const origParent      = cvsWrapper.parentNode;
     const origNextSibling = cvsWrapper.nextSibling;
@@ -35,16 +40,23 @@ function buildModal(editor, cvsWrapper, onClose) {
 
     // Overlay
     const overlay = el("div", {
-        id: "light-editor-modal",
+        id: "light-pose-editor-modal",
         style: "position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:99999;" +
                "display:flex;align-items:center;justify-content:center;",
     });
     overlay.tabIndex = -1;
     overlay.addEventListener("keydown", e => { if (e.key === "Escape") cleanup(); });
-    overlay.addEventListener("click",   e => { if (e.target === overlay) cleanup(); });
+    // モーダル外クリックでの誤クローズを防ぐため、背景クリックでは閉じない(✕ボタン/Escapeのみ)
     overlay.focus();
 
     let resizeObserver = null;
+    // editor._kfPanelState: 前回このモーダルを閉じた際のタイムライン状態(keyframes/fps/totalFrames/currentFrame)。
+    // editorはノードごとに1つ生きたまま保持されるオブジェクトなので、ここに保持しておくことで
+    // モーダルを閉じてもキーフレームが消えないようにする。
+    const keyframePanel = buildKeyframePanel(editor, () => vrmBuffer, getShapeKeys, () => {
+        // シーク/再生でシェイプキー値が変わった際、Poseタブ表示中ならスライダー表示も追従させる
+        if (activeMainTab === "pose") rebuildShapeKeySliders();
+    }, editor._kfPanelState);
 
     // モーダルを開いている間に呼び出し元の状態が変化し、cvsWrapperの元の親要素が既にDOMから
     // 失われている（文書に属さなくなっている）ケースがあり得る。この場合でも必ずモーダルを
@@ -86,6 +98,8 @@ function buildModal(editor, cvsWrapper, onClose) {
         resizeObserver?.disconnect();
         editor.clearLightHelpers();
         window.removeEventListener("lightHelperMoved", onHelperMoved);
+        editor._kfPanelState = keyframePanel.getState();
+        keyframePanel.destroy();
         overlay.remove();
         onClose?.();
     }
@@ -99,47 +113,182 @@ function buildModal(editor, cvsWrapper, onClose) {
 
     // ---- Header ----
     const header = el("div", {
-        style: "display:flex;align-items:center;gap:8px;padding:10px 14px;" +
+        style: "display:flex;align-items:center;gap:8px;padding:8px 14px;" +
                "background:#16213e;border-bottom:1px solid #333;flex-shrink:0;",
     });
+
+    const titleIcon = el("span", { style: "font-size:14px;font-weight:bold;color:#e0e0ff;white-space:nowrap;" }, "Light & Pose Editor");
+
+    const mainTabBar = el("div", { style: "display:flex;gap:4px;flex:1;margin-left:6px;" });
+    const lightTabBtn = mkMainTabBtn("💡 Light");
+    const poseTabBtn  = mkMainTabBtn("🕺 pose");
+    mainTabBar.append(lightTabBtn, poseTabBtn);
+
+    // ---- Point Size (ボーンハンドルの球サイズ倍率) ----
+    // ノード側(pose_editor_3d.js)のコントロールポイントサイズパネルと同じeditor.setPointSize()を
+    // 呼ぶだけの複製コントロール。モーダルを開いている間はcvsWrapperがモーダル側へ移動しノードの
+    // 元パネルは見えなくなるため、ここにも置いて操作できるようにする。
+    const pointSizeCtrl = el("div", { style: "display:flex;align-items:center;gap:5px;flex-shrink:0;" });
+    const pointSizeLabel = el("span", { style: "font-size:10px;color:#889;white-space:nowrap;" }, "Point Size");
+    const pointSizeSlider = el("input", {
+        type: "range", min: "0.2", max: "3.0", step: "0.1", value: String(editor.getPointSize()),
+        style: "width:80px;height:14px;accent-color:#4a90d9;cursor:pointer;",
+    });
+    pointSizeSlider.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+    const pointSizeVal = el("span", {
+        style: "font-size:10px;color:#889;width:22px;text-align:right;flex-shrink:0;",
+    }, parseFloat(pointSizeSlider.value).toFixed(1));
+    pointSizeSlider.addEventListener("input", () => {
+        const v = parseFloat(pointSizeSlider.value);
+        editor.setPointSize(v);
+        pointSizeVal.textContent = v.toFixed(1);
+    });
+    pointSizeCtrl.append(pointSizeLabel, pointSizeSlider, pointSizeVal);
 
     const libBtn = el("button", {
         style: "padding:4px 10px;background:#2a3a6a;color:#aac;border:1px solid #3a4a7a;" +
                "border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;" +
                "white-space:nowrap;transition:all 0.15s;",
     }, "📚 Library");
+    libBtn.title = "Light Preset Library";
     libBtn.addEventListener("mouseover", () => { libBtn.style.opacity = "0.8"; });
     libBtn.addEventListener("mouseout",  () => { libBtn.style.opacity = "1"; });
 
-    header.append(
-        el("span", { style: "font-size:15px;font-weight:bold;color:#e0e0ff;flex:1;" }, "💡 Light Editor"),
-        libBtn,
-        mkCloseBtn(cleanup)
-    );
+    header.append(titleIcon, mainTabBar, pointSizeCtrl, libBtn, mkCloseBtn(cleanup));
 
-    // ---- Scene options bar ----
-    const sceneBar = el("div", {
-        style: "display:flex;align-items:center;gap:10px;padding:6px 14px;" +
-               "background:#1a1a2e;border-bottom:1px solid #2a2a4a;flex-shrink:0;flex-wrap:wrap;",
+    // ----------------------------------------------------------------
+    // uiRefs: captureCurrentSettings / applyPreset が参照するUI参照まとめ
+    // (E/Sサブタブ構築の途中で埋めていく)
+    // ----------------------------------------------------------------
+    const uiRefs = {};
+
+    // ---- 3-column body (+ library panel) ----
+    const body = el("div", { style: "flex:1;display:flex;overflow:hidden;min-height:0;" });
+
+    // ================================================================
+    // Light タブ: 左ペイン (L/E/S サブタブ)
+    // ================================================================
+    const lightLeftWrap = el("div", { style: "display:flex;flex-shrink:0;" });
+
+    const subTabStrip = el("div", {
+        style: "width:32px;flex-shrink:0;display:flex;flex-direction:column;" +
+               "border-right:1px solid #2a2a4a;background:#12121c;",
+    });
+    const subTabL = mkSubTabBtn("L", "Lights");
+    const subTabE = mkSubTabBtn("E", "Environment (地面・壁・風)");
+    const subTabS = mkSubTabBtn("S", "Settings (アンチエイリアス・マウス)");
+    subTabStrip.append(subTabL, subTabE, subTabS);
+
+    const subTabContent = el("div", {
+        style: "width:238px;flex-shrink:0;display:flex;flex-direction:column;" +
+               "border-right:1px solid #2a2a4a;background:#161622;overflow:hidden;",
     });
 
+    // ---- L: Light list ----
+    const lBody = el("div", { style: "display:flex;flex-direction:column;flex:1;overflow:hidden;" });
+    const listHeader = el("div", {
+        style: "display:flex;align-items:center;padding:7px 10px;" +
+               "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
+    });
+    const addBtn = mkBtn("＋ Add", "#2a5a8a");
+    addBtn.style.padding = "3px 9px";
+    listHeader.append(
+        el("span", { style: "font-size:12px;font-weight:bold;color:#aaa;flex:1;" }, "Lights"),
+        addBtn
+    );
+    const listContent = el("div", { style: "flex:1;overflow-y:auto;padding:4px;" });
+    lBody.append(listHeader, listContent);
+
+    // ---- E: Environment (Ground / Wall / Wind / Shadow quality) ----
+    const eBody = el("div", { style: "display:none;flex-direction:column;gap:2px;padding:8px;overflow-x:hidden;overflow-y:auto;flex:1;box-sizing:border-box;" });
+
+    // Ground
     const groundBtn = mkToggleBtn("🟫 Ground", editor.getGroundVisible());
     groundBtn.onclick = () => applyToggle(groundBtn, "🟫 Ground", editor.toggleGround());
-
-    const groundYLbl = el("span", { style: "font-size:10px;color:#888;" }, "Y:");
     const [groundYSl, groundYVl] = mkSl(-5, 5, 0.01, editor.getGroundY(), v => editor.setGroundY(v));
-    groundYSl.style.cssText += ";width:70px;flex:none;";
+    const groundColorPick = el("input", { type: "color", value: editor.getGroundColor(),
+        style: "width:26px;height:22px;border:none;cursor:pointer;background:none;padding:0;flex-shrink:0;",
+        title: "Ground color" });
+    groundColorPick.addEventListener("input", () => editor.setGroundColor(groundColorPick.value));
+    const groundTexBtn = mkBtn("📁 Tex", "#2a4a6a"); groundTexBtn.title = "Load ground texture";
+    groundTexBtn.style.cssText += "padding:3px 7px;font-size:10px;";
+    const groundTexInput = mkFileInput("image/*");
+    groundTexInput.addEventListener("change", e => {
+        const file = e.target.files[0]; if (!file) return;
+        const url = URL.createObjectURL(file);
+        editor.setGroundTexture(url);
+        groundTexBtn.textContent = "📁 " + file.name.slice(0, 8) + (file.name.length > 8 ? "…" : "");
+        groundTexBtn.style.background = "#2a6a4a";
+        groundTexInput.value = "";
+    });
+    groundTexBtn.onclick = () => groundTexInput.click();
+    const groundTexClear = mkBtn("✕", "#5a3a3a"); groundTexClear.title = "Clear texture";
+    groundTexClear.style.cssText += "padding:3px 6px;font-size:10px;";
+    groundTexClear.onclick = () => {
+        editor.clearGroundTexture();
+        groundTexBtn.textContent = "📁 Tex"; groundTexBtn.style.background = "#2a4a6a";
+    };
+    const groundTileNum = mkNumInput(0.1, 50, 0.1, 1, n => editor.setGroundTexRepeat(n));
+    const groundSCBtn = mkToggleBtn("🕶 SC", editor.getGroundShadowCatcher());
+    groundSCBtn.style.cssText += "padding:3px 7px;font-size:10px;";
+    groundSCBtn.title = "Shadow Catcher: 面を透明にして影だけ表示";
+    groundSCBtn.onclick = () => applyToggle(groundSCBtn, "🕶 SC", editor.toggleGroundShadowCatcher());
+    const groundSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setGroundShadowOpacity(v));
 
+    eBody.append(
+        sectionTitle("Ground"),
+        fieldRow("Show:", groundBtn),
+        sliderRow("Y:", groundYSl, groundYVl),
+        fieldRow("Color:", row2(groundColorPick, groundTexBtn)),
+        fieldRow("", row2(groundTexClear, lbl("Tile:"), groundTileNum)),
+        fieldRow("", row2(groundSCBtn, lbl("影濃度:"), groundSCOpNum)),
+    );
+
+    // Wall
     const bgWallBtn = mkToggleBtn("🖼 BG Wall", editor.getBgWallVisible());
     bgWallBtn.onclick = () => applyToggle(bgWallBtn, "🖼 BG Wall", editor.toggleBgWall());
-
-    const bgZLbl = el("span", { style: "font-size:10px;color:#888;" }, "Z:");
     const [bgZSl, bgZVl] = mkSl(-20, 5, 0.01, editor.getBgWallZ(), v => editor.setBgWallZ(v));
-    bgZSl.style.cssText += ";width:70px;flex:none;";
+    const wallColorPick = el("input", { type: "color", value: editor.getBgWallColor(),
+        style: "width:26px;height:22px;border:none;cursor:pointer;background:none;padding:0;flex-shrink:0;",
+        title: "Wall color" });
+    wallColorPick.addEventListener("input", () => editor.setBgWallColor(wallColorPick.value));
+    const wallTexBtn = mkBtn("📁 Tex", "#2a4a6a"); wallTexBtn.title = "Load wall texture";
+    wallTexBtn.style.cssText += "padding:3px 7px;font-size:10px;";
+    const wallTexInput = mkFileInput("image/*");
+    wallTexInput.addEventListener("change", e => {
+        const file = e.target.files[0]; if (!file) return;
+        const url = URL.createObjectURL(file);
+        editor.setBgWallTexture(url);
+        wallTexBtn.textContent = "📁 " + file.name.slice(0, 8) + (file.name.length > 8 ? "…" : "");
+        wallTexBtn.style.background = "#2a6a4a";
+        wallTexInput.value = "";
+    });
+    wallTexBtn.onclick = () => wallTexInput.click();
+    const wallTexClear = mkBtn("✕", "#5a3a3a"); wallTexClear.title = "Clear texture";
+    wallTexClear.style.cssText += "padding:3px 6px;font-size:10px;";
+    wallTexClear.onclick = () => {
+        editor.clearBgWallTexture();
+        wallTexBtn.textContent = "📁 Tex"; wallTexBtn.style.background = "#2a4a6a";
+    };
+    const wallTileNum = mkNumInput(0.1, 50, 0.1, 1, n => editor.setBgWallTexRepeat(n));
+    const wallSCBtn = mkToggleBtn("🕶 SC", editor.getBgWallShadowCatcher());
+    wallSCBtn.style.cssText += "padding:3px 7px;font-size:10px;";
+    wallSCBtn.title = "Shadow Catcher: 面を透明にして影だけ表示";
+    wallSCBtn.onclick = () => applyToggle(wallSCBtn, "🕶 SC", editor.toggleBgWallShadowCatcher());
+    const wallSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setBgWallShadowOpacity(v));
 
-    const shadowLbl = el("span", { style: "font-size:10px;color:#888;margin-left:6px;" }, "Shadow:");
+    eBody.append(
+        sectionTitle("Wall"),
+        fieldRow("Show:", bgWallBtn),
+        sliderRow("Z:", bgZSl, bgZVl),
+        fieldRow("Color:", row2(wallColorPick, wallTexBtn)),
+        fieldRow("", row2(wallTexClear, lbl("Tile:"), wallTileNum)),
+        fieldRow("", row2(wallSCBtn, lbl("影濃度:"), wallSCOpNum)),
+    );
+
+    // Shadow quality
     const shadowSel = el("select", {
-        style: "background:#111;border:1px solid #444;color:#ddd;padding:3px 6px;" +
+        style: "flex:1;background:#111;border:1px solid #444;color:#ddd;padding:3px 6px;" +
                "border-radius:4px;font-size:11px;cursor:pointer;",
     });
     [["none","None"],["soft","Soft PCF"],["hard","Hard"]].forEach(([v, t]) =>
@@ -148,47 +297,17 @@ function buildModal(editor, cvsWrapper, onClose) {
     shadowSel.addEventListener("change", () => editor.setShadowQuality(shadowSel.value));
     shadowSel.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
 
-    // ---- Zoom mode toggle (ホイールズームが効かない環境向け) ----
-    const zoomModeBtn = mkToggleBtn("🖱 Ctrl+右ドラッグでズーム", editor.getZoomMode() === "ctrlDrag");
-    zoomModeBtn.title = "OFF: マウスホイールでズーム / ON: 何もない場所でCtrl+右ドラッグでズーム\n" +
-                         "(マウスホイールズームが機能しない環境向け)";
-    zoomModeBtn.onclick = () => {
-        const next = editor.getZoomMode() === "wheel" ? "ctrlDrag" : "wheel";
-        editor.setZoomMode(next);
-        applyToggle(zoomModeBtn, "🖱 Ctrl+右ドラッグでズーム", next === "ctrlDrag");
-    };
+    eBody.append(sectionTitle("Shadow Quality"), fieldRow("", shadowSel));
 
-    // ---- アンチエイリアス強化トグル（プレビュー拡大表示時の輪郭のギザギザを緩和） ----
-    const AA_LABEL = "🖼 アンチエイリアス強化";
-    const aaBtn = mkToggleBtn(AA_LABEL, editor.getSuperSample?.() ?? false);
-    aaBtn.title = "プレビュー拡大表示時の輪郭のギザギザを抑えます（解像度を上げるため描画負荷が増えます）";
-    aaBtn.onclick = () => {
-        const next = !(editor.getSuperSample?.() ?? false);
-        editor.setSuperSample?.(next);
-        applyToggle(aaBtn, AA_LABEL, next);
-    };
-
-    // ---- 風（そよ風エフェクト）----
+    // Wind
     const windBtn2 = mkToggleBtn("🌬 Wind", editor.getWindEnabled());
     windBtn2.title = "Spring Bone Physics がONの時のみ効果があります";
     windBtn2.onclick = () => applyToggle(windBtn2, "🌬 Wind", editor.toggleWindEnabled());
-
-    const windStrLbl = el("span", { style: "font-size:10px;color:#888;" }, "強さ:");
     const [windStrSl, windStrVl] = mkSl(0, 5, 0.05, editor.getWindStrength(), v => editor.setWindStrength(v));
-    windStrSl.style.cssText += ";width:70px;flex:none;";
-
-    const windDirLbl = el("span", { style: "font-size:10px;color:#888;" }, "向き:");
     const [windDirSl, windDirVl] = mkSl(0, 360, 1, editor.getWindDirection(),
-        v => editor.setWindDirection(v),
-        v => v.toFixed(0) + "°");
-    windDirSl.style.cssText += ";width:70px;flex:none;";
-
-    const windGustLbl = el("span", { style: "font-size:10px;color:#888;" }, "そよぎ:");
+        v => editor.setWindDirection(v), v => v.toFixed(0) + "°");
     const [windGustSl, windGustVl] = mkSl(0, 1, 0.01, editor.getWindTurbulence(), v => editor.setWindTurbulence(v));
-    windGustSl.style.cssText += ";width:70px;flex:none;";
 
-    // 風の発生源マーカー(ONの間はプレビュー内のオレンジのコーンをドラッグして向きを指定でき、
-    // 「向き」スライダーは無効化される)
     function _syncWindDirDisabled(disabled) {
         windDirSl.disabled = disabled;
         windDirSl.style.opacity = disabled ? "0.4" : "1";
@@ -203,142 +322,109 @@ function buildModal(editor, cvsWrapper, onClose) {
     };
     _syncWindDirDisabled(editor.getWindSourceEnabled());
 
-    sceneBar.append(
-        groundBtn, groundYLbl, groundYSl, groundYVl,
-        sep(), bgWallBtn, bgZLbl, bgZSl, bgZVl,
-        shadowLbl, shadowSel,
-        sep(), zoomModeBtn, aaBtn,
-        sep(), windBtn2, windStrLbl, windStrSl, windStrVl,
-        windSrcBtn, windDirLbl, windDirSl, windDirVl, windGustLbl, windGustSl, windGustVl
+    eBody.append(
+        sectionTitle("Wind"),
+        fieldRow("On:", windBtn2),
+        sliderRow("強さ:", windStrSl, windStrVl),
+        fieldRow("向き:", windSrcBtn),
+        sliderRow("", windDirSl, windDirVl),
+        sliderRow("そよぎ:", windGustSl, windGustVl),
     );
 
-    // ---- Surface bar (color / texture) ----
-    const surfaceBar = el("div", {
-        style: "display:flex;align-items:center;gap:8px;padding:5px 14px;" +
-               "background:#16162a;border-bottom:1px solid #2a2a4a;flex-shrink:0;flex-wrap:wrap;",
-    });
+    // ---- S: Settings (AA / Mouse zoom mode) ----
+    const sBody = el("div", { style: "display:none;flex-direction:column;gap:8px;padding:10px;overflow-x:hidden;overflow-y:auto;flex:1;box-sizing:border-box;" });
 
-    // ---- Ground surface ----
-    surfaceBar.appendChild(el("span", { style: "font-size:10px;color:#777;white-space:nowrap;" }, "🟫 Ground:"));
-
-    const groundColorPick = el("input", { type: "color", value: editor.getGroundColor(),
-        style: "width:28px;height:22px;border:none;cursor:pointer;background:none;padding:0;flex-shrink:0;",
-        title: "Ground color" });
-    groundColorPick.addEventListener("input", () => editor.setGroundColor(groundColorPick.value));
-    surfaceBar.appendChild(groundColorPick);
-
-    const groundTexBtn = mkBtn("📁 Tex", "#2a4a6a"); groundTexBtn.title = "Load ground texture";
-    groundTexBtn.style.padding = "3px 8px";
-    const groundTexInput = mkFileInput("image/*");
-    groundTexInput.addEventListener("change", e => {
-        const file = e.target.files[0]; if (!file) return;
-        const url = URL.createObjectURL(file);
-        editor.setGroundTexture(url);
-        groundTexBtn.textContent = "📁 " + file.name.slice(0, 14) + (file.name.length > 14 ? "…" : "");
-        groundTexBtn.style.background = "#2a6a4a";
-        groundTexInput.value = "";
-    });
-    groundTexBtn.onclick = () => groundTexInput.click();
-    surfaceBar.append(groundTexBtn, groundTexInput);
-
-    const groundTexClear = mkBtn("✕", "#5a3a3a"); groundTexClear.title = "Clear texture";
-    groundTexClear.style.padding = "3px 7px";
-    groundTexClear.onclick = () => {
-        editor.clearGroundTexture();
-        groundTexBtn.textContent = "📁 Tex"; groundTexBtn.style.background = "#2a4a6a";
+    const zoomModeBtn = mkToggleBtn("🖱 Ctrl+右ドラッグでズーム", editor.getZoomMode() === "ctrlDrag");
+    zoomModeBtn.title = "OFF: マウスホイールでズーム / ON: 何もない場所でCtrl+右ドラッグでズーム\n" +
+                         "(マウスホイールズームが機能しない環境向け)";
+    zoomModeBtn.style.cssText += "white-space:normal;text-align:left;";
+    zoomModeBtn.onclick = () => {
+        const next = editor.getZoomMode() === "wheel" ? "ctrlDrag" : "wheel";
+        editor.setZoomMode(next);
+        applyToggle(zoomModeBtn, "🖱 Ctrl+右ドラッグでズーム", next === "ctrlDrag");
     };
-    surfaceBar.appendChild(groundTexClear);
 
-    const groundTileLbl = el("span", { style: "font-size:10px;color:#777;" }, "Tile:");
-    const groundTileNum = mkNumInput(0.1, 50, 0.1, 1, n => editor.setGroundTexRepeat(n));
-    surfaceBar.append(groundTileLbl, groundTileNum);
-
-    surfaceBar.appendChild(sep());
-    const groundSCBtn = mkToggleBtn("🕶 SC", editor.getGroundShadowCatcher());
-    groundSCBtn.style.padding = "3px 9px";
-    groundSCBtn.title = "Shadow Catcher: 面を透明にして影だけ表示";
-    groundSCBtn.onclick = () => applyToggle(groundSCBtn, "🕶 SC", editor.toggleGroundShadowCatcher());
-    const groundSCOpLbl = el("span", { style: "font-size:10px;color:#777;" }, "影濃度:");
-    const groundSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setGroundShadowOpacity(v));
-    surfaceBar.append(groundSCBtn, groundSCOpLbl, groundSCOpNum);
-
-    surfaceBar.appendChild(sep());
-
-    // ---- BG Wall surface ----
-    surfaceBar.appendChild(el("span", { style: "font-size:10px;color:#777;white-space:nowrap;" }, "🖼 Wall:"));
-
-    const wallColorPick = el("input", { type: "color", value: editor.getBgWallColor(),
-        style: "width:28px;height:22px;border:none;cursor:pointer;background:none;padding:0;flex-shrink:0;",
-        title: "Wall color" });
-    wallColorPick.addEventListener("input", () => editor.setBgWallColor(wallColorPick.value));
-    surfaceBar.appendChild(wallColorPick);
-
-    const wallTexBtn = mkBtn("📁 Tex", "#2a4a6a"); wallTexBtn.title = "Load wall texture";
-    wallTexBtn.style.padding = "3px 8px";
-    const wallTexInput = mkFileInput("image/*");
-    wallTexInput.addEventListener("change", e => {
-        const file = e.target.files[0]; if (!file) return;
-        const url = URL.createObjectURL(file);
-        editor.setBgWallTexture(url);
-        wallTexBtn.textContent = "📁 " + file.name.slice(0, 14) + (file.name.length > 14 ? "…" : "");
-        wallTexBtn.style.background = "#2a6a4a";
-        wallTexInput.value = "";
-    });
-    wallTexBtn.onclick = () => wallTexInput.click();
-    surfaceBar.append(wallTexBtn, wallTexInput);
-
-    const wallTexClear = mkBtn("✕", "#5a3a3a"); wallTexClear.title = "Clear texture";
-    wallTexClear.style.padding = "3px 7px";
-    wallTexClear.onclick = () => {
-        editor.clearBgWallTexture();
-        wallTexBtn.textContent = "📁 Tex"; wallTexBtn.style.background = "#2a4a6a";
+    const AA_LABEL = "🖼 アンチエイリアス強化";
+    const aaBtn = mkToggleBtn(AA_LABEL, editor.getSuperSample?.() ?? false);
+    aaBtn.title = "プレビュー拡大表示時の輪郭のギザギザを抑えます（解像度を上げるため描画負荷が増えます）";
+    aaBtn.style.cssText += "white-space:normal;text-align:left;";
+    aaBtn.onclick = () => {
+        const next = !(editor.getSuperSample?.() ?? false);
+        editor.setSuperSample?.(next);
+        applyToggle(aaBtn, AA_LABEL, next);
     };
-    surfaceBar.appendChild(wallTexClear);
 
-    const wallTileLbl = el("span", { style: "font-size:10px;color:#777;" }, "Tile:");
-    const wallTileNum = mkNumInput(0.1, 50, 0.1, 1, n => editor.setBgWallTexRepeat(n));
-    surfaceBar.append(wallTileLbl, wallTileNum);
+    sBody.append(
+        sectionTitle("Mouse"),
+        zoomModeBtn,
+        sectionTitle("Rendering"),
+        aaBtn,
+    );
 
-    surfaceBar.appendChild(sep());
-    const wallSCBtn = mkToggleBtn("🕶 SC", editor.getBgWallShadowCatcher());
-    wallSCBtn.style.padding = "3px 9px";
-    wallSCBtn.title = "Shadow Catcher: 面を透明にして影だけ表示";
-    wallSCBtn.onclick = () => applyToggle(wallSCBtn, "🕶 SC", editor.toggleBgWallShadowCatcher());
-    const wallSCOpLbl = el("span", { style: "font-size:10px;color:#777;" }, "影濃度:");
-    const wallSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setBgWallShadowOpacity(v));
-    surfaceBar.append(wallSCBtn, wallSCOpLbl, wallSCOpNum);
+    subTabContent.append(lBody, eBody, sBody);
+    lightLeftWrap.append(subTabStrip, subTabContent);
 
-    // ----------------------------------------------------------------
-    // uiRefs: captureCurrentSettings / applyPreset が参照するUI参照まとめ
-    // ----------------------------------------------------------------
-    const uiRefs = {
+    Object.assign(uiRefs, {
         shadowSel,
         groundBtn, groundYSl, groundColorPick, groundTileNum, groundSCBtn, groundSCOpNum,
         bgWallBtn, bgZSl, wallColorPick, wallTileNum, wallSCBtn, wallSCOpNum,
-    };
+    });
 
-    // ---- 3-column body (+ library panel) ----
-    const body = el("div", { style: "flex:1;display:flex;overflow:hidden;min-height:0;" });
-
-    // ---- Col 1: Light list ----
-    const listPanel = el("div", {
-        style: "width:185px;flex-shrink:0;display:flex;flex-direction:column;" +
+    // ================================================================
+    // Pose タブ: 左ペイン (Shape Keys + Pose Library)
+    // ================================================================
+    const poseLeftPanel = el("div", {
+        style: "width:270px;flex-shrink:0;display:none;flex-direction:column;" +
                "border-right:1px solid #2a2a4a;background:#161622;",
     });
-    const listHeader = el("div", {
+    const poseHeader = el("div", {
         style: "display:flex;align-items:center;padding:7px 10px;" +
                "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
     });
-    const addBtn = mkBtn("＋ Add", "#2a5a8a");
-    addBtn.style.padding = "3px 9px";
-    listHeader.append(
-        el("span", { style: "font-size:12px;font-weight:bold;color:#aaa;flex:1;" }, "Lights"),
-        addBtn
-    );
-    const listContent = el("div", { style: "flex:1;overflow-y:auto;padding:4px;" });
-    listPanel.append(listHeader, listContent);
+    poseHeader.appendChild(el("span", { style: "font-size:12px;font-weight:bold;color:#aaa;flex:1;" }, "Shape Keys"));
 
-    // ---- Col 2: Preview (actual WebGL canvas embedded) ----
+    const shapeKeyBody = el("div", {
+        style: "flex:1;overflow-x:hidden;overflow-y:auto;padding:4px 10px 10px;" +
+               "display:flex;flex-direction:column;gap:5px;box-sizing:border-box;",
+    });
+
+    function rebuildShapeKeySliders() {
+        shapeKeyBody.innerHTML = "";
+        const keys = getShapeKeys?.() ?? [];
+        if (keys.length === 0) {
+            shapeKeyBody.appendChild(el("div", {
+                style: "font-size:11px;color:#555;padding:16px 0;text-align:center;",
+            }, "No shape keys found."));
+            return;
+        }
+        keys.forEach(k => {
+            const row = el("div", { style: "display:flex;align-items:center;gap:6px;min-width:0;" });
+            const label = el("span", {
+                style: "font-size:10px;color:#aaa;width:88px;flex-shrink:0;overflow:hidden;" +
+                       "text-overflow:ellipsis;white-space:nowrap;",
+                title: k.name,
+            }, k.name);
+            const slider = el("input", {
+                type: "range", min: "0", max: "1", step: "0.01", value: String(k.getValue?.() ?? 0),
+                style: "flex:1;min-width:0;height:12px;accent-color:#4a90d9;cursor:pointer;",
+            });
+            slider.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+            const valLbl = el("span", {
+                style: "font-size:10px;color:#888;width:28px;text-align:right;flex-shrink:0;",
+            }, parseFloat(slider.value).toFixed(2));
+            slider.addEventListener("input", () => {
+                const v = parseFloat(slider.value);
+                k.setValue?.(v);
+                valLbl.textContent = v.toFixed(2);
+            });
+            row.append(label, slider, valLbl);
+            shapeKeyBody.appendChild(row);
+        });
+    }
+
+    poseLeftPanel.append(poseHeader, shapeKeyBody);
+
+    // ---- Col: Preview (actual WebGL canvas embedded, shared across both main tabs) ----
     const previewPanel = el("div", {
         style: "flex:1;display:flex;flex-direction:column;background:#111118;" +
                "border-right:1px solid #2a2a4a;min-width:0;",
@@ -355,7 +441,7 @@ function buildModal(editor, cvsWrapper, onClose) {
     });
     previewPanel.append(previewHeader, previewWrap);
 
-    // ---- Col 3: Properties ----
+    // ---- Col: Properties (Lightタブ・Lサブタブ選択時のみ表示) ----
     const propPanel = el("div", {
         style: "width:280px;flex-shrink:0;display:flex;flex-direction:column;background:#181826;",
     });
@@ -368,16 +454,42 @@ function buildModal(editor, cvsWrapper, onClose) {
     const propBody = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;" });
     propPanel.appendChild(propBody);
 
-    // ---- Col 4: Library panel (hidden initially) ----
+    // ---- Col: Properties (Poseタブ選択時のみ表示) ----
+    // 機能は未定のプレースホルダ。Light側Propertiesパネルと全く同じ幅(280px)にすることで、
+    // Light/Poseタブを切り替えるたびにダイアログ全体の横幅・レイアウトが変わってしまい
+    // 目が疲れる、という問題を解消するために先行して確保しておく。
+    const posePropPanel = el("div", {
+        style: "width:280px;flex-shrink:0;display:none;flex-direction:column;background:#181826;",
+    });
+    posePropPanel.append(
+        el("div", {
+            style: "font-size:11px;font-weight:bold;color:#7a9aaa;padding:7px 12px;" +
+                   "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
+        }, "Properties")
+    );
+    const posePropBody = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;" });
+    posePropBody.appendChild(el("div", {
+        style: "font-size:11px;color:#555;padding:16px 0;text-align:center;",
+    }, "Coming soon"));
+    posePropPanel.appendChild(posePropBody);
+
+    // ---- Col: Library panel (光源プリセット、hidden initially、Lightタブ専用) ----
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
     libPanel.style.display = "none";
 
-    body.append(listPanel, previewPanel, propPanel, libPanel);
-    dialog.append(header, sceneBar, surfaceBar, body);
+    body.append(lightLeftWrap, poseLeftPanel, previewPanel, propPanel, posePropPanel, libPanel);
+    dialog.append(header, body, keyframePanel.el);
     overlay.appendChild(dialog);
 
-    // ---- Library toggle ----
+    // ---- Library ボタン: Lightタブ=光源プリセットパネルのトグル / Poseタブ=Pose Libraryを開く ----
     libBtn.onclick = () => {
+        if (activeMainTab === "pose") {
+            // Pose Library側の1列プレビューへcvsWrapperを一時的に貸し出す。
+            // 閉じて戻ってきた時点でこちら側のプレビュー枠サイズに合わせてapplyScale()を掛け直さないと、
+            // Pose Library側の狭い列に合わせた解像度・transformのまま表示されてしまうため
+            openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale());
+            return;
+        }
         const visible = libPanel.style.display !== "none";
         libPanel.style.display = visible ? "none" : "flex";
         libBtn.style.background = visible ? "#2a3a6a" : "#3a5aaa";
@@ -387,6 +499,47 @@ function buildModal(editor, cvsWrapper, onClose) {
             libPanel._reload?.();
         }
     };
+
+    // ---- メインタブ / サブタブ切り替え ----
+    let activeMainTab = initialTab === "pose" ? "pose" : "light"; // "light" | "pose"
+    let activeSubTab  = "L";     // "L" | "E" | "S"
+
+    function applySubTab() {
+        lBody.style.display = activeSubTab === "L" ? "flex" : "none";
+        eBody.style.display = activeSubTab === "E" ? "flex" : "none";
+        sBody.style.display = activeSubTab === "S" ? "flex" : "none";
+        setSubTabActive(subTabL, activeSubTab === "L");
+        setSubTabActive(subTabE, activeSubTab === "E");
+        setSubTabActive(subTabS, activeSubTab === "S");
+        propPanel.style.display = (activeMainTab === "light" && activeSubTab === "L") ? "flex" : "none";
+    }
+    subTabL.onclick = () => { activeSubTab = "L"; applySubTab(); };
+    subTabE.onclick = () => { activeSubTab = "E"; applySubTab(); };
+    subTabS.onclick = () => { activeSubTab = "S"; applySubTab(); };
+
+    function applyMainTab() {
+        const isLight = activeMainTab === "light";
+        lightLeftWrap.style.display = isLight ? "flex" : "none";
+        poseLeftPanel.style.display = isLight ? "none" : "flex";
+        posePropPanel.style.display = isLight ? "none" : "flex";
+        if (!isLight && libPanel.style.display !== "none") {
+            libPanel.style.display = "none";
+        }
+        libBtn.textContent = isLight ? "📚 Library" : "📚 Pose Library";
+        libBtn.title = isLight ? "Light Preset Library" : "Open Pose Library";
+        const libActive = isLight && libPanel.style.display !== "none";
+        libBtn.style.background = libActive ? "#3a5aaa" : "#2a3a6a";
+        libBtn.style.color      = libActive ? "#fff"    : "#aac";
+        propPanel.style.display = (isLight && activeSubTab === "L") ? "flex" : "none";
+        setMainTabActive(lightTabBtn, isLight);
+        setMainTabActive(poseTabBtn, !isLight);
+        if (!isLight) rebuildShapeKeySliders();
+    }
+    lightTabBtn.onclick = () => { activeMainTab = "light"; applyMainTab(); };
+    poseTabBtn.onclick  = () => { activeMainTab = "pose";  applyMainTab(); };
+
+    applySubTab();
+    applyMainTab();
 
     // ---- Embed cvsWrapper into preview ----
     previewWrap.appendChild(cvsWrapper);
@@ -624,7 +777,7 @@ function buildModal(editor, cvsWrapper, onClose) {
 }
 
 // ================================================================
-// Library Panel
+// Library Panel (Light Preset)
 // ================================================================
 
 /**
@@ -1231,4 +1384,61 @@ function mkNumInput(min, max, step, value, onChange) {
     inp.addEventListener("wheel",   e => e.stopPropagation(), { passive: true });
     inp.addEventListener("keydown", e => e.stopPropagation());
     return inp;
+}
+
+// ---- 新規追加ヘルパー(タブUI・Environment縦積みレイアウト用) ----
+function mkMainTabBtn(label) {
+    const b = el("button", {
+        style: "padding:5px 12px;background:#222236;color:#99a;border:none;" +
+               "border-radius:5px 5px 0 0;cursor:pointer;font-size:12px;font-weight:bold;white-space:nowrap;",
+    }, label);
+    return b;
+}
+function setMainTabActive(btn, active) {
+    btn.style.background = active ? "#2a3a6a" : "#222236";
+    btn.style.color      = active ? "#fff"    : "#99a";
+}
+
+function mkSubTabBtn(label, title) {
+    const b = el("button", {
+        style: "padding:8px 0;background:#12121c;color:#889;border:none;border-bottom:1px solid #2a2a4a;" +
+               "cursor:pointer;font-size:11px;font-weight:bold;",
+        title,
+    }, label);
+    return b;
+}
+function setSubTabActive(btn, active) {
+    btn.style.background = active ? "#222d45" : "#12121c";
+    btn.style.color      = active ? "#fff"    : "#889";
+}
+
+function sectionTitle(t) {
+    return el("div", {
+        style: "font-size:10px;font-weight:bold;color:#6a8a9a;margin:6px 0 2px;" +
+               "border-bottom:1px solid #252535;padding-bottom:2px;letter-spacing:.4px;",
+    }, t.toUpperCase());
+}
+
+function lbl(text) {
+    return el("span", { style: "font-size:10px;color:#777;flex-shrink:0;" }, text);
+}
+
+function fieldRow(label, ctrl) {
+    const r = el("div", { style: "display:flex;align-items:center;gap:5px;padding:2px 0;" });
+    if (label) r.appendChild(el("span", { style: "font-size:10px;color:#888;width:42px;flex-shrink:0;" }, label));
+    r.appendChild(ctrl);
+    return r;
+}
+
+function sliderRow(label, sl, vl) {
+    const r = el("div", { style: "display:flex;align-items:center;gap:5px;padding:2px 0;" });
+    if (label) r.appendChild(el("span", { style: "font-size:10px;color:#888;width:42px;flex-shrink:0;" }, label));
+    r.append(sl, vl);
+    return r;
+}
+
+function row2(...items) {
+    const r = el("div", { style: "display:flex;align-items:center;gap:5px;flex:1;flex-wrap:wrap;" });
+    r.append(...items);
+    return r;
 }

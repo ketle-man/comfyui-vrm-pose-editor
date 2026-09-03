@@ -5,6 +5,8 @@ import * as THREE from './vendor/three.module.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
+import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from './vendor/three-vrm-animation.module.js';
+import { GLTFExporter } from './vendor/GLTFExporter.js';
 
 // ---- Three.js エディタ本体 ----
 export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isModern, onModelReady) {
@@ -405,6 +407,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         _lookAtEnabled = v;
         lookAtHelperMesh.visible = v;
         if (currentVRM?.lookAt) {
+            if (_vrmaMixer) return; // VRMA再生中はlookAt.targetをnullのまま維持（_clearVRMA()が復元を担当）
             currentVRM.lookAt.target = v ? lookAtHelperMesh : null;
             if (!v) currentVRM.lookAt.reset();
         }
@@ -714,6 +717,42 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     window.addEventListener("pointerup", _endCtrlRightDrag);
     window.addEventListener("blur", _endCtrlRightDrag);
 
+    // ---- カメラロール(Alt+右ドラッグ) ----
+    // camera.up を視線方向(forward)まわりに回転させることでロールを実現する。
+    // orbit.update()が毎フレームobject.lookAt(target)するため、position/targetは変えず
+    // upだけ回せば見た目のロールになる。Ctrl+右ドラッグズームと同じ「一時的にOrbitControlsの
+    // 既定動作(RIGHT=PAN)を無効化してドラッグを横取りする」パターンを踏襲する。
+    let _altRightDrag = false;
+    let _altRightDragLastX = 0;
+
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+        if (e.button !== 2 || !e.altKey) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        _altRightDrag = true;
+        _altRightDragLastX = e.clientX;
+        orbit.enableRotate = false;
+        orbit.enablePan    = false;
+    }, true);
+
+    renderer.domElement.addEventListener("pointermove", (e) => {
+        if (!_altRightDrag) return;
+        const dx = e.clientX - _altRightDragLastX;
+        _altRightDragLastX = e.clientX;
+        const forward = new THREE.Vector3().subVectors(orbit.target, perspCamera.position).normalize();
+        perspCamera.up.applyAxisAngle(forward, dx * 0.005);
+        orbit.update();
+    }, true);
+
+    function _endAltRightDrag() {
+        if (!_altRightDrag) return;
+        _altRightDrag = false;
+        orbit.enableRotate = true;
+        orbit.enablePan    = true;
+    }
+    window.addEventListener("pointerup", _endAltRightDrag);
+    window.addEventListener("blur", _endAltRightDrag);
+
     // ---- Node2.0時のみイベント制御 ----
     if (isModern) {
         // wheel/contextmenu がComfyUIキャンバスに伝播しないよう阻止
@@ -872,6 +911,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     }
 
     function clearModel() {
+        _clearVRMA();
         if (loadedModel) {
             scene.remove(loadedModel);
             if (currentVRM) { VRMUtils.deepDispose(currentVRM.scene); currentVRM = null; }
@@ -1035,6 +1075,178 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         });
     }
 
+    // ================================================================
+    // VRMA playback (.vrmaファイルの読込・タイムライン再生・任意フレームでの静止ポーズ化)
+    // ================================================================
+    // vrmaLoaderはメインのloaderとは別インスタンス。VRMAnimationLoaderPluginを
+    // 登録するのはVRMアニメーションファイル専用で、通常のVRM/GLB/GLTF読込には使わない。
+    const vrmaLoader = new GLTFLoader();
+    vrmaLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+
+    let _vrmaMixer = null;   // THREE.AnimationMixer | null
+    let _vrmaAction = null;  // THREE.AnimationAction | null
+    let _vrmaClip   = null;  // THREE.AnimationClip   | null
+    let _vrmaPlaying = false;
+    // mixer専用の実delta計測。既存の固定1/60運用(spring bone/VRM.update)には一切触れない。
+    const _vrmaClock = new THREE.Clock();
+
+    function _clearVRMA() {
+        if (_vrmaMixer) {
+            _vrmaMixer.stopAllAction();
+            if (_vrmaClip) _vrmaMixer.uncacheClip(_vrmaClip);
+        }
+        _vrmaMixer = null;
+        _vrmaAction = null;
+        _vrmaClip = null;
+        _vrmaPlaying = false;
+        // VRMAロード中はnullにしていたlookAtターゲットを、トグルボタンの状態に合わせて復元する
+        if (currentVRM?.lookAt) {
+            currentVRM.lookAt.target = _lookAtEnabled ? lookAtHelperMesh : null;
+        }
+    }
+
+    function loadVRMAFromBuffer(buffer, onComplete, onError) {
+        if (!currentVRM || !currentVRM.humanoid) {
+            onError?.("A VRM model (with humanoid bones) must be loaded before playing a VRMA animation.");
+            return;
+        }
+        const url = URL.createObjectURL(new Blob([buffer]));
+        vrmaLoader.load(url, (gltf) => {
+            URL.revokeObjectURL(url);
+            const vrmAnimations = gltf.userData.vrmAnimations;
+            if (!vrmAnimations || vrmAnimations.length === 0) {
+                onError?.("This file does not contain a VRMC_vrm_animation extension (not a valid .vrma).");
+                return;
+            }
+            _clearVRMA(); // 既存の再生セッションを破棄(lookAt復元含む)
+
+            const clip = createVRMAnimationClip(vrmAnimations[0], currentVRM);
+            if (!clip.tracks.length) {
+                console.warn("[PoseEditor3D] VRMA loaded but no compatible tracks were found for this model's humanoid.");
+            }
+            _vrmaClip = clip;
+            _vrmaMixer = new THREE.AnimationMixer(currentVRM.scene);
+            _vrmaAction = _vrmaMixer.clipAction(clip);
+            _vrmaAction.setLoop(THREE.LoopRepeat, Infinity);
+            _vrmaAction.play(); // enabled=trueにするためだけに呼ぶ。時間進行はplay/pause状態(_vrmaPlaying)で制御
+            _vrmaPlaying = false; // ロード直後は先頭フレームで一時停止
+
+            // LookAtマーカーとの競合回避: VRMAロード中は常にtargetをnullにする
+            if (currentVRM.lookAt) currentVRM.lookAt.target = null;
+
+            _vrmaMixer.update(0); // 先頭フレームのポーズを即時反映
+            onComplete?.();
+        }, undefined, (err) => {
+            URL.revokeObjectURL(url);
+            onError?.(err?.message ?? String(err));
+        });
+    }
+
+    // ================================================================
+    // VRMA export (複数の静止ポーズをキーフレームとして繋ぎ .vrma として書き出す)
+    // ================================================================
+    // GLTFExporterのプラグイン機構(afterParseフック)でVRMC_vrm_animation拡張を付与する。
+    // afterParse時点ではシーン/アニメーション処理が完了しているため、
+    // writer.nodeMap(Object3D→ノードindex)とwriter.json.animationsの両方が確定済み。
+    class VRMCVrmAnimationExporterPlugin {
+        constructor(writer, boneNameMap) {
+            this.writer = writer;
+            this.name = "VRMC_vrm_animation";
+            this.boneNameMap = boneNameMap;
+        }
+        afterParse() {
+            const { writer, boneNameMap } = this;
+            const humanBones = {};
+            for (const [boneName, node] of boneNameMap) {
+                const idx = writer.nodeMap.get(node);
+                if (idx != null) humanBones[boneName] = { node: idx };
+            }
+            if (!Object.keys(humanBones).length) return;
+            writer.json.extensions = writer.json.extensions || {};
+            writer.json.extensions[this.name] = { specVersion: "1.0", humanoid: { humanBones } };
+            writer.extensionsUsed[this.name] = true; // write()終端でjson.extensionsUsedへ自動反映される
+        }
+    }
+
+    // interactableBones(ロード中モデルが実際に持つボーンのヒットボックス配列)から
+    // ボーン名→normalizedBoneNodeのMapを作る。exportPose()と同じ走査パターン
+    function _boneNameMap() {
+        const map = new Map();
+        interactableBones.forEach(h => {
+            const key = h.userData.boneName ?? h.userData.bone.name;
+            if (key) map.set(key, h.userData.bone);
+        });
+        return map;
+    }
+
+    // keyframeList: [{ time: number, bones: {boneName: {qx,qy,qz,qw}} }, ...]
+    // (bonesの中身はexportPose()が返すJSONのbonesフィールドと同じ形式)
+    function _buildVrmaAnimationClip(keyframeList, boneNameMap) {
+        const sorted = [...keyframeList].sort((a, b) => a.time - b.time);
+        for (let i = 1; i < sorted.length; i++) {
+            if (sorted[i].time <= sorted[i - 1].time) sorted[i].time = sorted[i - 1].time + 0.0001;
+        }
+        const times = sorted.map(k => k.time);
+        const duration = Math.max(times[times.length - 1] ?? 0, 0.001);
+
+        // VRMAファイルに保存する値は常にVRM1正準空間である前提(three-vrm-animation側の
+        // 読込ロジックがVRM0再生時のみx,z反転する実装になっているため)。
+        // ソースがVRM0モデルの場合はここで先に反転して正準化しておく。
+        const isSourceVrm0 = currentVRM?.meta?.metaVersion === "0";
+
+        const tracks = [];
+        for (const [boneName, node] of boneNameMap) {
+            if (!sorted.some(k => k.bones[boneName])) continue; // どのキーフレームにも無いボーンはトラック化しない
+            const values = new Float32Array(sorted.length * 4);
+            sorted.forEach((k, i) => {
+                const bd = k.bones[boneName];
+                let qx = bd?.qx ?? 0, qy = bd?.qy ?? 0, qz = bd?.qz ?? 0, qw = bd?.qw ?? 1;
+                if (isSourceVrm0) { qx = -qx; qz = -qz; }
+                values.set([qx, qy, qz, qw], i * 4);
+            });
+            tracks.push(new THREE.QuaternionKeyframeTrack(`${node.name}.quaternion`, times, values, THREE.InterpolateLinear));
+        }
+        return new THREE.AnimationClip("VRMAExport", duration, tracks);
+    }
+
+    async function exportVrma(keyframeList) {
+        if (!currentVRM || !currentVRM.humanoid) {
+            throw new Error("A VRM model (with humanoid bones) must be loaded before exporting a VRMA animation.");
+        }
+        if (!keyframeList || keyframeList.length === 0) {
+            throw new Error("At least one keyframe pose is required to export a VRMA animation.");
+        }
+
+        const boneNameMap = _boneNameMap();
+        const clip = _buildVrmaAnimationClip(keyframeList, boneNameMap);
+
+        // Tポーズへ退避(VRMAの参照スケルトンはレスト姿勢である必要がある)＋
+        // ヒットボックスメッシュを一時非表示化(エクスポート結果への混入防止)
+        const savedPose = currentVRM.humanoid.getNormalizedPose();
+        currentVRM.humanoid.resetNormalizedPose();
+        const hitboxes = [];
+        boneNameMap.forEach(node => {
+            node.children.forEach(c => { if (c.userData?.isHitbox) { hitboxes.push(c); c.visible = false; } });
+        });
+
+        try {
+            const exporter = new GLTFExporter();
+            exporter.register(writer => new VRMCVrmAnimationExporterPlugin(writer, boneNameMap));
+            const glb = await exporter.parseAsync(currentVRM.humanoid.normalizedHumanBonesRoot, {
+                binary: true,
+                animations: [clip],
+                onlyVisible: true,
+            });
+            return glb; // ArrayBuffer (.vrma = glbバイナリ)
+        } finally {
+            hitboxes.forEach(h => { h.visible = true; });
+            currentVRM.humanoid.setNormalizedPose(savedPose);
+            currentVRM.humanoid.update();
+            currentVRM.scene.updateMatrixWorld(true);
+            _settleSpringBoneAnchor();
+        }
+    }
+
     // ---- ボーンドラッグ回転 ----
     const DRAG_SENSITIVITY = 0.01;
     const raycaster = new THREE.Raycaster();
@@ -1118,6 +1330,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     function animate() {
         animFrameId = requestAnimationFrame(animate);
         if (renderer.getContext().isContextLost()) return;
+        if (_vrmaMixer) {
+            const vrmaDelta = _vrmaClock.getDelta();
+            if (_vrmaPlaying) _vrmaMixer.update(vrmaDelta);
+        }
         if (currentVRM) {
             _applyWindToSpringBones();
             currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
@@ -1183,6 +1399,28 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             scene.remove(bgMesh);
             bgMesh = null;
         }
+    }
+
+    // capture()/renderClean() 共通: ボーンハンドル・ライトギズモ・LookAt/風マーカーを隠した状態で
+    // 現在のシーンを同期的にレンダリングし、表示状態を元に戻す関数を返す。
+    function _hideHelpersAndRender() {
+        interactableBones.forEach(h => h.visible = false);
+        const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
+        managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
+        const lookAtHelperVisBefore = lookAtHelperMesh.visible;
+        lookAtHelperMesh.visible = false;
+        const windSourceHelperVisBefore = windSourceHelperMesh.visible;
+        windSourceHelperMesh.visible = false;
+
+        if (currentVRM) currentVRM.update(0);
+        renderer.render(scene, camera);
+
+        return () => {
+            interactableBones.forEach(h => h.visible = true);
+            managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
+            lookAtHelperMesh.visible = lookAtHelperVisBefore;
+            windSourceHelperMesh.visible = windSourceHelperVisBefore;
+        };
     }
 
     return {
@@ -1302,17 +1540,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         },
 
         capture(frameRect, displaySize) {
-            interactableBones.forEach(h => h.visible = false);
-            // Save and hide light helper visibility
-            const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
-            managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
-            const lookAtHelperVisBefore = lookAtHelperMesh.visible;
-            lookAtHelperMesh.visible = false;
-            const windSourceHelperVisBefore = windSourceHelperMesh.visible;
-            windSourceHelperMesh.visible = false;
-
-            if (currentVRM) currentVRM.update(0);
-            renderer.render(scene, camera);
+            const restoreHelpers = _hideHelpersAndRender();
 
             // frameRect はディスプレイ座標系 (displaySize px) なので
             // 実キャンバスピクセル座標に変換してクロップ
@@ -1329,12 +1557,13 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             crop.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
             const data = crop.toDataURL("image/png");
 
-            interactableBones.forEach(h => h.visible = true);
-            managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
-            lookAtHelperMesh.visible = lookAtHelperVisBefore;
-            windSourceHelperMesh.visible = windSourceHelperVisBefore;
+            restoreHelpers();
             return data;
         },
+        // ヘルパー類(ボーンハンドル・ライトギズモ等)を隠した状態でキャンバスへ1フレーム分レンダリングするだけの
+        // 軽量版(PNGエンコード無し)。呼び出し元がcanvas(getCanvas())のピクセルを直接読み出す用途向け
+        // (WebM/GIF書き出しでの連続フレームキャプチャ等、capture()のtoDataURL()往復を毎フレーム避けたい場合)。
+        renderClean() { _hideHelpersAndRender()(); },
         resetPose() {
             initialPoses.forEach((val, bone) => {
                 bone.rotation.copy(val.rot);
@@ -1359,12 +1588,69 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         getFov() { return perspCamera.fov; },
         setNear,
         getNear() { return perspCamera.near; },
+        // カメラキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)向けの状態取得/設定。
+        // quaternionはOrbitControls.update()内のobject.lookAt(target)で実質再構築されるが、
+        // position/target/up不整合時のフォールバックとして保持しておく。
+        getCameraState() {
+            return {
+                position:   { x: perspCamera.position.x, y: perspCamera.position.y, z: perspCamera.position.z },
+                quaternion: { x: perspCamera.quaternion.x, y: perspCamera.quaternion.y, z: perspCamera.quaternion.z, w: perspCamera.quaternion.w },
+                target:     { x: orbit.target.x, y: orbit.target.y, z: orbit.target.z },
+                up:         { x: perspCamera.up.x, y: perspCamera.up.y, z: perspCamera.up.z },
+                fov: perspCamera.fov,
+            };
+        },
+        setCameraState(state) {
+            if (!state) return;
+            if (state.position)   perspCamera.position.set(state.position.x, state.position.y, state.position.z);
+            if (state.quaternion) perspCamera.quaternion.set(state.quaternion.x, state.quaternion.y, state.quaternion.z, state.quaternion.w);
+            if (state.up)         perspCamera.up.set(state.up.x, state.up.y, state.up.z);
+            if (state.target)     orbit.target.set(state.target.x, state.target.y, state.target.z);
+            if (typeof state.fov === "number") {
+                perspCamera.fov = Math.min(170, Math.max(1, state.fov));
+                perspCamera.updateProjectionMatrix();
+            }
+            if (isOrtho) {
+                // switchCamera(true)と同じ計算式だが、常に最新のperspCamera.position基準で計算し直す
+                // (isOrtho中はcamera===orthoCameraのため、switchCameraをそのまま呼ぶとortho側の古い
+                // position距離が使われてしまう)
+                const dist = perspCamera.position.distanceTo(orbit.target);
+                const halfH = dist * Math.tan((perspCamera.fov / 2) * Math.PI / 180);
+                orthoCamera.left = -halfH; orthoCamera.right = halfH; orthoCamera.top = halfH; orthoCamera.bottom = -halfH;
+                orthoCamera.updateProjectionMatrix();
+                orthoCamera.position.copy(perspCamera.position);
+                orthoCamera.quaternion.copy(perspCamera.quaternion);
+                orthoCamera.up.copy(perspCamera.up);
+                orbit.object = orthoCamera;
+            } else {
+                orbit.object = perspCamera;
+            }
+            orbit.update();
+        },
         loadVRM,
         loadVRMFromBuffer(buffer, url, onComplete) {
             lastLoadedBuffer = buffer;
             lastLoadedIsDefault = false;
             loadVRM(url, onComplete);
         },
+        loadVRMAFromBuffer,
+        hasVRMA()          { return !!_vrmaClip; },
+        getVRMADuration()  { return _vrmaClip?.duration ?? 0; },
+        getVRMATime()      { return _vrmaAction?.time ?? 0; },
+        isVRMAPlaying()    { return _vrmaPlaying; },
+        playVRMA() {
+            if (!_vrmaAction) return;
+            _vrmaClock.getDelta(); // 直前の経過分を捨てて次のdeltaを0起点にする
+            _vrmaPlaying = true;
+        },
+        pauseVRMA() { _vrmaPlaying = false; },
+        seekVRMA(t) {
+            if (!_vrmaAction || !_vrmaClip) return;
+            _vrmaAction.time = THREE.MathUtils.clamp(t, 0, _vrmaClip.duration);
+            _vrmaMixer.update(0); // その場でポーズを反映（進行はしない）
+        },
+        clearVRMA() { _clearVRMA(); },
+        exportVrma,
         setPointSize(scale) {
             pointSize = scale;
             interactableBones.forEach(h => {
@@ -1373,6 +1659,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 h.geometry = new THREE.SphereGeometry(base * scale, 16, 16);
             });
         },
+        getPointSize() { return pointSize; },
         exportPose() {
             if (!loadedModel) return null;
             const data = {};
