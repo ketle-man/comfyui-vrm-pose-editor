@@ -49,7 +49,12 @@ app.registerExtension({
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const timerBtn       = makeSmallButton("⏱ OFF",     "#555",    "Timer Capture: OFF");
+            // RP(Reset Pose)/RC(Reset Camera)はLight & Pose Editorのキーフレームパネルにも同機能の
+            // 複製ボタンがある(pose_vrma_export.js)。モーダルを開かず素早くリセットしたいという
+            // 要望により、ノード側にも設置する(両方editor.resetPose()/resetCamera()を呼ぶだけ)
+            const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
             const mirrorBtn      = makeSmallButton("↔",          "#5a6a7a", "Mirror Pose (flip left/right)");
+            const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
             const camModeBtn     = makeSmallButton("OT",         "#444",    "Camera: Perspective (click to toggle Orthographic)");
 
             const vrmBtn = makeSmallButton("VRM", "#7a5a9a", "Load VRM/GLB/GLTF file");
@@ -162,6 +167,7 @@ app.registerExtension({
             // ---- 1行目: キャプチャ・タイマー・カメラ・VRM・CC ----
             btnRow.appendChild(captureBtn);
             btnRow.appendChild(timerBtn);
+            btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
             btnRow.appendChild(vrmaBtn);
@@ -184,6 +190,7 @@ app.registerExtension({
             btnRow2b.appendChild(springBoneBtn);
             btnRow2b.appendChild(windBtn);
             btnRow2b.appendChild(windSourceBtn);
+            btnRow2b.appendChild(resetBtn);
             btnRow2b.appendChild(mirrorBtn);
             // ---- 4行目: 読み込みファイル名 ----
             btnRow3.appendChild(vrmLabel);
@@ -654,7 +661,9 @@ app.registerExtension({
 
             bgColorInput.addEventListener("input", () => editor.setBgColor(bgColorInput.value));
 
+            resetBtn.onclick   = () => editor.resetPose();
             mirrorBtn.onclick  = () => editor.mirrorPose();
+            cameraResetBtn.onclick = () => editor.resetCamera();
             camModeBtn.onclick = () => {
                 const toOrtho = camModeBtn.dataset.mode !== "ortho";
                 editor.switchCamera(toOrtho);
