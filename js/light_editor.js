@@ -429,11 +429,30 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const propBody = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;" });
     propPanel.appendChild(propBody);
 
+    // ---- Col: Properties (Poseタブ選択時のみ表示) ----
+    // 機能は未定のプレースホルダ。Light側Propertiesパネルと全く同じ幅(280px)にすることで、
+    // Light/Poseタブを切り替えるたびにダイアログ全体の横幅・レイアウトが変わってしまい
+    // 目が疲れる、という問題を解消するために先行して確保しておく。
+    const posePropPanel = el("div", {
+        style: "width:280px;flex-shrink:0;display:none;flex-direction:column;background:#181826;",
+    });
+    posePropPanel.append(
+        el("div", {
+            style: "font-size:11px;font-weight:bold;color:#7a9aaa;padding:7px 12px;" +
+                   "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
+        }, "Properties")
+    );
+    const posePropBody = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;" });
+    posePropBody.appendChild(el("div", {
+        style: "font-size:11px;color:#555;padding:16px 0;text-align:center;",
+    }, "Coming soon"));
+    posePropPanel.appendChild(posePropBody);
+
     // ---- Col: Library panel (光源プリセット、hidden initially、Lightタブ専用) ----
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
     libPanel.style.display = "none";
 
-    body.append(lightLeftWrap, poseLeftPanel, previewPanel, propPanel, libPanel);
+    body.append(lightLeftWrap, poseLeftPanel, previewPanel, propPanel, posePropPanel, libPanel);
     dialog.append(header, body, keyframePanel.el);
     overlay.appendChild(dialog);
 
@@ -474,6 +493,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         const isLight = activeMainTab === "light";
         lightLeftWrap.style.display = isLight ? "flex" : "none";
         poseLeftPanel.style.display = isLight ? "none" : "flex";
+        posePropPanel.style.display = isLight ? "none" : "flex";
         if (!isLight && libPanel.style.display !== "none") {
             libPanel.style.display = "none";
         }
