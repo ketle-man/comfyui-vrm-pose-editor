@@ -480,7 +480,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // ---- Library ボタン: Lightタブ=光源プリセットパネルのトグル / Poseタブ=Pose Libraryを開く ----
     libBtn.onclick = () => {
         if (activeMainTab === "pose") {
-            openPoseLibrary(editor, vrmBuffer);
+            // Pose Library側の1列プレビューへcvsWrapperを一時的に貸し出す。
+            // 閉じて戻ってきた時点でこちら側のプレビュー枠サイズに合わせてapplyScale()を掛け直さないと、
+            // Pose Library側の狭い列に合わせた解像度・transformのまま表示されてしまうため
+            openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale());
             return;
         }
         const visible = libPanel.style.display !== "none";
