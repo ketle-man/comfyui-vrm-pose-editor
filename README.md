@@ -10,11 +10,17 @@ Load VRM / GLB / GLTF models directly in the browser, drag bones to pose them, a
 ComfyUI 上で動作するインタラクティブな 3D ポーズエディタノードです。  
 VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンをドラッグ操作してポーズを付け、キーフレームタイムラインでポーズ・カメラ・ライトをアニメーションさせ、そのままワークフローに出力できます。
 
-![screenshot](docs/screenshot_workflow.png)
+![screenshot](docs/1_screenshot_workflow.png)
 
-![pose library](docs/screenshot_pose_library.png)
+![Light & Pose Editor — Pose tab](docs/2_screenshot_pose_editor.png)
 
-![light library](docs/screenshot_light_library.png)
+![Pose Library](docs/3_screenshot_pose_library.png)
+
+![Light & Pose Editor — Light tab](docs/4_screenshot_lighteditor.png)
+
+![Environment settings](docs/5_environment.png)
+
+![Keyframe Timeline panel](docs/6_keyframe.png)
 
 ---
 
