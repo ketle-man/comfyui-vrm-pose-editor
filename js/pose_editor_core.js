@@ -1659,6 +1659,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 h.geometry = new THREE.SphereGeometry(base * scale, 16, 16);
             });
         },
+        getPointSize() { return pointSize; },
         exportPose() {
             if (!loadedModel) return null;
             const data = {};

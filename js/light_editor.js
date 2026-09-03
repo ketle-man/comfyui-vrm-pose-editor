@@ -120,6 +120,27 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const poseTabBtn  = mkMainTabBtn("🕺 pose");
     mainTabBar.append(lightTabBtn, poseTabBtn);
 
+    // ---- Point Size (ボーンハンドルの球サイズ倍率) ----
+    // ノード側(pose_editor_3d.js)のコントロールポイントサイズパネルと同じeditor.setPointSize()を
+    // 呼ぶだけの複製コントロール。モーダルを開いている間はcvsWrapperがモーダル側へ移動しノードの
+    // 元パネルは見えなくなるため、ここにも置いて操作できるようにする。
+    const pointSizeCtrl = el("div", { style: "display:flex;align-items:center;gap:5px;flex-shrink:0;" });
+    const pointSizeLabel = el("span", { style: "font-size:10px;color:#889;white-space:nowrap;" }, "Point Size");
+    const pointSizeSlider = el("input", {
+        type: "range", min: "0.2", max: "3.0", step: "0.1", value: String(editor.getPointSize()),
+        style: "width:80px;height:14px;accent-color:#4a90d9;cursor:pointer;",
+    });
+    pointSizeSlider.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+    const pointSizeVal = el("span", {
+        style: "font-size:10px;color:#889;width:22px;text-align:right;flex-shrink:0;",
+    }, parseFloat(pointSizeSlider.value).toFixed(1));
+    pointSizeSlider.addEventListener("input", () => {
+        const v = parseFloat(pointSizeSlider.value);
+        editor.setPointSize(v);
+        pointSizeVal.textContent = v.toFixed(1);
+    });
+    pointSizeCtrl.append(pointSizeLabel, pointSizeSlider, pointSizeVal);
+
     const libBtn = el("button", {
         style: "padding:4px 10px;background:#2a3a6a;color:#aac;border:1px solid #3a4a7a;" +
                "border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;" +
@@ -129,7 +150,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     libBtn.addEventListener("mouseover", () => { libBtn.style.opacity = "0.8"; });
     libBtn.addEventListener("mouseout",  () => { libBtn.style.opacity = "1"; });
 
-    header.append(titleIcon, mainTabBar, libBtn, mkCloseBtn(cleanup));
+    header.append(titleIcon, mainTabBar, pointSizeCtrl, libBtn, mkCloseBtn(cleanup));
 
     // ----------------------------------------------------------------
     // uiRefs: captureCurrentSettings / applyPreset が参照するUI参照まとめ

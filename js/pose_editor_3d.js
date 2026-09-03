@@ -562,6 +562,11 @@ app.registerExtension({
                 windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
                 windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
                 windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
+
+                // Light & Pose Editor内にも複製したPoint Sizeスライダーで値が変わった可能性があるため再同期
+                const ps = editor.getPointSize();
+                cpSlider.value = String(ps);
+                cpValLabel.textContent = ps.toFixed(1);
             }
             lightBtn.onclick = () => {
                 openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light");
