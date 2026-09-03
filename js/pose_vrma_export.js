@@ -34,11 +34,11 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                "background:#1a1a2e;border-bottom:1px solid #2a2a4a;flex-shrink:0;flex-wrap:wrap;",
     });
     const titleEl = el("span", { style: "font-size:11px;font-weight:bold;color:#9aa;margin-right:2px;" }, "🎬 Keyframes");
-    const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "現在フレームに、今のポーズをキーフレームとして追加/上書き");
-    const delBtn = mkBtn("− Delete KF", "#5a3a3a", "現在フレームのキーフレームを削除");
+    const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "現在フレームに、今のポーズをキーフレームとして追加/上書き (K)");
+    const delBtn = mkBtn("− Delete KF", "#5a3a3a", "現在フレームのキーフレームを削除 (Alt+K)");
     const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
-    const camAddBtn = mkBtn("📷 + Cam KF", "#3a6a8a", "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き");
-    const camDelBtn = mkBtn("📷 − Cam KF", "#5a3a3a", "現在フレームのカメラキーフレームを削除");
+    const camAddBtn = mkBtn("📷 + Cam KF", "#3a6a8a", "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き (C)");
+    const camDelBtn = mkBtn("📷 − Cam KF", "#5a3a3a", "現在フレームのカメラキーフレームを削除 (Alt+C)");
     const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上のマーカーをドラッグして移動できます");
 
     const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
@@ -84,6 +84,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const fpsInput = mkNumInput(1, 60, 1, 24);
     const newBtn = mkBtn("🆕 New", "#5a4a3a", "現在のタイムラインをすべてクリアして新規作成");
     const projBtn = mkBtn("💾 Proj", "#4a4a8a", "タイムラインをプロジェクトとして保存/読込");
+    const rpBtn = mkBtn("RP", "#6c757d", "Reset Pose");
+    const rcBtn = mkBtn("RC", "#5a7a5a", "Reset Camera");
     const statusMsg = el("span", { style: "flex:1;font-size:11px;color:#888;min-width:80px;" }, "0 keyframes");
     const playBtn = el("button", {
         style: "padding:4px 10px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
@@ -92,7 +94,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const downloadBtn = mkBtn("💾 Save .vrma", "#4a7a4a", "Export and save the animation to poses/ (visible in Pose Library)");
     const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
     const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
-    previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, statusMsg, playBtn, downloadBtn, webmBtn, gifBtn);
+    previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, rpBtn, rcBtn, statusMsg, playBtn, downloadBtn, webmBtn, gifBtn);
 
     panel.append(toolbar, libView, projView, timelineWrap, previewPanel);
 
@@ -120,6 +122,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         resizeObserver?.disconnect();
         window.removeEventListener("mousemove", onWindowMouseMove);
         window.removeEventListener("mouseup", onWindowMouseUp);
+        document.removeEventListener("keydown", onGlobalKeyDown);
         editor.clearVRMA();
     }
 
@@ -758,6 +761,12 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     gifBtn.onclick  = () => runExport(gifBtn, webmBtn, exportAnimatedGif, "animation.gif");
 
     // ----------------------------------------------------------------
+    // Reset Pose / Reset Camera (旧: ノード側ツールバーにあったRP/RCボタンをここへ移設)
+    // ----------------------------------------------------------------
+    rpBtn.onclick = () => editor.resetPose();
+    rcBtn.onclick = () => editor.resetCamera();
+
+    // ----------------------------------------------------------------
     // New (タイムラインの全クリア)
     // ----------------------------------------------------------------
     newBtn.onclick = () => {
@@ -905,6 +914,34 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         projView.style.display = willShow ? "flex" : "none";
         if (willShow) renderProjectList();
     };
+
+    // ----------------------------------------------------------------
+    // キーボードショートカット (K: Add/Update KF, Alt+K: Delete KF, C: Add Cam KF, Alt+C: Delete Cam KF)
+    // - documentレベルで待ち受ける(パネル自体はモーダル下部に常設で、フォーカスがLightタブ側の
+    //   コントロールやcanvasにある場合でも効くようにするため)。destroy()で必ず解除する。
+    // - テキスト入力中(input/textarea/contentEditable)やCtrl/Cmd/Shift併用時は発火させない
+    //   (frame/fps入力欄への数値入力やブラウザ標準ショートカットとの衝突を避ける)。
+    // ----------------------------------------------------------------
+    function isTypingTarget(target) {
+        if (!target) return false;
+        const tag = target.tagName;
+        return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+    }
+    function onGlobalKeyDown(e) {
+        if (isTypingTarget(e.target)) return;
+        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const key = e.key.toLowerCase();
+        if (key === "k") {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.altKey) deleteAtCurrentFrame(); else captureAtCurrentFrame();
+        } else if (key === "c") {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.altKey) deleteCameraAtCurrentFrame(); else captureCameraAtCurrentFrame();
+        }
+    }
+    document.addEventListener("keydown", onGlobalKeyDown);
 
     // ----------------------------------------------------------------
     // 初期化
