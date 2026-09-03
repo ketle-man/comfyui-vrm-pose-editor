@@ -26,7 +26,11 @@
 //   呼び出し元のシェイプキー編集UI(スライダー等)を再同期させるためのフック。
 // 戻り値: { el, destroy } — el を呼び出し元のDOMへ追加し、閉じる際に destroy() を呼ぶこと
 // ----------------------------------------------------------------
-export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKeysApplied) {
+// initialState: { keyframes, fps, totalFrames, currentFrame, poseCounter } (省略可)。
+//   モーダルを閉じる際に getState() で取得した値を、呼び出し元(light_editor.js)が
+//   editor側に保持しておき、再度開く際にここへ渡すことでタイムラインを復元する
+//   (editorを閉じるたびにキーフレームが消えてしまう問題への対応)。
+export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKeysApplied, initialState) {
     const panel = el("div", {
         style: "display:flex;flex-direction:column;background:#16162a;" +
                "border-top:1px solid #2a2a4a;flex-shrink:0;font-family:sans-serif;",
@@ -939,19 +943,50 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     };
 
     // ----------------------------------------------------------------
+    // 状態の取得/復元(モーダル再オープン時の永続化用)
+    // ----------------------------------------------------------------
+    function getState() {
+        return {
+            keyframes: JSON.parse(JSON.stringify(keyframes)),
+            fps, totalFrames, currentFrame, poseCounter,
+        };
+    }
+
+    function restoreState(state) {
+        fps = state.fps ?? fps;
+        totalFrames = state.totalFrames ?? totalFrames;
+        keyframes = Array.isArray(state.keyframes) ? state.keyframes : keyframes;
+        keyframes.sort((a, b) => a.frame - b.frame);
+        poseCounter = state.poseCounter ?? poseCounter;
+        currentFrame = clampFrame(state.currentFrame ?? 0);
+        fpsInput.value = String(fps);
+        totalInput.value = String(totalFrames);
+        frameInput.value = String(currentFrame);
+        drawTimeline();
+        updateStatus();
+        applyCameraForFrame(currentFrame);
+        applyShapeKeysForFrame(currentFrame);
+        schedulePreviewRefresh();
+    }
+
+    // ----------------------------------------------------------------
     // 初期化
     // ----------------------------------------------------------------
-    updateStatus();
-    frameInput.value = "0";
-    totalInput.value = String(totalFrames);
-    fpsInput.value = String(fps);
+    if (initialState) {
+        restoreState(initialState);
+    } else {
+        updateStatus();
+        frameInput.value = "0";
+        totalInput.value = String(totalFrames);
+        fpsInput.value = String(fps);
+    }
     requestAnimationFrame(() => {
         resizeCanvas();
         resizeObserver = new ResizeObserver(resizeCanvas);
         resizeObserver.observe(canvas);
     });
 
-    return { el: panel, destroy };
+    return { el: panel, destroy, getState };
 }
 
 // ----------------------------------------------------------------
