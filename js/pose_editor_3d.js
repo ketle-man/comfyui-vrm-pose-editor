@@ -49,9 +49,7 @@ app.registerExtension({
 
             const captureBtn     = makeSmallButton("📸 Capture", "#4a90d9", "Send pose to output");
             const timerBtn       = makeSmallButton("⏱ OFF",     "#555",    "Timer Capture: OFF");
-            const resetBtn       = makeSmallButton("RP",         "#6c757d", "Reset Pose");
             const mirrorBtn      = makeSmallButton("↔",          "#5a6a7a", "Mirror Pose (flip left/right)");
-            const cameraResetBtn = makeSmallButton("RC",         "#5a7a5a", "Reset Camera");
             const camModeBtn     = makeSmallButton("OT",         "#444",    "Camera: Perspective (click to toggle Orthographic)");
 
             const vrmBtn = makeSmallButton("VRM", "#7a5a9a", "Load VRM/GLB/GLTF file");
@@ -79,9 +77,10 @@ app.registerExtension({
 
             let _currentVrmBuffer = null; // VRMバッファへの参照（ライブラリ内サムネイル生成用）
 
-            // Light & Pose Editor統合ボタン(旧: Pose Library / Light Editor / VRMA Timeline Editorの3ボタンを統合)
-            const lpeBtn = makeSmallButton("🎛 Light & Pose Editor", "#5a5a9a", "Open Light & Pose Editor");
-            lpeBtn.style.minWidth = "60px";
+            // Light & Pose Editor統合モーダルを開くボタン(旧: 1個の🎛ボタンから、Light/Poseそれぞれの
+            // タブへ直接開ける2ボタンに分割。モーダル自体は共通で、initialTabで開始タブだけ切り替える)
+            const lightBtn = makeSmallButton("💡 Light", "#5a5a9a", "Open Light Editor");
+            const poseBtn  = makeSmallButton("🕺 Pose",  "#5a5a9a", "Open Pose Editor");
 
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
@@ -163,7 +162,6 @@ app.registerExtension({
             // ---- 1行目: キャプチャ・タイマー・カメラ・VRM・CC ----
             btnRow.appendChild(captureBtn);
             btnRow.appendChild(timerBtn);
-            btnRow.appendChild(cameraResetBtn);
             btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
             btnRow.appendChild(vrmaBtn);
@@ -173,7 +171,8 @@ app.registerExtension({
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
             // ---- 2行目: Light & Pose Editor + 背景系 ----
-            btnRow2.appendChild(lpeBtn);
+            btnRow2.appendChild(lightBtn);
+            btnRow2.appendChild(poseBtn);
             btnRow2.appendChild(bgBtn);
             btnRow2.appendChild(bgClearBtn);
             btnRow2.appendChild(bgColorInput);
@@ -185,7 +184,6 @@ app.registerExtension({
             btnRow2b.appendChild(springBoneBtn);
             btnRow2b.appendChild(windBtn);
             btnRow2b.appendChild(windSourceBtn);
-            btnRow2b.appendChild(resetBtn);
             btnRow2b.appendChild(mirrorBtn);
             // ---- 4行目: 読み込みファイル名 ----
             btnRow3.appendChild(vrmLabel);
@@ -552,19 +550,24 @@ app.registerExtension({
                 }
             };
 
-            lpeBtn.onclick = () => {
-                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, () => {
-                    // Light & Pose Editor内でWind状態が変更された可能性があるためツールバー側の表示を再同期
-                    const on = editor.getWindEnabled();
-                    windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
-                    windBtn.style.background = on ? "#2a6a8a" : "#444";
-                    windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight & Pose Editor内で調整)`;
+            // Light & Pose Editorを閉じた際、モーダル内でWind状態が変更された可能性があるため
+            // ツールバー側の表示を再同期する(Light/Poseどちらのボタンから開いた場合も共通)
+            function onLightPoseEditorClosed() {
+                const on = editor.getWindEnabled();
+                windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
+                windBtn.style.background = on ? "#2a6a8a" : "#444";
+                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight & Pose Editor内で調整)`;
 
-                    const srcOn = editor.getWindSourceEnabled();
-                    windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
-                    windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
-                    windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
-                });
+                const srcOn = editor.getWindSourceEnabled();
+                windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
+                windSourceBtn.style.background = srcOn ? "#c07a20" : "#444";
+                windSourceBtn.title = `Wind Source Marker: ${srcOn ? "ON (drag the orange cone)" : "OFF"}`;
+            }
+            lightBtn.onclick = () => {
+                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light");
+            };
+            poseBtn.onclick = () => {
+                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "pose");
             };
 
             // ---- VRMAタイムライン制御 ----
@@ -646,9 +649,7 @@ app.registerExtension({
 
             bgColorInput.addEventListener("input", () => editor.setBgColor(bgColorInput.value));
 
-            resetBtn.onclick   = () => editor.resetPose();
             mirrorBtn.onclick  = () => editor.mirrorPose();
-            cameraResetBtn.onclick = () => editor.resetCamera();
             camModeBtn.onclick = () => {
                 const toOrtho = camModeBtn.dataset.mode !== "ortho";
                 editor.switchCamera(toOrtho);

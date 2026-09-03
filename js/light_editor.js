@@ -12,9 +12,11 @@
 import { openPoseLibrary } from './pose_library.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 
-export function openLightPoseEditor(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose) {
+// initialTab: "light"(既定) | "pose" — モーダルを開いた直後に表示するメインタブ
+// (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
+export function openLightPoseEditor(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab) {
     if (document.getElementById("light-pose-editor-modal")) return;
-    document.body.appendChild(buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose));
+    document.body.appendChild(buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab));
 }
 
 // ----------------------------------------------------------------
@@ -26,7 +28,7 @@ const LIGHT_TYPES = [
     { value: "ambient",     label: "🌐 Ambient" },
 ];
 
-function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose) {
+function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab) {
     // ---- Save original DOM position of cvsWrapper ----
     const origParent      = cvsWrapper.parentNode;
     const origNextSibling = cvsWrapper.nextSibling;
@@ -452,7 +454,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose) {
     };
 
     // ---- メインタブ / サブタブ切り替え ----
-    let activeMainTab = "light"; // "light" | "pose"
+    let activeMainTab = initialTab === "pose" ? "pose" : "light"; // "light" | "pose"
     let activeSubTab  = "L";     // "L" | "E" | "S"
 
     function applySubTab() {
