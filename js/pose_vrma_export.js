@@ -3,8 +3,12 @@
  * - フレーム番号ベースでキーフレームを管理する（PSD-Figure-Creator, feat/keyframe-video の
  *   psd_loader.js のUXパターンを参考: 現在位置に追加/削除ボタン、タイムライン上でドラッグ移動）
  * - editor.exportVrma() は秒単位のtimeを要求するため、fps設定で time = frame / fps に変換して渡す
- * - プレビュー再生は「自己ロードバック」方式: 生成したglbをそのまま editor.loadVRMAFromBuffer() に渡し、
- *   既存のVRMA再生機構(playVRMA/pauseVRMA/seekVRMA等)をそのまま流用する
+ * - ポーズKF編集中のプレビューは「自己ロードバック」方式: 生成したglbをそのまま
+ *   editor.loadVRMAFromBuffer() に渡し、editor.seekVRMA(t) でシーク時にその場でポーズを反映する
+ * - 再生ボタンは自パネル駆動のrAFタイマーで0〜totalFramesのフレームを進める方式(PSD-Figure-Creator
+ *   のstartPlayback()と同型)。ポーズKFが1つも無い(カメラ/シェイプキーのみの)タイムラインでも
+ *   再生でき、かつ再生範囲がポーズKFの最終フレームに制限されずtotalFramesまで届く
+ *   (詳細はbuildKeyframePanel内「プレビュー再生」節のコメント参照)
  * - editor.seekVRMA(t) はその場でポーズを反映するため、フレームへシークしてから editor.exportPose() を
  *   呼べば「そのフレームの補間済みポーズ」を独自補間ロジック無しで正しくキャプチャできる
  * - 本バージョンはブラウザダウンロードのみ(サーバー保存は未対応)
@@ -111,13 +115,15 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     let dpr = window.devicePixelRatio || 1;
     let resizeObserver = null;
-    let _uiSyncId = null;    // プレビュー再生中のフレーム表示追従rAF
+    let _playing = false;    // 自パネル駆動の再生中フラグ(下記「プレビュー再生」参照)
+    let _playRafId = null;   // 再生タイマーのrAF ID
+    let _lastTickTime = 0;   // 直近のフレーム送り時刻(performance.now())
     let _debounceId = null;  // プレビュー再生成のデバウンス
     let draggingFrame = null; // Moveモード中、ドラッグ中のKFの現在フレーム値
     let isScrubbing = false;  // 非Moveモード中のタイムラインドラッグ(スクラブ)
 
     function destroy() {
-        if (_uiSyncId !== null) { cancelAnimationFrame(_uiSyncId); _uiSyncId = null; }
+        stopPlayback();
         if (_debounceId !== null) { clearTimeout(_debounceId); _debounceId = null; }
         resizeObserver?.disconnect();
         window.removeEventListener("mousemove", onWindowMouseMove);
@@ -506,7 +512,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             window.addEventListener("mouseup", onWindowMouseUp);
         } else {
             isScrubbing = true;
-            if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setPlayingUI(false); }
+            stopPlayback();
             seekToFrame(frameFromClientX(e.clientX));
             window.addEventListener("mousemove", onWindowMouseMove);
             window.addEventListener("mouseup", onWindowMouseUp);
@@ -577,24 +583,42 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     });
 
     // ----------------------------------------------------------------
-    // プレビュー再生(自己ロードバック方式)
+    // プレビュー再生(自パネル駆動のタイマー方式)
+    // - 旧実装はeditor.playVRMA()/isVRMAPlaying()/getVRMATime()に完全依存する「自己ロードバック方式」
+    //   だったが、これだとポーズKFが1つも無い(カメラ/シェイプキーのみの)タイムラインでは
+    //   _vrmaActionが存在せず再生ボタンが何もしなかったり、再生範囲がVRMAクリップのduration
+    //   (=最後のポーズKFの時刻)までに制限され、totalFramesまで再生されない問題があった。
+    // - PSD-Figure-Creator(feat/keyframe-video)のstartPlayback()と同じ、自前のrAFタイマーで
+    //   フレームを進める方式に変更。毎フレームseekToFrame()を呼ぶことで、ポーズKFがあれば
+    //   editor.seekVRMA()・カメラKFがあればapplyCameraForFrame()・シェイプキーKFがあれば
+    //   applyShapeKeysForFrame()がそれぞれ独立して反映される。0〜totalFramesを再生し、
+    //   末尾に達したら先頭へループする。
     // ----------------------------------------------------------------
-    function _startUiSync() {
-        if (_uiSyncId !== null) return;
+    function startPlayback() {
+        if (_playing) return;
+        _playing = true;
+        playBtn.textContent = "⏸";
+        _lastTickTime = performance.now();
         const tick = () => {
-            if (!editor.isVRMAPlaying()) { _uiSyncId = null; return; }
-            currentFrame = clampFrame(editor.getVRMATime() * fps);
-            frameInput.value = String(currentFrame);
-            applyCameraForFrame(currentFrame);
-            applyShapeKeysForFrame(currentFrame);
-            drawTimeline();
-            _uiSyncId = requestAnimationFrame(tick);
+            if (!_playing) return;
+            const interval = 1000 / fps;
+            const now = performance.now();
+            if (now - _lastTickTime >= interval) {
+                _lastTickTime += interval;
+                // silent: シェイプキースライダーの全再構築(onShapeKeysApplied)は60fps相当で
+                // 呼ぶとコストが大きいため、再生中は毎フレーム呼ばない(Poseタブ表示中の
+                // スライダー値自体はapplyShapeKeysForFrameで更新されるが、UI再描画はスキップされる)
+                seekToFrame((currentFrame + 1) % (totalFrames + 1), { silent: true });
+                drawTimeline();
+            }
+            _playRafId = requestAnimationFrame(tick);
         };
-        _uiSyncId = requestAnimationFrame(tick);
+        _playRafId = requestAnimationFrame(tick);
     }
-    function _setPlayingUI(playing) {
-        playBtn.textContent = playing ? "⏸" : "▶";
-        if (playing) _startUiSync();
+    function stopPlayback() {
+        _playing = false;
+        if (_playRafId !== null) { cancelAnimationFrame(_playRafId); _playRafId = null; }
+        playBtn.textContent = "▶";
     }
 
     async function refreshPreview() {
@@ -602,6 +626,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const poseKfs = keyframes.filter(k => k.bones);
         if (poseKfs.length === 0) {
             editor.clearVRMA();
+            drawTimeline();
+            stopPlayback();
             return;
         }
         try {
@@ -611,7 +637,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             });
             seekToFrame(currentFrame, { silent: true });
             drawTimeline();
-            _setPlayingUI(false);
+            stopPlayback();
         } catch (e) {
             console.error("[KeyframePanel] preview refresh failed:", e);
         }
@@ -622,9 +648,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     }
 
     playBtn.onclick = () => {
-        if (!editor.hasVRMA()) return;
-        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setPlayingUI(false); }
-        else { editor.playVRMA(); _setPlayingUI(true); }
+        if (_playing) stopPlayback(); else startPlayback();
     };
 
     // ----------------------------------------------------------------
@@ -741,7 +765,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     }
 
     async function runExport(btn, otherBtn, exportFn, filename) {
-        if (editor.isVRMAPlaying()) { editor.pauseVRMA(); _setPlayingUI(false); }
+        stopPlayback();
         const savedFrame = currentFrame;
         const origLabel = btn.textContent;
         btn.disabled = true; otherBtn.disabled = true;
