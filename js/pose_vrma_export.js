@@ -34,11 +34,11 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                "background:#1a1a2e;border-bottom:1px solid #2a2a4a;flex-shrink:0;flex-wrap:wrap;",
     });
     const titleEl = el("span", { style: "font-size:11px;font-weight:bold;color:#9aa;margin-right:2px;" }, "🎬 Keyframes");
-    const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "現在フレームに、今のポーズをキーフレームとして追加/上書き (K)");
-    const delBtn = mkBtn("− Delete KF", "#5a3a3a", "現在フレームのキーフレームを削除 (Ctrl+K)");
+    const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "現在フレームに、今のポーズをキーフレームとして追加/上書き");
+    const delBtn = mkBtn("− Delete KF", "#5a3a3a", "現在フレームのキーフレームを削除");
     const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
-    const camAddBtn = mkBtn("📷 + Cam KF", "#3a6a8a", "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き (C)");
-    const camDelBtn = mkBtn("📷 − Cam KF", "#5a3a3a", "現在フレームのカメラキーフレームを削除 (Ctrl+C)");
+    const camAddBtn = mkBtn("📷 + Cam KF", "#3a6a8a", "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き");
+    const camDelBtn = mkBtn("📷 − Cam KF", "#5a3a3a", "現在フレームのカメラキーフレームを削除");
     const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上のマーカーをドラッグして移動できます");
 
     const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
@@ -122,7 +122,6 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         resizeObserver?.disconnect();
         window.removeEventListener("mousemove", onWindowMouseMove);
         window.removeEventListener("mouseup", onWindowMouseUp);
-        document.removeEventListener("keydown", onGlobalKeyDown);
         editor.clearVRMA();
     }
 
@@ -914,36 +913,6 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         projView.style.display = willShow ? "flex" : "none";
         if (willShow) renderProjectList();
     };
-
-    // ----------------------------------------------------------------
-    // キーボードショートカット (K: Add/Update KF, Ctrl+K: Delete KF, C: Add Cam KF, Ctrl+C: Delete Cam KF)
-    // - 当初Alt+K/Alt+Cで実装したが、Alt+CがComfyUI側の「copy token」機能と衝突したため、
-    //   削除系の修飾キーをAltからCtrlへ変更(追加側のK/Cは無修飾のまま変更なし)。
-    // - documentレベルで待ち受ける(パネル自体はモーダル下部に常設で、フォーカスがLightタブ側の
-    //   コントロールやcanvasにある場合でも効くようにするため)。destroy()で必ず解除する。
-    // - テキスト入力中(input/textarea/contentEditable)やMeta/Shift/Alt併用時は発火させない
-    //   (frame/fps入力欄への数値入力やブラウザ標準ショートカットとの衝突を避ける)。
-    // ----------------------------------------------------------------
-    function isTypingTarget(target) {
-        if (!target) return false;
-        const tag = target.tagName;
-        return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
-    }
-    function onGlobalKeyDown(e) {
-        if (isTypingTarget(e.target)) return;
-        if (e.metaKey || e.shiftKey || e.altKey) return;
-        const key = e.key.toLowerCase();
-        if (key === "k") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.ctrlKey) deleteAtCurrentFrame(); else captureAtCurrentFrame();
-        } else if (key === "c") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.ctrlKey) deleteCameraAtCurrentFrame(); else captureCameraAtCurrentFrame();
-        }
-    }
-    document.addEventListener("keydown", onGlobalKeyDown);
 
     // ----------------------------------------------------------------
     // 初期化
