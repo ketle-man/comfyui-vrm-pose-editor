@@ -14,9 +14,28 @@ import { buildKeyframePanel } from './pose_vrma_export.js';
 
 // initialTab: "light"(既定) | "pose" — モーダルを開いた直後に表示するメインタブ
 // (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
-export function openLightPoseEditor(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab) {
+// nodeActions: { doCapture, loadVrmFile, loadVrmaFile } (省略可)。ノード側(pose_editor_3d.js)にしか
+//   無い機能(画像キャプチャ・VRM/VRMAロード時のキャッシュ更新等)を、Poseタブ Properties欄と
+//   キーフレームパネルに複製したボタンから呼び出すためのブリッジ
+export function openLightPoseEditor(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab, nodeActions) {
     if (document.getElementById("light-pose-editor-modal")) return;
-    document.body.appendChild(buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab));
+    document.body.appendChild(buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab, nodeActions));
+}
+
+// モーダルが開いている間だけ有効な、現在アクティブなキーフレームパネルへの参照。
+// ノード側の「VRMA (KEY)」ボタン(モーダルを開いていなくても押せる)から、モーダルの開閉状態に
+// 関わらずPoseトラックへインポートできるようにするために使う(buildModal内でセット/クリアする)。
+let _activeKeyframePanel = null;
+
+// ノード側の「VRMA (KEY)」ボタンから呼ばれるエントリポイント。モーダルが既に開いていればその
+// キーフレームパネルへ直接インポートし、閉じていればPoseタブで開いてからインポートする。
+export function importVrmaAsKeyframesFromNode(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, nodeActions, buffer, name) {
+    if (_activeKeyframePanel) {
+        _activeKeyframePanel.importVrmaAsKeyframes(buffer, name);
+        return;
+    }
+    if (document.getElementById("light-pose-editor-modal")) return; // 念のための二重ガード
+    document.body.appendChild(buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, "pose", nodeActions, { buffer, name }));
 }
 
 // ----------------------------------------------------------------
@@ -28,7 +47,7 @@ const LIGHT_TYPES = [
     { value: "ambient",     label: "🌐 Ambient" },
 ];
 
-function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab) {
+function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initialTab, nodeActions, pendingVrmaKeyImport) {
     // ---- Save original DOM position of cvsWrapper ----
     const origParent      = cvsWrapper.parentNode;
     const origNextSibling = cvsWrapper.nextSibling;
@@ -56,7 +75,13 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const keyframePanel = buildKeyframePanel(editor, () => vrmBuffer, getShapeKeys, () => {
         // シーク/再生でシェイプキー値が変わった際、Poseタブ表示中ならスライダー表示も追従させる
         if (activeMainTab === "pose") rebuildShapeKeySliders();
-    }, editor._kfPanelState);
+    }, editor._kfPanelState, nodeActions);
+    _activeKeyframePanel = keyframePanel;
+    // ノード側「VRMA (KEY)」ボタンから、モーダルが閉じている状態で呼ばれた場合はここで開かれる。
+    // buildModal自体の初期化(cvsWrapperのDOM移動等)が終わってから実行するため1tick遅らせる。
+    if (pendingVrmaKeyImport) {
+        setTimeout(() => keyframePanel.importVrmaAsKeyframes(pendingVrmaKeyImport.buffer, pendingVrmaKeyImport.name), 0);
+    }
 
     // モーダルを開いている間に呼び出し元の状態が変化し、cvsWrapperの元の親要素が既にDOMから
     // 失われている（文書に属さなくなっている）ケースがあり得る。この場合でも必ずモーダルを
@@ -100,6 +125,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         window.removeEventListener("lightHelperMoved", onHelperMoved);
         editor._kfPanelState = keyframePanel.getState();
         keyframePanel.destroy();
+        if (_activeKeyframePanel === keyframePanel) _activeKeyframePanel = null;
         overlay.remove();
         onClose?.();
     }
@@ -455,9 +481,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     propPanel.appendChild(propBody);
 
     // ---- Col: Properties (Poseタブ選択時のみ表示) ----
-    // 機能は未定のプレースホルダ。Light側Propertiesパネルと全く同じ幅(280px)にすることで、
-    // Light/Poseタブを切り替えるたびにダイアログ全体の横幅・レイアウトが変わってしまい
-    // 目が疲れる、という問題を解消するために先行して確保しておく。
+    // Light側Propertiesパネルと全く同じ幅(280px)にすることで、Light/Poseタブを切り替えるたびに
+    // ダイアログ全体の横幅・レイアウトが変わってしまい目が疲れる、という問題を解消している。
+    // ヘッダーバー自体はLight側との高さ揃えのために残すが、「Properties」という文字は表示しない。
     const posePropPanel = el("div", {
         style: "width:280px;flex-shrink:0;display:none;flex-direction:column;background:#181826;",
     });
@@ -465,13 +491,173 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         el("div", {
             style: "font-size:11px;font-weight:bold;color:#7a9aaa;padding:7px 12px;" +
                    "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
-        }, "Properties")
+        })
     );
     const posePropBody = el("div", { style: "flex:1;overflow-y:auto;padding:10px 12px;" });
-    posePropBody.appendChild(el("div", {
-        style: "font-size:11px;color:#555;padding:16px 0;text-align:center;",
-    }, "Coming soon"));
     posePropPanel.appendChild(posePropBody);
+
+    // ---- Poseタブ Properties: カメラ (OT/PR切替・Look at Target・FOV・Near) ----
+    // ノード側(pose_editor_3d.js)の複製ボタン/スライダー。editorの状態を直接読み書きするだけで、
+    // ノード固有の副作用(キャッシュ更新等)は無いためnodeActionsは経由しない。
+    const poseCamModeBtn = mkBtn("OT", "#444");
+    function syncPoseCamModeBtn() {
+        const orthoOn = editor.getIsOrtho();
+        poseCamModeBtn.textContent = orthoOn ? "PR" : "OT";
+        poseCamModeBtn.style.background = orthoOn ? "#4a7aaa" : "#444";
+        poseCamModeBtn.title = orthoOn
+            ? "Camera: Orthographic (click to switch to Perspective)"
+            : "Camera: Perspective (click to toggle Orthographic)";
+    }
+    syncPoseCamModeBtn();
+    poseCamModeBtn.onclick = () => { editor.switchCamera(!editor.getIsOrtho()); syncPoseCamModeBtn(); };
+
+    const poseLookAtBtn = mkBtn("👁 OFF", "#444");
+    function syncPoseLookAtBtn() {
+        const on = editor.getLookAtEnabled();
+        poseLookAtBtn.textContent = on ? "👁 ON" : "👁 OFF";
+        poseLookAtBtn.style.background = on ? "#1a9a9a" : "#444";
+        poseLookAtBtn.title = `LookAt Target: ${on ? "ON (drag the cyan marker)" : "OFF"}`;
+    }
+    syncPoseLookAtBtn();
+    poseLookAtBtn.onclick = () => { editor.toggleLookAt(); syncPoseLookAtBtn(); };
+
+    const [poseFovSl, poseFovVl]   = mkSl(10, 120, 1, editor.getFov(), v => editor.setFov(v));
+    const [poseNearSl, poseNearVl] = mkSl(0.01, 5, 0.01, editor.getNear(), v => editor.setNear(v));
+
+    // ---- Poseタブ Properties: モデル/ポーズデータ (VRM / VRMA / download / Save / Load from JSON) ----
+    // VRM/VRMAロードはノード側のキャッシュ・サムネイル用バッファ・ノードサイズ再計算等の副作用があるため、
+    // nodeActions経由でpose_editor_3d.js側のloadVrmFile/loadVrmaFileをそのまま呼び出す。
+    const poseVrmBtn = mkBtn("VRM", "#7a5a9a");
+    poseVrmBtn.title = "Load VRM/GLB/GLTF file";
+    const poseVrmInput = mkFileInput(".vrm,.glb,.gltf");
+    poseVrmBtn.onclick = () => poseVrmInput.click();
+    poseVrmInput.addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 50 * 1024 * 1024) {
+            alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+            poseVrmInput.value = "";
+            return;
+        }
+        nodeActions?.loadVrmFile?.(file);
+        poseVrmInput.value = "";
+    });
+
+    const poseVrmaBtn = mkBtn("VRMA", "#3a7a9a");
+    poseVrmaBtn.title = "Load .vrma animation onto the current VRM";
+    const poseVrmaInput = mkFileInput(".vrma");
+    poseVrmaBtn.onclick = () => poseVrmaInput.click();
+    poseVrmaInput.addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 50 * 1024 * 1024) {
+            alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+            poseVrmaInput.value = "";
+            return;
+        }
+        nodeActions?.loadVrmaFile?.(file);
+        poseVrmaInput.value = "";
+    });
+
+    // ノード側の「✕ Unload VRMA animation」ボタンの複製。実処理(vrmaPanel非表示・ノードサイズ再計算)は
+    // ノード側に副作用があるため、nodeActions経由でpose_editor_3d.js側のunloadVrmaをそのまま呼び出す
+    const poseVrmaEjectBtn = mkBtn("✕", "#5a3a3a");
+    poseVrmaEjectBtn.title = "Unload VRMA animation";
+    poseVrmaEjectBtn.onclick = () => nodeActions?.unloadVrma?.();
+
+    // VRMAボタンのキーフレーム読み込み版。選んだ.vrmaをそのままロードせず、この場でキーフレーム
+    // タイムライン(Poseトラック)へサンプリング読み込みする(モーダル内なのでkeyframePanelを直接呼べる)
+    const poseVrmaKeyBtn = mkBtn("VRMA (KEY)", "#3a7a9a");
+    poseVrmaKeyBtn.title = "Load .vrma as pose keyframes";
+    const poseVrmaKeyInput = mkFileInput(".vrma");
+    poseVrmaKeyBtn.onclick = () => poseVrmaKeyInput.click();
+    poseVrmaKeyInput.addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 50 * 1024 * 1024) {
+            alert(`File too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 50 MB)`);
+            poseVrmaKeyInput.value = "";
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = ev => {
+            keyframePanel.importVrmaAsKeyframes(ev.target.result, file.name.replace(/\.vrma$/i, ""));
+        };
+        reader.readAsArrayBuffer(file);
+        poseVrmaKeyInput.value = "";
+    });
+
+    const poseDownloadBtn = mkBtn("⬇️ Download", "#4a7a4a");
+    poseDownloadBtn.title = "Download the pose";
+    poseDownloadBtn.onclick = () => {
+        const json = editor.exportPose();
+        if (!json) return;
+        const blob = new Blob([json], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "pose.json";
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+
+    const poseSaveBtn = mkBtn("💾 Save", "#4a6a8a");
+    poseSaveBtn.title = "Save pose to poses/";
+    poseSaveBtn.onclick = async () => {
+        const json = editor.exportPose();
+        if (!json) return;
+        try {
+            const res = await fetch("/pose_library/save_pose", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ json }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? res.status);
+            poseSaveBtn.textContent = "✅ Save";
+            setTimeout(() => { poseSaveBtn.textContent = "💾 Save"; }, 1500);
+        } catch (e) {
+            alert("poses/ への保存に失敗しました: " + e.message);
+        }
+    };
+
+    const poseLoadJsonBtn = mkBtn("📂 Load from JSON", "#7a6a3a");
+    const poseJsonInput = mkFileInput(".json,.vroidpose");
+    poseLoadJsonBtn.onclick = () => poseJsonInput.click();
+    poseJsonInput.addEventListener("change", e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            try { editor.importPose(ev.target.result); }
+            catch (err) { alert("Invalid pose JSON: " + err.message); }
+        };
+        reader.readAsText(file);
+        poseJsonInput.value = "";
+    });
+
+    posePropBody.append(
+        sectionTitle("Camera"),
+        fieldRow("", row2(poseCamModeBtn, poseLookAtBtn)),
+        sliderRow("FOV:", poseFovSl, poseFovVl),
+        sliderRow("Near:", poseNearSl, poseNearVl),
+        sectionTitle("Model / Pose Data"),
+        fieldRow("", row2(poseVrmBtn, poseVrmaBtn, poseVrmaEjectBtn, poseVrmaKeyBtn)),
+        fieldRow("", row2(poseDownloadBtn, poseSaveBtn)),
+        fieldRow("", poseLoadJsonBtn),
+    );
+
+    // Poseタブへ切り替える度に呼び出し、ノード側ボタン操作(モーダルを開いたまま裏でノードの
+    // OT/PR・LookAt・FOV・Nearを直接操作するケースがあり得る)による状態変化をこちらへ反映する
+    function syncPosePropPanel() {
+        syncPoseCamModeBtn();
+        syncPoseLookAtBtn();
+        const fovNow = editor.getFov();
+        poseFovSl.value = String(fovNow);
+        poseFovVl.value = fovNow.toFixed(1);
+        const nearNow = editor.getNear();
+        poseNearSl.value = String(nearNow);
+        poseNearVl.value = nearNow.toFixed(2);
+    }
 
     // ---- Col: Library panel (光源プリセット、hidden initially、Lightタブ専用) ----
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
@@ -487,7 +673,13 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             // Pose Library側の1列プレビューへcvsWrapperを一時的に貸し出す。
             // 閉じて戻ってきた時点でこちら側のプレビュー枠サイズに合わせてapplyScale()を掛け直さないと、
             // Pose Library側の狭い列に合わせた解像度・transformのまま表示されてしまうため
-            openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale());
+            // onImportVrma: Pose Library内「Load KEY」ボタンから、選択中の.vrmaをこのモーダルの
+            //   キーフレームタイムライン(Poseトラック)へサンプリング読み込みするための橋渡し。
+            // onLoadVrmaRaw: 「Load」ボタンから、選択中の.vrmaをキーフレーム化せずそのまま
+            //   ノード側のVRMA読み込み処理(nodeActions.loadVrmaFile)へ渡すための橋渡し
+            openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale(),
+                (buf, name) => keyframePanel.importVrmaAsKeyframes(buf, name),
+                nodeActions ? (buf) => nodeActions.loadVrmaFile(new Blob([buf])) : undefined);
             return;
         }
         const visible = libPanel.style.display !== "none";
@@ -533,7 +725,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         propPanel.style.display = (isLight && activeSubTab === "L") ? "flex" : "none";
         setMainTabActive(lightTabBtn, isLight);
         setMainTabActive(poseTabBtn, !isLight);
-        if (!isLight) rebuildShapeKeySliders();
+        if (!isLight) {
+            rebuildShapeKeySliders();
+            syncPosePropPanel();
+        }
     }
     lightTabBtn.onclick = () => { activeMainTab = "light"; applyMainTab(); };
     poseTabBtn.onclick  = () => { activeMainTab = "pose";  applyMainTab(); };

@@ -1433,6 +1433,16 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         hasLookAt()          { return !!currentVRM?.lookAt; },
         getLookAtEnabled()   { return _lookAtEnabled; },
         toggleLookAt()       { _setLookAtEnabled(!_lookAtEnabled); return _lookAtEnabled; },
+        setLookAtEnabled(v)  { _setLookAtEnabled(!!v); },
+        // タイムライン(キーフレーム)からの位置補間適用向け。マーカーのドラッグ操作(_onDragMove等)とは
+        // 別経路で、ON/OFF状態には関知せず座標だけを読み書きする
+        getLookAtPosition()  {
+            return { x: lookAtHelperMesh.position.x, y: lookAtHelperMesh.position.y, z: lookAtHelperMesh.position.z };
+        },
+        setLookAtPosition(p) {
+            if (!p) return;
+            lookAtHelperMesh.position.set(p.x, p.y, p.z);
+        },
 
         // ---- Spring bone physics (揺れ物理) ----
         hasSpringBones()          { return !!currentVRM?.springBoneManager; },
@@ -1442,6 +1452,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         // ---- Wind physics (風エフェクト・そよ風) ----
         getWindEnabled()      { return _windEnabled; },
         toggleWindEnabled()   { _windEnabled = !_windEnabled; return _windEnabled; },
+        setWindEnabled(v)     { _windEnabled = !!v; },
         getWindStrength()     { return _windStrength; },
         setWindStrength(v)    { _windStrength = v; },
         getWindDirection()    { return _windDirectionDeg; },
@@ -1452,6 +1463,17 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         // ---- Wind source marker (風の発生源マーカー) ----
         getWindSourceEnabled()    { return _windSourceEnabled; },
         toggleWindSourceEnabled() { _setWindSourceEnabled(!_windSourceEnabled); return _windSourceEnabled; },
+        setWindSourceEnabled(v)   { _setWindSourceEnabled(!!v); },
+        // タイムライン(キーフレーム)からの位置補間適用向け。LookAtのgetLookAtPosition/setLookAtPositionと同様、
+        // ドラッグ操作とは別経路で座標だけを読み書きする
+        getWindSourcePosition()   {
+            return { x: windSourceHelperMesh.position.x, y: windSourceHelperMesh.position.y, z: windSourceHelperMesh.position.z };
+        },
+        setWindSourcePosition(p)  {
+            if (!p) return;
+            windSourceHelperMesh.position.set(p.x, p.y, p.z);
+            windSourceHelperMesh.lookAt(_windSourceRefPoint);
+        },
 
         // ---- Light management API (used by light_editor.js) ----
         getLights()          { return managedLights.map(l => l.config); },
@@ -1584,6 +1606,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             orbit.update();
         },
         switchCamera,
+        getIsOrtho() { return isOrtho; },
         setFov,
         getFov() { return perspCamera.fov; },
         setNear,

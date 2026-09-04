@@ -24,13 +24,17 @@
 //   ポーズと同じキーフレームに束ねて保存し、プレビュー内シーク/再生でのみ補間適用する(.vrma書き出しには含めない)。
 // onShapeKeysApplied: シーク/再生でシェイプキー値を適用した直後に呼ばれるコールバック(省略可)。
 //   呼び出し元のシェイプキー編集UI(スライダー等)を再同期させるためのフック。
-// 戻り値: { el, destroy } — el を呼び出し元のDOMへ追加し、閉じる際に destroy() を呼ぶこと
+// 戻り値: { el, destroy, getState, importVrmaAsKeyframes } — el を呼び出し元のDOMへ追加し、
+//   閉じる際に destroy() を呼ぶこと。importVrmaAsKeyframes(buffer, label) はPose Libraryの
+//   「Import as Keyframes」ボタンから、選択中の.vrmaをPoseトラックへサンプリング読み込みするために使う。
 // ----------------------------------------------------------------
 // initialState: { keyframes, fps, totalFrames, currentFrame, poseCounter } (省略可)。
 //   モーダルを閉じる際に getState() で取得した値を、呼び出し元(light_editor.js)が
 //   editor側に保持しておき、再度開く際にここへ渡すことでタイムラインを復元する
 //   (editorを閉じるたびにキーフレームが消えてしまう問題への対応)。
-export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKeysApplied, initialState) {
+// nodeActions: { doCapture } (省略可)。ノード側(pose_editor_3d.js)にしか無い画像キャプチャ処理を
+//   このパネルに複製したCaptureボタンから呼び出すためのブリッジ(pose_editor_3d.jsのdoCaptureをそのまま再利用)。
+export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKeysApplied, initialState, nodeActions) {
     const panel = el("div", {
         style: "display:flex;flex-direction:column;background:#16162a;" +
                "border-top:1px solid #2a2a4a;flex-shrink:0;font-family:sans-serif;",
@@ -42,12 +46,26 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                "background:#1a1a2e;border-bottom:1px solid #2a2a4a;flex-shrink:0;flex-wrap:wrap;",
     });
     const titleEl = el("span", { style: "font-size:11px;font-weight:bold;color:#9aa;margin-right:2px;" }, "🎬 Keyframes");
-    const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "現在フレームに、今のポーズをキーフレームとして追加/上書き");
-    const delBtn = mkBtn("− Delete KF", "#5a3a3a", "現在フレームのキーフレームを削除");
+
+    // ---- トラック選択(Pose/Camera/Light) ----
+    // 統合タイムラインは選択中トラックのKFだけを表示し、Add/Delete KFボタンも選択中トラック用の
+    // 1組に差し替える(以前はトラックごとに専用ボタンが並んでいたが、3トラック化で煩雑になったため統一)。
+    const trackSelect = document.createElement("select");
+    trackSelect.style.cssText =
+        "background:#222236;color:#ddd;border:1px solid #444;border-radius:4px;" +
+        "padding:4px 6px;font-size:11px;font-weight:bold;cursor:pointer;";
+    trackSelect.title = "編集するトラックを選択";
+    [["pose", "🕺 Pose"], ["camera", "📷 Camera"], ["light", "💡 Light"], ["wind", "🌬 Wind"]].forEach(([v, t]) => {
+        const opt = document.createElement("option");
+        opt.value = v; opt.textContent = t;
+        trackSelect.appendChild(opt);
+    });
+    trackSelect.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+
+    const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "");
+    const delBtn = mkBtn("− Delete KF", "#5a3a3a", "");
     const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
-    const camAddBtn = mkBtn("📷 + Cam KF", "#3a6a8a", "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き");
-    const camDelBtn = mkBtn("📷 − Cam KF", "#5a3a3a", "現在フレームのカメラキーフレームを削除");
-    const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上のマーカーをドラッグして移動できます");
+    const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上の(選択中トラックの)マーカーをドラッグして移動できます");
 
     const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
     const prevBtn = mkBtn("❮", "#333344", "1フレーム戻る");
@@ -57,8 +75,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const nextBtn = mkBtn("❯", "#333344", "1フレーム進む");
 
     toolbar.append(
-        titleEl, addBtn, delBtn, addFromLibBtn,
-        sep(), camAddBtn, camDelBtn,
+        titleEl, trackSelect, addBtn, delBtn, addFromLibBtn,
         sep(), moveBtn,
         sep(), gotoStartBtn, prevBtn, frameInput, slashLbl, totalInput, nextBtn,
     );
@@ -95,14 +112,33 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const rpBtn = mkBtn("RP", "#6c757d", "Reset Pose");
     const rcBtn = mkBtn("RC", "#5a7a5a", "Reset Camera");
     const statusMsg = el("span", { style: "flex:1;font-size:11px;color:#888;min-width:80px;" }, "0 keyframes");
+    // ノード側にある「↔ Mirror Pose」の複製ボタン(pose_editor_3d.js)。左右反転したポーズをその場で
+    // editor.mirrorPose()するだけなので、ノードコンテキストは不要でeditorから直接呼べる
+    const mirrorBtn = mkBtn("↔ Mirror", "#5a6a7a", "Mirror Pose (flip left/right)");
+    mirrorBtn.onclick = () => editor.mirrorPose();
     const playBtn = el("button", {
         style: "padding:4px 10px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
                "cursor:pointer;font-size:12px;flex-shrink:0;",
     }, "▶");
     const downloadBtn = mkBtn("💾 Save .vrma", "#4a7a4a", "Export and save the animation to poses/ (visible in Pose Library)");
+    // ノード側の「📸 Capture」の複製ボタン。実処理(image_data出力ウィジェットへの書き込み等)は
+    // nodeActions.doCapture(pose_editor_3d.js)をそのまま呼び出す
+    const captureBtn = mkBtn("📸 Capture", "#4a90d9", "Send pose to output");
+    captureBtn.onclick = () => {
+        nodeActions?.doCapture?.();
+        captureBtn.textContent = "✅ Captured!";
+        captureBtn.style.background = "#28a745";
+        setTimeout(() => {
+            captureBtn.textContent = "📸 Capture";
+            captureBtn.style.background = "#4a90d9";
+        }, 1500);
+    };
     const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
     const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
-    previewPanel.append(fpsLbl, fpsInput, newBtn, projBtn, rpBtn, rcBtn, statusMsg, playBtn, downloadBtn, webmBtn, gifBtn);
+    previewPanel.append(
+        fpsLbl, fpsInput, newBtn, projBtn, rpBtn, rcBtn, statusMsg, mirrorBtn,
+        playBtn, downloadBtn, captureBtn, webmBtn, gifBtn,
+    );
 
     panel.append(toolbar, libView, projView, timelineWrap, previewPanel);
 
@@ -150,7 +186,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     function updateStatus() {
         const poseCount = keyframes.filter(k => k.bones).length;
         const camCount  = keyframes.filter(k => k.camera).length;
-        statusMsg.textContent = `${poseCount} pose · ${camCount} camera`;
+        const lightCount = keyframes.filter(k => k.light).length;
+        const windCount = keyframes.filter(k => k.wind).length;
+        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${lightCount} light · ${windCount} wind`;
     }
 
     // ----------------------------------------------------------------
@@ -164,6 +202,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         }
         applyCameraForFrame(currentFrame);
         applyShapeKeysForFrame(currentFrame);
+        applyLookAtForFrame(currentFrame);
+        applyLightForFrame(currentFrame);
+        applyWindForFrame(currentFrame);
         // 再生中(rAFループ)からの毎フレーム呼び出しではスライダー全再構築コストを避けるため呼ばない
         if (!opts.silent) onShapeKeysApplied?.();
         if (!opts.silent) drawTimeline();
@@ -181,6 +222,12 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return snap;
     }
 
+    // Look at Target(視線ターゲット)のON/OFF・座標のスナップショット。shapeKeysと同様、
+    // ポーズKFに束ねて保存する(視線もキャラクターの姿勢の一部として扱う)。
+    function captureLookAtSnapshot() {
+        return { enabled: editor.getLookAtEnabled?.() ?? false, position: editor.getLookAtPosition?.() };
+    }
+
     function captureAtCurrentFrame(label, bonesOverride) {
         let bones = bonesOverride;
         if (!bones) {
@@ -189,15 +236,18 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             bones = JSON.parse(json).bones;
         }
         const shapeKeys = captureShapeKeysSnapshot();
+        const lookAt = captureLookAtSnapshot();
         const existing = keyframes.find(k => k.frame === currentFrame);
         if (existing) {
             existing.bones = bones;
             if (shapeKeys) existing.shapeKeys = shapeKeys;
+            existing.lookAt = lookAt;
             if (label) existing.label = label;
         } else {
             keyframes.push({
                 frame: currentFrame, label: label ?? `Pose ${poseCounter++}`, bones,
                 ...(shapeKeys ? { shapeKeys } : {}),
+                lookAt,
             });
             keyframes.sort((a, b) => a.frame - b.frame);
         }
@@ -206,9 +256,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         updateStatus();
         schedulePreviewRefresh();
     }
-    addBtn.onclick = () => captureAtCurrentFrame();
 
-    // ポーズ(bones/shapeKeys)のフィールドだけを削除する(cameraが残っていればエントリ自体は維持)。
+    // ポーズ(bones/shapeKeys/lookAt)のフィールドだけを削除する(camera/lightが残っていればエントリ自体は維持)。
     // PSD-Figure-Creatorのdeleteキーフレーム実装(pose/camera独立管理)を踏襲。
     function deleteAtCurrentFrame() {
         const idx = keyframes.findIndex(k => k.frame === currentFrame);
@@ -218,12 +267,12 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         delete kf.bones;
         delete kf.label;
         delete kf.shapeKeys;
-        if (!kf.camera) keyframes.splice(idx, 1);
+        delete kf.lookAt;
+        if (!kf.camera && !kf.light && !kf.wind) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         schedulePreviewRefresh();
     }
-    delBtn.onclick = deleteAtCurrentFrame;
 
     // ----------------------------------------------------------------
     // カメラキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)
@@ -242,7 +291,6 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         drawTimeline();
         updateStatus();
     }
-    camAddBtn.onclick = captureCameraAtCurrentFrame;
 
     function deleteCameraAtCurrentFrame() {
         const idx = keyframes.findIndex(k => k.frame === currentFrame);
@@ -250,12 +298,140 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const kf = keyframes[idx];
         if (!kf.camera) return;
         delete kf.camera;
-        if (!kf.bones) keyframes.splice(idx, 1);
+        if (!kf.bones && !kf.light && !kf.wind) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         applyCameraForFrame(currentFrame);
     }
-    camDelBtn.onclick = deleteCameraAtCurrentFrame;
+
+    // ----------------------------------------------------------------
+    // ライトキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)
+    // - editor.getLights()が返す全ライトのconfigをまるごとスナップショットする(カメラと同じ方式)。
+    // - KF間の補間はライトIDでマッチングし、両側に存在するライトだけを対象にする(片側にしか
+    //   存在しないライト = 追加/削除タイミングをまたぐ場合は補間せずそのまま保持する簡易対応)。
+    // ----------------------------------------------------------------
+    function captureLightAtCurrentFrame() {
+        const lights = editor.getLights?.();
+        if (!lights) return;
+        const snapshot = { lights: JSON.parse(JSON.stringify(lights)) };
+        const existing = keyframes.find(k => k.frame === currentFrame);
+        if (existing) {
+            existing.light = snapshot;
+        } else {
+            keyframes.push({ frame: currentFrame, light: snapshot });
+            keyframes.sort((a, b) => a.frame - b.frame);
+        }
+        ensureTotalFrames();
+        drawTimeline();
+        updateStatus();
+    }
+
+    function deleteLightAtCurrentFrame() {
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.light) return;
+        delete kf.light;
+        if (!kf.bones && !kf.camera && !kf.wind) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        applyLightForFrame(currentFrame);
+    }
+
+    // ----------------------------------------------------------------
+    // Windキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)
+    // 以前はLightタブ内Environmentサブタブで設定するためLightトラックへ束ねていたが、
+    // 独立したタイムラインが必要という要望により専用トラックへ分離した。
+    // ----------------------------------------------------------------
+    function captureWindSnapshot() {
+        return {
+            enabled:        editor.getWindEnabled?.() ?? false,
+            strength:       editor.getWindStrength?.() ?? 0,
+            direction:      editor.getWindDirection?.() ?? 0,
+            turbulence:     editor.getWindTurbulence?.() ?? 0,
+            sourceEnabled:  editor.getWindSourceEnabled?.() ?? false,
+            sourcePosition: editor.getWindSourcePosition?.() ?? { x: 0, y: 0, z: 0 },
+        };
+    }
+
+    function captureWindAtCurrentFrame() {
+        const wind = captureWindSnapshot();
+        const existing = keyframes.find(k => k.frame === currentFrame);
+        if (existing) {
+            existing.wind = wind;
+        } else {
+            keyframes.push({ frame: currentFrame, wind });
+            keyframes.sort((a, b) => a.frame - b.frame);
+        }
+        ensureTotalFrames();
+        drawTimeline();
+        updateStatus();
+    }
+
+    function deleteWindAtCurrentFrame() {
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.wind) return;
+        delete kf.wind;
+        if (!kf.bones && !kf.camera && !kf.light) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        applyWindForFrame(currentFrame);
+    }
+
+    // ----------------------------------------------------------------
+    // トラック選択(Pose/Camera/Light)と、Add/Delete KFボタンの選択中トラックへのディスパッチ
+    // ----------------------------------------------------------------
+    const TRACKS = {
+        pose: {
+            field: "bones", color: "#ffdd44",
+            addLabel: "✚ Add/Update Pose KF", addColor: "#4a7a4a",
+            addTitle: "現在フレームに、今のポーズ(シェイプキー・Look at Target含む)をキーフレームとして追加/上書き",
+            delLabel: "− Delete Pose KF",
+            delTitle: "現在フレームのポーズキーフレームを削除",
+            capture: () => captureAtCurrentFrame(), delete: () => deleteAtCurrentFrame(),
+        },
+        camera: {
+            field: "camera", color: "#cc66ff",
+            addLabel: "📷 + Cam KF", addColor: "#3a6a8a",
+            addTitle: "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き",
+            delLabel: "📷 − Cam KF",
+            delTitle: "現在フレームのカメラキーフレームを削除",
+            capture: () => captureCameraAtCurrentFrame(), delete: () => deleteCameraAtCurrentFrame(),
+        },
+        light: {
+            field: "light", color: "#ff9f40",
+            addLabel: "💡 + Light KF", addColor: "#8a6a2a",
+            addTitle: "現在フレームに、今のライト設定をキーフレームとして追加/上書き",
+            delLabel: "💡 − Light KF",
+            delTitle: "現在フレームのライトキーフレームを削除",
+            capture: () => captureLightAtCurrentFrame(), delete: () => deleteLightAtCurrentFrame(),
+        },
+        wind: {
+            field: "wind", color: "#33ccff",
+            addLabel: "🌬 + Wind KF", addColor: "#2a6a8a",
+            addTitle: "現在フレームに、今のWind設定をキーフレームとして追加/上書き",
+            delLabel: "🌬 − Wind KF",
+            delTitle: "現在フレームのWindキーフレームを削除",
+            capture: () => captureWindAtCurrentFrame(), delete: () => deleteWindAtCurrentFrame(),
+        },
+    };
+    let selectedTrack = "pose";
+
+    function applyTrackUI() {
+        const t = TRACKS[selectedTrack];
+        addBtn.textContent = t.addLabel; addBtn.title = t.addTitle; addBtn.style.background = t.addColor;
+        delBtn.textContent = t.delLabel; delBtn.title = t.delTitle;
+        // ポーズライブラリからの追加はポーズトラック専用の機能
+        addFromLibBtn.style.display = selectedTrack === "pose" ? "" : "none";
+        drawTimeline();
+    }
+    trackSelect.value = selectedTrack;
+    trackSelect.addEventListener("change", () => { selectedTrack = trackSelect.value; applyTrackUI(); });
+    addBtn.onclick = () => TRACKS[selectedTrack].capture();
+    delBtn.onclick = () => TRACKS[selectedTrack].delete();
+    applyTrackUI();
 
     function lerp(a, b, t) { return a + (b - a) * t; }
     function lerpVec3(a, b, t) {
@@ -297,6 +473,87 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     }
 
     // ----------------------------------------------------------------
+    // ライト補間 — プレビュー内シーク/再生専用。config内の数値フィールド(intensity/angle/penumbra/
+    // decay/distance/width/height)とposition/targetは線形補間し、color/type/enabled等の非連続値は
+    // 区間の終端(t=1)で後方KFの値に切り替える(lookAtのenabledと同じ扱い)。
+    // ----------------------------------------------------------------
+    function lerpLightConfig(a, b, t) {
+        const result = { ...a };
+        for (const key of Object.keys(b)) {
+            const av = a[key], bv = b[key];
+            if (typeof av === "number" && typeof bv === "number") {
+                result[key] = lerp(av, bv, t);
+            } else if (av && bv && typeof av === "object" && typeof bv === "object" && "x" in av && "x" in bv) {
+                result[key] = lerpVec3(av, bv, t); // position / target
+            } else {
+                result[key] = t < 1 ? av : bv; // color / type / enabled / castShadow 等
+            }
+        }
+        return result;
+    }
+
+    function lerpLightsState(a, b, t) {
+        const bMap = new Map(b.lights.map(l => [l.id, l]));
+        return {
+            lights: a.lights.map(la => {
+                const lb = bMap.get(la.id);
+                // 片側のKFにしか存在しないライト(区間をまたいで追加/削除された)は補間せずそのまま保持する
+                return lb ? lerpLightConfig(la, lb, t) : la;
+            }),
+        };
+    }
+
+    // light を持つエントリだけを対象に、指定フレームの状態を前後から線形補間して全ライトへ適用する。
+    // ライトKFが1つも無ければ何もしない(ユーザーの手動編集を妨げない)。
+    function applyLightForFrame(frame) {
+        const lightKfs = keyframes.filter(k => k.light).sort((a, b) => a.frame - b.frame);
+        if (lightKfs.length === 0) return;
+        let before = null, after = null;
+        for (const k of lightKfs) {
+            if (k.frame <= frame) before = k;
+            if (k.frame >= frame && !after) after = k;
+        }
+        let state;
+        if (before && after) {
+            state = before.frame === after.frame
+                ? before.light
+                : lerpLightsState(before.light, after.light, (frame - before.frame) / (after.frame - before.frame));
+        } else {
+            state = (before ?? after).light;
+        }
+        state.lights.forEach(cfg => editor.updateLight?.(cfg.id, cfg));
+    }
+
+    // wind を持つエントリだけを対象に、指定フレームの状態を前後から線形補間してWindへ適用する。
+    // 数値フィールド(strength/direction/turbulence)とsourcePosition(x/y/z)は線形補間、
+    // enabled/sourceEnabledは区間の終端で切り替わる — lerpLightConfig()はフィールド形状を見て
+    // 汎用的に処理するため、ライトconfigと同じ関数をそのまま再利用できる。
+    // WindKFが1つも無ければ何もしない(ユーザーの手動編集を妨げない)。
+    function applyWindForFrame(frame) {
+        const windKfs = keyframes.filter(k => k.wind).sort((a, b) => a.frame - b.frame);
+        if (windKfs.length === 0) return;
+        let before = null, after = null;
+        for (const k of windKfs) {
+            if (k.frame <= frame) before = k;
+            if (k.frame >= frame && !after) after = k;
+        }
+        let state;
+        if (before && after) {
+            state = before.frame === after.frame
+                ? before.wind
+                : lerpLightConfig(before.wind, after.wind, (frame - before.frame) / (after.frame - before.frame));
+        } else {
+            state = (before ?? after).wind;
+        }
+        editor.setWindEnabled?.(state.enabled);
+        editor.setWindStrength?.(state.strength);
+        editor.setWindDirection?.(state.direction);
+        editor.setWindTurbulence?.(state.turbulence);
+        editor.setWindSourceEnabled?.(state.sourceEnabled);
+        editor.setWindSourcePosition?.(state.sourcePosition);
+    }
+
+    // ----------------------------------------------------------------
     // シェイプキー(表情)補間 — プレビュー内シーク/再生専用。ポーズ(bones)と同じエントリに束ねて
     // 保存されるため、shapeKeysを持つエントリ = ポーズKFとほぼ一致する。
     // ----------------------------------------------------------------
@@ -329,6 +586,38 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         keys.forEach(k => {
             if (state[k.name] !== undefined) k.setValue?.(state[k.name]);
         });
+    }
+
+    // ----------------------------------------------------------------
+    // Look at Target(視線ターゲット)補間 — プレビュー内シーク/再生専用。座標は前後のlookAt KFから
+    // 線形補間するが、ON/OFFは連続値ではないため前方のKFの値をそのまま引き継ぐ(補間区間の終端t=1で
+    // 後方KFの値に切り替わる)。
+    // ----------------------------------------------------------------
+    function lerpLookAtState(a, b, t) {
+        return {
+            enabled: t < 1 ? a.enabled : b.enabled,
+            position: lerpVec3(a.position, b.position, t),
+        };
+    }
+
+    function applyLookAtForFrame(frame) {
+        const laKfs = keyframes.filter(k => k.lookAt).sort((a, b) => a.frame - b.frame);
+        if (laKfs.length === 0) return;
+        let before = null, after = null;
+        for (const k of laKfs) {
+            if (k.frame <= frame) before = k;
+            if (k.frame >= frame && !after) after = k;
+        }
+        let state;
+        if (before && after) {
+            state = before.frame === after.frame
+                ? before.lookAt
+                : lerpLookAtState(before.lookAt, after.lookAt, (frame - before.frame) / (after.frame - before.frame));
+        } else {
+            state = (before ?? after).lookAt;
+        }
+        editor.setLookAtEnabled?.(state.enabled);
+        editor.setLookAtPosition?.(state.position);
     }
 
     // ----------------------------------------------------------------
@@ -427,17 +716,18 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         ctx.lineTo(cssW - 6, midY);
         ctx.stroke();
 
-        keyframes.forEach(kf => {
+        // 選択中トラック(Pose/Camera/Light)のKFだけを表示する
+        const trackField = TRACKS[selectedTrack].field;
+        const trackColor = TRACKS[selectedTrack].color;
+        keyframes.filter(kf => kf[trackField]).forEach(kf => {
             const x = xForFrame(kf.frame, cssW);
             const isCurrent = kf.frame === currentFrame;
             const size = isCurrent ? 9 : 7;
-            // 両方=緑、ポーズのみ=黄、カメラのみ=紫 (PSD-Figure-Creatorのマーカー色分けを踏襲)
-            const baseColor = kf.bones && kf.camera ? "#44ee88" : kf.camera ? "#cc66ff" : "#ffdd44";
             ctx.save();
             ctx.translate(x, midY);
             ctx.rotate(Math.PI / 4);
-            if (isCurrent) { ctx.shadowColor = baseColor; ctx.shadowBlur = 8; }
-            ctx.fillStyle = baseColor;
+            if (isCurrent) { ctx.shadowColor = trackColor; ctx.shadowBlur = 8; }
+            ctx.fillStyle = trackColor;
             ctx.fillRect(-size / 2, -size / 2, size, size);
             ctx.restore();
         });
@@ -478,11 +768,13 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return clampFrame(t * totalFrames);
     }
 
+    // 選択中トラックのKFだけを候補にする(他トラックのマーカーは非表示のためドラッグ対象にもしない)
     function nearestKeyframe(clientX) {
         const rect = canvas.getBoundingClientRect();
         const usableW = Math.max(1, rect.width - 12);
+        const trackField = TRACKS[selectedTrack].field;
         let best = null, bestDist = Infinity;
-        keyframes.forEach(kf => {
+        keyframes.filter(kf => kf[trackField]).forEach(kf => {
             const t = totalFrames > 0 ? kf.frame / totalFrames : 0;
             const x = rect.left + 6 + t * usableW;
             const dist = Math.abs(clientX - x);
@@ -491,15 +783,21 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return bestDist <= 10 ? best : null;
     }
 
-    // 移動先に既存KFがあれば無条件で上書き(消滅)する。PSD-Figure-Creatorのmoveキーフレーム実装を踏襲。
+    // 移動先に既存KFがあれば、選択中トラックのフィールドだけを上書きしてマージする(他トラックの
+    // データが非表示のまま移動先に残っている場合でも、それを消さないようにするため)。
     function moveKeyframeFrame(fromFrame, toFrame) {
         if (fromFrame === toFrame) return;
         const idx = keyframes.findIndex(k => k.frame === fromFrame);
         if (idx === -1) return;
         const moved = keyframes[idx];
-        keyframes = keyframes.filter(k => k.frame !== fromFrame && k.frame !== toFrame);
-        moved.frame = toFrame;
-        keyframes.push(moved);
+        keyframes.splice(idx, 1);
+        const destIdx = keyframes.findIndex(k => k.frame === toFrame);
+        if (destIdx !== -1) {
+            Object.assign(keyframes[destIdx], moved, { frame: toFrame });
+        } else {
+            moved.frame = toFrame;
+            keyframes.push(moved);
+        }
         keyframes.sort((a, b) => a.frame - b.frame);
         ensureTotalFrames();
         updateStatus();
@@ -799,7 +1097,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     newBtn.onclick = () => {
         showOverlayDialog({
             title: "🆕 New Timeline",
-            message: "現在のキーフレーム(ポーズ・カメラ)をすべて削除して新規作成します。保存していない変更は失われます。",
+            message: "現在のキーフレーム(ポーズ・カメラ・ライト・Wind)をすべて削除して新規作成します。保存していない変更は失われます。",
             okLabel: "Clear",
             okBg: "#8a3a3a",
             onOk: () => {
@@ -844,6 +1142,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         updateStatus();
         applyCameraForFrame(0);
         applyShapeKeysForFrame(0);
+        applyLookAtForFrame(0);
+        applyLightForFrame(0);
+        applyWindForFrame(0);
         schedulePreviewRefresh();
     }
 
@@ -966,6 +1267,76 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         updateStatus();
         applyCameraForFrame(currentFrame);
         applyShapeKeysForFrame(currentFrame);
+        applyLookAtForFrame(currentFrame);
+        applyLightForFrame(currentFrame);
+        applyWindForFrame(currentFrame);
+        schedulePreviewRefresh();
+    }
+
+    // ----------------------------------------------------------------
+    // Pose Libraryで選択した.vrmaを、Poseトラックのキーフレーム列としてサンプリング読み込みする
+    // (pose_library.jsの「Import as Keyframes」ボタンから呼ばれる)。
+    // 各フレーム(現在のfps設定に基づく: frame = 0..round(duration*fps))でeditor.seekVRMA()→
+    // editor.exportPose()を呼び、通常のポーズKF追加と同じ形でkeyframesへ書き込む。
+    // 既存のPose KFがある場合は確認ダイアログの上ですべて置き換える(camera/light/windの各トラックは
+    // フィールドごとの削除のため触れない)。読み込み終わったらexport元の外部VRMAクリップは
+    // クリアし、以降は通常どおりcaptured KFsからrefreshPreview()が自前のプレビューを再生成する。
+    // ----------------------------------------------------------------
+    async function importVrmaAsKeyframes(buffer, label) {
+        const hasExistingPose = keyframes.some(k => k.bones);
+        if (hasExistingPose) {
+            const proceed = await new Promise(resolve => {
+                showOverlayDialog({
+                    title: "⬇ Import VRMA as Keyframes",
+                    message: "既存のポーズキーフレームをすべて削除して、この.vrmaからポーズKF列を読み込み直します。" +
+                             "カメラ・ライト・Windのキーフレームはそのまま残ります。保存していない変更は失われます。",
+                    okLabel: "Import", okBg: "#2a5a8a",
+                    onOk: () => resolve(true),
+                    onCancel: () => resolve(false),
+                });
+            });
+            if (!proceed) return;
+        }
+
+        stopPlayback();
+        await new Promise((resolve, reject) => {
+            editor.loadVRMAFromBuffer(buffer, resolve, (msg) => reject(new Error(msg)));
+        });
+
+        // 既存エントリからポーズ関連フィールドだけを取り除く(camera/light/windは維持)
+        for (let i = keyframes.length - 1; i >= 0; i--) {
+            const kf = keyframes[i];
+            if (kf.bones) { delete kf.bones; delete kf.label; delete kf.shapeKeys; delete kf.lookAt; }
+            if (!kf.bones && !kf.camera && !kf.light && !kf.wind) keyframes.splice(i, 1);
+        }
+
+        const duration = editor.getVRMADuration();
+        const frameCount = Math.max(1, Math.round(duration * fps));
+        for (let f = 0; f <= frameCount; f++) {
+            editor.seekVRMA(f / fps);
+            const json = editor.exportPose();
+            if (!json) continue;
+            const bones = JSON.parse(json).bones;
+            const kfLabel = label ? `${label} ${f}` : `Pose ${poseCounter++}`;
+            const existing = keyframes.find(k => k.frame === f);
+            if (existing) {
+                existing.bones = bones;
+                existing.label = kfLabel;
+            } else {
+                keyframes.push({ frame: f, label: kfLabel, bones });
+            }
+            // 長い.vrmaでもメインスレッドを固め続けないよう、数フレームごとにイベントループへ制御を返す
+            if (f % 8 === 0) await new Promise(r => setTimeout(r, 0));
+        }
+        keyframes.sort((a, b) => a.frame - b.frame);
+        editor.clearVRMA();
+
+        if (frameCount > totalFrames) { totalFrames = frameCount; totalInput.value = String(totalFrames); }
+        selectedTrack = "pose";
+        trackSelect.value = "pose";
+        applyTrackUI();
+        seekToFrame(0);
+        updateStatus();
         schedulePreviewRefresh();
     }
 
@@ -986,7 +1357,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         resizeObserver.observe(canvas);
     });
 
-    return { el: panel, destroy, getState };
+    return { el: panel, destroy, getState, importVrmaAsKeyframes };
 }
 
 // ----------------------------------------------------------------
@@ -1054,7 +1425,7 @@ function arrayBufferToBase64(buf) {
 
 // 自作オーバーレイダイアログ(確認/名前入力)。window.alert/confirm/promptは使わない
 // (ブラウザ自動操作環境でnative dialogがタブをブロックする問題を避けるため)。
-function showOverlayDialog({ title, message, showInput = false, inputValue = "", okLabel = "OK", okBg = "#2a5a8a", onOk }) {
+function showOverlayDialog({ title, message, showInput = false, inputValue = "", okLabel = "OK", okBg = "#2a5a8a", onOk, onCancel }) {
     const dlg = el("div", {
         style: "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;" +
                "display:flex;align-items:center;justify-content:center;",
@@ -1077,7 +1448,7 @@ function showOverlayDialog({ title, message, showInput = false, inputValue = "",
         input.addEventListener("keydown", e => {
             e.stopPropagation();
             if (e.key === "Enter") ok();
-            if (e.key === "Escape") dlg.remove();
+            if (e.key === "Escape") cancel();
         });
         box.appendChild(input);
     }
@@ -1099,12 +1470,13 @@ function showOverlayDialog({ title, message, showInput = false, inputValue = "",
             onOk();
         }
     }
-    cancelBtn.onclick = () => dlg.remove();
+    function cancel() { dlg.remove(); onCancel?.(); }
+    cancelBtn.onclick = cancel;
     okBtn.onclick = ok;
     btnRow.append(cancelBtn, okBtn);
     box.appendChild(btnRow);
     dlg.appendChild(box);
-    dlg.addEventListener("click", e => { if (e.target === dlg) dlg.remove(); });
+    dlg.addEventListener("click", e => { if (e.target === dlg) cancel(); });
     document.body.appendChild(dlg);
     setTimeout(() => { (input ?? okBtn).focus(); input?.select(); }, 0);
     return dlg;

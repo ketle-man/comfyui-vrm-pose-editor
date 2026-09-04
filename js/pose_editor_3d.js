@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { initPoseEditor3D } from './pose_editor_core.js';
-import { openLightPoseEditor } from './light_editor.js';
+import { openLightPoseEditor, importVrmaAsKeyframesFromNode } from './light_editor.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -70,6 +70,15 @@ app.registerExtension({
             vrmaInput.accept = ".vrma";
             vrmaInput.style.display = "none";
             vrmaBtn.onclick = () => vrmaInput.click();
+
+            // VRMAボタンのキーフレーム読み込み版。選んだ.vrmaをそのまま流すのではなく、
+            // Light & Pose Editorのキーフレームタイムライン(Poseトラック)へサンプリング読み込みする
+            const vrmaKeyBtn = makeSmallButton("VRMA (KEY)", "#3a7a9a", "Load .vrma as pose keyframes (Light & Pose Editor)");
+            const vrmaKeyInput = document.createElement("input");
+            vrmaKeyInput.type = "file";
+            vrmaKeyInput.accept = ".vrma";
+            vrmaKeyInput.style.display = "none";
+            vrmaKeyBtn.onclick = () => vrmaKeyInput.click();
 
             const savePoseBtn    = makeSmallButton("⬇️", "#4a7a4a", "Download the pose");
             const saveToPosesBtn = makeSmallButton("💾", "#4a6a8a", "Save pose to poses/");
@@ -164,16 +173,16 @@ app.registerExtension({
             const btnRow3 = document.createElement("div");
             btnRow3.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;flex-wrap:wrap;";
 
-            // ---- 1行目: キャプチャ・タイマー・カメラ・VRM・CC ----
+            // ---- 1行目: キャプチャ・タイマー・VRM・CC ----
             btnRow.appendChild(captureBtn);
             btnRow.appendChild(timerBtn);
-            btnRow.appendChild(cameraResetBtn);
-            btnRow.appendChild(camModeBtn);
             btnRow.appendChild(vrmBtn);
             btnRow.appendChild(vrmaBtn);
+            btnRow.appendChild(vrmaKeyBtn);
             btnRow.appendChild(ccBtn);
             btnRow.appendChild(vrmInput);
             btnRow.appendChild(vrmaInput);
+            btnRow.appendChild(vrmaKeyInput);
             btnRow.appendChild(bgInput);
             btnRow.appendChild(poseInput);
             // ---- 2行目: Light & Pose Editor + 背景系 ----
@@ -185,11 +194,13 @@ app.registerExtension({
             btnRow2.appendChild(savePoseBtn);
             btnRow2.appendChild(saveToPosesBtn);
             btnRow2.appendChild(loadPoseBtn);
-            // ---- 3行目: 視線・揺れ + ポーズ操作系 ----
+            // ---- 3行目: 視線・揺れ + カメラ操作 + ポーズ操作系 ----
             btnRow2b.appendChild(lookAtBtn);
             btnRow2b.appendChild(springBoneBtn);
             btnRow2b.appendChild(windBtn);
             btnRow2b.appendChild(windSourceBtn);
+            btnRow2b.appendChild(cameraResetBtn);
+            btnRow2b.appendChild(camModeBtn);
             btnRow2b.appendChild(resetBtn);
             btnRow2b.appendChild(mirrorBtn);
             // ---- 4行目: 読み込みファイル名 ----
@@ -574,12 +585,42 @@ app.registerExtension({
                 const ps = editor.getPointSize();
                 cpSlider.value = String(ps);
                 cpValLabel.textContent = ps.toFixed(1);
+
+                // Light & Pose Editor(PoseタブのProperties)にも複製したカメラ/LookAt/FOV/Nearコントロール
+                // で値が変わった可能性があるため、ノード側の表示も再同期する
+                const orthoOn = editor.getIsOrtho();
+                camModeBtn.dataset.mode     = orthoOn ? "ortho" : "persp";
+                camModeBtn.textContent      = orthoOn ? "PR" : "OT";
+                camModeBtn.style.background = orthoOn ? "#4a7aaa" : "#444";
+                camModeBtn.title            = orthoOn
+                    ? "Camera: Orthographic (click to switch to Perspective)"
+                    : "Camera: Perspective (click to toggle Orthographic)";
+
+                const lookOn = editor.getLookAtEnabled();
+                lookAtBtn.textContent = lookOn ? "👁 ON" : "👁 OFF";
+                lookAtBtn.style.background = lookOn ? "#1a9a9a" : "#444";
+                lookAtBtn.title = `LookAt Target: ${lookOn ? "ON (drag the cyan marker)" : "OFF"}`;
+
+                const fovNow = editor.getFov();
+                fovSlider.value = String(fovNow);
+                fovValLabel.textContent = String(fovNow);
+
+                const nearNow = editor.getNear();
+                nearSlider.value = String(nearNow);
+                nearValLabel.textContent = nearNow.toFixed(2);
             }
+
+            // Light & Pose Editorモーダル(Pose Properties欄・キーフレームパネル)から、
+            // ノード側にしか無い機能(画像キャプチャ・VRM/VRMAロード)を呼び出すためのブリッジ。
+            // モーダル側は複製ボタンを持つが、実処理はここに定義済みのノード側関数をそのまま再利用する
+            // (キャッシュ更新・ノードサイズ再計算等の副作用を二重実装しないため)。
+            const nodeActions = { doCapture, loadVrmFile, loadVrmaFile, unloadVrma };
+
             lightBtn.onclick = () => {
-                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light");
+                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light", nodeActions);
             };
             poseBtn.onclick = () => {
-                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "pose");
+                openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "pose", nodeActions);
             };
 
             // ---- VRMAタイムライン制御 ----
@@ -626,17 +667,38 @@ app.registerExtension({
                 _formatVrmaTime();
             });
 
-            vrmaEjectBtn.onclick = () => {
+            // Light & Pose Editorモーダル(Pose Properties欄)にも複製した「✕」ボタンから
+            // nodeActions経由で呼べるよう、名前付き関数として切り出す
+            function unloadVrma() {
                 editor.clearVRMA();
                 vrmaPanel.style.display = "none";
                 updateNodeSize();
-            };
+            }
+            vrmaEjectBtn.onclick = unloadVrma;
 
             vrmaInput.addEventListener("change", (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
                 loadVrmaFile(file);
                 vrmaInput.value = "";
+            });
+
+            // VRMA(KEY): 選んだ.vrmaをそのままロードせず、Light & Pose Editorのキーフレーム
+            // タイムライン(Poseトラック)へサンプリング読み込みする。モーダルが閉じていれば
+            // Poseタブで開いてから読み込む(importVrmaAsKeyframesFromNode内で判定)
+            vrmaKeyInput.addEventListener("change", (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    importVrmaAsKeyframesFromNode(
+                        editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys,
+                        onLightPoseEditorClosed, nodeActions,
+                        ev.target.result, file.name.replace(/\.vrma$/i, ""),
+                    );
+                };
+                reader.readAsArrayBuffer(file);
+                vrmaKeyInput.value = "";
             });
 
             function loadVrmaFile(file) {

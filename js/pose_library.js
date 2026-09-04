@@ -22,16 +22,25 @@ import { VRMLoaderPlugin } from './vendor/three-vrm.module.js';
 //   省略時はプレビュー列を表示しない(呼び出し元がcvsWrapperを扱わない場合の後方互換)。
 // onClose: モーダルを閉じた後に呼ばれるコールバック(呼び出し元がcvsWrapperの表示を
 //   自分のプレビュー枠に合わせて再調整するためのフック)
+// .vrmaカードはクリックしてもプレビュー(ミニプレイヤーでの再生)するだけで、Editor/ノード側へは
+// 反映しない。実際に反映するには、ミニプレイヤー下部の「Load」(通常読み込み)/「Load KEY」
+// (キーフレーム読み込み)のどちらかを明示的に押す必要がある。
+// onImportVrma: (arrayBuffer, name) => void|Promise (省略可)。「Load KEY」ボタンから呼ばれる、
+//   呼び出し元(Light & Pose Editor)のキーフレームタイムラインへ橋渡しするコールバック。
+//   省略時はボタン自体を表示しない。
+// onLoadVrmaRaw: (arrayBuffer, name) => void (省略可)。「Load」ボタンから呼ばれる、選択中の
+//   .vrmaをキーフレーム化せずそのままEditor/ノードへ読み込むためのコールバック。
+//   省略時はボタン自体を表示しない。
 // ----------------------------------------------------------------
-export function openPoseLibrary(editor, vrmBuffer, cvsWrapper, onClose) {
+export function openPoseLibrary(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoadVrmaRaw) {
     if (document.getElementById("pose-library-modal")) return;
-    document.body.appendChild(buildModal(editor, vrmBuffer, cvsWrapper, onClose));
+    document.body.appendChild(buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoadVrmaRaw));
 }
 
 // ----------------------------------------------------------------
 // モーダル本体
 // ----------------------------------------------------------------
-function buildModal(editor, vrmBuffer, cvsWrapper, onClose) {
+function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoadVrmaRaw) {
     // ---- cvsWrapperの元のDOM位置を保存(プレビュー列に埋め込む場合、閉じる際に復元する) ----
     const origParent      = cvsWrapper?.parentNode ?? null;
     const origNextSibling = cvsWrapper?.nextSibling ?? null;
@@ -159,7 +168,27 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose) {
     const vrmaTimeLabel = el("span", {
         style: "font-size:10px;color:#aaa;white-space:nowrap;text-align:right;",
     }, "0.0 / 0.0s");
-    vrmaPlayer.append(vrmaNameRow, vrmaCtrlRow, vrmaTimeLabel);
+
+    // ---- Load / Load KEY(プレビュー下の読み込みボタン) ----
+    // カードクリック(openVrmaInPlayer)はプレビューするだけで、Editor/ノードへは反映しない。
+    // このどちらかのボタンを押して初めて、選択中のVRMAが実際にEditor/ノード側へ反映される。
+    // onLoadVrmaRaw / onImportVrmaが渡されていない(呼び出し元が対応していない)場合は該当ボタンを非表示にする
+    const vrmaLoadRow = el("div", { style: "display:flex;align-items:center;gap:6px;" });
+    const vrmaLoadBtn = el("button", {
+        style: "flex:1;padding:5px 8px;background:#2a5a8a;color:#fff;border:none;border-radius:3px;" +
+               "cursor:pointer;font-size:11px;font-weight:bold;white-space:nowrap;" +
+               (onLoadVrmaRaw ? "" : "display:none;"),
+        title: "このVRMAをそのまま(キーフレーム化せず)Editor/ノードへ読み込む",
+    }, "⬇ Load");
+    const vrmaLoadKeyBtn = el("button", {
+        style: "flex:1;padding:5px 8px;background:#8a6a2a;color:#fff;border:none;border-radius:3px;" +
+               "cursor:pointer;font-size:11px;font-weight:bold;white-space:nowrap;" +
+               (onImportVrma ? "" : "display:none;"),
+        title: "このVRMAをEditorのキーフレームタイムライン(Poseトラック)へ読み込む",
+    }, "🔑 Load KEY");
+    vrmaLoadRow.append(vrmaLoadBtn, vrmaLoadKeyBtn);
+
+    vrmaPlayer.append(vrmaNameRow, vrmaCtrlRow, vrmaTimeLabel, vrmaLoadRow);
 
     if (previewCol) previewCol.append(previewHeader, previewWrap, vrmaPlayer);
 
@@ -219,6 +248,8 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose) {
     // ----------------------------------------------------------------
     let vrmaLoaded    = false;
     let _vrmaUISyncId = null;
+    let _currentVrmaBuffer = null; // Import as Keyframes向けに、ロード済みバッファを保持しておく
+    let _currentVrmaName   = null;
 
     function _formatVrmaTime() {
         const dur = editor.getVRMADuration();
@@ -248,6 +279,8 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose) {
                 editor.loadVRMAFromBuffer(buf, resolve, (msg) => reject(new Error(msg)));
             });
             vrmaLoaded = true;
+            _currentVrmaBuffer = buf;
+            _currentVrmaName = pose.name;
             vrmaNameLabel.textContent = pose.name;
             vrmaPlayer.style.display = "flex";
             _formatVrmaTime();
@@ -275,7 +308,38 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose) {
         if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
         editor.clearVRMA();
         vrmaLoaded = false;
+        _currentVrmaBuffer = null;
+        _currentVrmaName = null;
         vrmaPlayer.style.display = "none";
+    };
+
+    // 「Load」: プレビュー中の.vrmaをキーフレーム化せず、そのままEditor/ノードへ反映する。
+    // モーダルを閉じるとvrmaLoadedがtrueのままだとcloseModal()がeditor.clearVRMA()してしまい
+    // Loadした内容が消えてしまうため、先にfalseへ落として「確定済み」であることを示す。
+    vrmaLoadBtn.onclick = () => {
+        if (!onLoadVrmaRaw || !_currentVrmaBuffer) return;
+        if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
+        vrmaLoaded = false;
+        onLoadVrmaRaw(_currentVrmaBuffer, _currentVrmaName);
+        closeModal();
+    };
+
+    // 「Load KEY」: プレビュー中の.vrmaをEditorのキーフレームタイムライン(Poseトラック)へ
+    // サンプリング読み込みする。
+    vrmaLoadKeyBtn.onclick = async () => {
+        if (!onImportVrma || !_currentVrmaBuffer) return;
+        vrmaLoadKeyBtn.disabled = true;
+        const origLabel = vrmaLoadKeyBtn.textContent;
+        vrmaLoadKeyBtn.textContent = "⏳ Importing…";
+        try {
+            await onImportVrma(_currentVrmaBuffer, _currentVrmaName);
+            vrmaLoaded = false;
+            closeModal();
+        } catch (e) {
+            alert("Failed to import VRMA as keyframes: " + e.message);
+            vrmaLoadKeyBtn.textContent = origLabel;
+            vrmaLoadKeyBtn.disabled = false;
+        }
     };
 
     function closeModal() {
