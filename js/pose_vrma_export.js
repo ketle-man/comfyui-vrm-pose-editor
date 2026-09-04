@@ -66,6 +66,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const delBtn = mkBtn("− Delete KF", "#5a3a3a", "");
     const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
     const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上の(選択中トラックの)マーカーをドラッグして移動できます");
+    const deleteModeBtn = mkToggle("🗑 Delete Mode", "ONの間はタイムライン上の(選択中トラックの)マーカーをクリック/ドラッグして削除できます");
 
     const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
     const prevBtn = mkBtn("❮", "#333344", "1フレーム戻る");
@@ -102,7 +103,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     toolbar.append(
         titleEl, trackSelect, addBtn, delBtn, addFromLibBtn,
-        sep(), moveBtn,
+        sep(), moveBtn, deleteModeBtn,
         sep(), gotoStartBtn, prevBtn, frameInput, slashLbl, totalInput, nextBtn,
         sep(), activeCameraSelect,
     );
@@ -190,6 +191,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     let totalFrames = 60;
     let currentFrame = 0;
     let moveMode = false;
+    let deleteMode = false;
+    let _deletingSession = false; // Deleteモード中、mousedown〜mouseupの間クリック/ドラッグで連続削除する
     let poseCounter = 1;
 
     let dpr = window.devicePixelRatio || 1;
@@ -909,9 +912,31 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         updateStatus();
     }
 
+    // Deleteモード: クリックまたはドラッグでなぞった位置の(選択中トラックの)キーフレームを
+    // 連続的に削除する(消しゴムツールと同様のUX)。既存のTRACKS[track].delete()は常に
+    // currentFrameを対象にする実装のため、削除対象フレームへ一時的にcurrentFrameを差し替えて
+    // 呼び出し、直後に元のフレームへ戻す(表示上のシークは行わず、削除処理のためだけの一時退避)。
+    function deleteKeyframeAtClientX(clientX) {
+        const hit = nearestKeyframe(clientX);
+        if (!hit) return;
+        const prevFrame = currentFrame;
+        currentFrame = hit.frame;
+        TRACKS[selectedTrack].delete();
+        currentFrame = prevFrame;
+        // delete()内部のdrawTimeline()は一時退避フレーム(hit.frame)を基準に描画してしまっている
+        // ため、元のフレームへ戻した上で再描画してプレイヘッド位置のズレを解消する
+        seekToFrame(prevFrame, { silent: true });
+        drawTimeline();
+    }
+
     canvas.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        if (moveMode) {
+        if (deleteMode) {
+            _deletingSession = true;
+            deleteKeyframeAtClientX(e.clientX);
+            window.addEventListener("mousemove", onWindowMouseMove);
+            window.addEventListener("mouseup", onWindowMouseUp);
+        } else if (moveMode) {
             const hit = nearestKeyframe(e.clientX);
             if (!hit) return;
             draggingFrame = hit.frame;
@@ -928,7 +953,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     });
 
     function onWindowMouseMove(e) {
-        if (moveMode && draggingFrame !== null) {
+        if (deleteMode && _deletingSession) {
+            deleteKeyframeAtClientX(e.clientX);
+        } else if (moveMode && draggingFrame !== null) {
             const newFrame = frameFromClientX(e.clientX);
             if (newFrame !== draggingFrame) {
                 moveKeyframeFrame(draggingFrame, newFrame);
@@ -942,6 +969,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     }
 
     function onWindowMouseUp() {
+        _deletingSession = false;
         if (draggingFrame !== null) {
             const finalFrame = draggingFrame;
             draggingFrame = null;
@@ -955,8 +983,16 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     moveBtn.onclick = () => {
         moveMode = !moveMode;
+        if (moveMode) { deleteMode = false; deleteModeBtn.style.background = "#333344"; }
         moveBtn.style.background = moveMode ? "#7a4aa0" : "#333344";
-        canvas.style.cursor = moveMode ? "grab" : "pointer";
+        canvas.style.cursor = moveMode ? "grab" : (deleteMode ? "crosshair" : "pointer");
+    };
+
+    deleteModeBtn.onclick = () => {
+        deleteMode = !deleteMode;
+        if (deleteMode) { moveMode = false; moveBtn.style.background = "#333344"; }
+        deleteModeBtn.style.background = deleteMode ? "#8a3a3a" : "#333344";
+        canvas.style.cursor = deleteMode ? "crosshair" : (moveMode ? "grab" : "pointer");
     };
 
     // ----------------------------------------------------------------
