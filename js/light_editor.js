@@ -122,6 +122,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
         resizeObserver?.disconnect();
         editor.clearLightHelpers();
+        editor.clearCameraHelpers();
         window.removeEventListener("lightHelperMoved", onHelperMoved);
         editor._kfPanelState = keyframePanel.getState();
         keyframePanel.destroy();
@@ -397,12 +398,27 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     });
 
     // ================================================================
-    // Pose タブ: 左ペイン (Shape Keys + Pose Library)
+    // Pose タブ: 左ペイン (K: Shape Keys / C: Camera サブタブ)
     // ================================================================
-    const poseLeftPanel = el("div", {
-        style: "width:270px;flex-shrink:0;display:none;flex-direction:column;" +
-               "border-right:1px solid #2a2a4a;background:#161622;",
+    // Lightタブのlight LeftWrap(subTabStrip 32px + subTabContent 238px = 270px)と
+    // 全く同じ構成にすることで、Light⇄Pose切替時のダイアログ横幅ジャンプを起こさない。
+    const poseLeftWrap = el("div", { style: "display:none;flex-shrink:0;" });
+
+    const poseSubTabStrip = el("div", {
+        style: "width:32px;flex-shrink:0;display:flex;flex-direction:column;" +
+               "border-right:1px solid #2a2a4a;background:#12121c;",
     });
+    const poseSubTabK = mkSubTabBtn("K", "Shape Keys");
+    const poseSubTabC = mkSubTabBtn("C", "Camera");
+    poseSubTabStrip.append(poseSubTabK, poseSubTabC);
+
+    const poseSubTabContent = el("div", {
+        style: "width:238px;flex-shrink:0;display:flex;flex-direction:column;" +
+               "border-right:1px solid #2a2a4a;background:#161622;overflow:hidden;",
+    });
+
+    // ---- K: Shape Keys ----
+    const kBody = el("div", { style: "display:flex;flex-direction:column;flex:1;overflow:hidden;" });
     const poseHeader = el("div", {
         style: "display:flex;align-items:center;padding:7px 10px;" +
                "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
@@ -448,7 +464,74 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         });
     }
 
-    poseLeftPanel.append(poseHeader, shapeKeyBody);
+    kBody.append(poseHeader, shapeKeyBody);
+
+    // ---- C: Camera list ----
+    const cBody = el("div", { style: "display:none;flex-direction:column;flex:1;overflow:hidden;" });
+    const cameraListHeader = el("div", {
+        style: "display:flex;align-items:center;padding:7px 10px;" +
+               "border-bottom:1px solid #2a2a4a;flex-shrink:0;",
+    });
+    const cameraAddBtn = mkBtn("＋ Add", "#2a5a8a");
+    cameraAddBtn.style.padding = "3px 9px";
+    cameraListHeader.append(
+        el("span", { style: "font-size:12px;font-weight:bold;color:#aaa;flex:1;" }, "Cameras"),
+        cameraAddBtn
+    );
+    const cameraListContent = el("div", { style: "flex:1;overflow-y:auto;padding:4px;" });
+    cBody.append(cameraListHeader, cameraListContent);
+
+    let selectedCameraId = editor.getActiveCameraId();
+
+    function refreshCameraList() {
+        cameraListContent.innerHTML = "";
+        const cams = editor.getCameras();
+        cams.forEach(cam => {
+            const isSel = selectedCameraId === cam.id;
+            const item = el("div", {
+                style: "display:flex;align-items:center;gap:5px;padding:6px 8px;" +
+                       "border-radius:5px;cursor:pointer;margin-bottom:2px;" +
+                       `background:${isSel ? "#222d45" : "#1c1c2c"};` +
+                       `border:1px solid ${isSel ? "#4a6aaa" : "transparent"};`,
+            });
+            const icon = cam.isActive ? "🎥" : "📷";
+            const colorDot = el("span", {
+                style: `width:9px;height:9px;border-radius:50%;flex-shrink:0;background:${cam.color};`,
+            });
+            const children = [
+                colorDot,
+                el("span", {
+                    style: "flex:1;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+                }, `${icon} ${cam.name}${cam.isDefault ? " (Default)" : ""}`),
+            ];
+            if (!cam.isDefault) {
+                children.push(mkDel(() => {
+                    editor.removeCamera(cam.id);
+                    if (selectedCameraId === cam.id) selectedCameraId = editor.getActiveCameraId();
+                    refreshCameraList(); syncPosePropPanel();
+                    keyframePanel.refreshCameraSelect?.();
+                }));
+            }
+            item.append(...children);
+            item.addEventListener("click", () => {
+                selectedCameraId = cam.id;
+                editor.setActiveCameraId(cam.id);
+                refreshCameraList(); syncPosePropPanel();
+                keyframePanel.refreshCameraSelect?.();
+            });
+            cameraListContent.appendChild(item);
+        });
+    }
+    cameraAddBtn.addEventListener("click", () => {
+        const cfg = editor.addCamera({ name: `Camera ${editor.getCameras().length}` });
+        selectedCameraId = cfg.id;
+        editor.setActiveCameraId(cfg.id);
+        refreshCameraList(); syncPosePropPanel();
+        keyframePanel.refreshCameraSelect?.();
+    });
+
+    poseSubTabContent.append(kBody, cBody);
+    poseLeftWrap.append(poseSubTabStrip, poseSubTabContent);
 
     // ---- Col: Preview (actual WebGL canvas embedded, shared across both main tabs) ----
     const previewPanel = el("div", {
@@ -511,18 +594,37 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     syncPoseCamModeBtn();
     poseCamModeBtn.onclick = () => { editor.switchCamera(!editor.getIsOrtho()); syncPoseCamModeBtn(); };
 
-    const poseLookAtBtn = mkBtn("👁 OFF", "#444");
-    function syncPoseLookAtBtn() {
-        const on = editor.getLookAtEnabled();
-        poseLookAtBtn.textContent = on ? "👁 ON" : "👁 OFF";
-        poseLookAtBtn.style.background = on ? "#1a9a9a" : "#444";
-        poseLookAtBtn.title = `LookAt Target: ${on ? "ON (drag the cyan marker)" : "OFF"}`;
-    }
-    syncPoseLookAtBtn();
-    poseLookAtBtn.onclick = () => { editor.toggleLookAt(); syncPoseLookAtBtn(); };
+    // Look at Target ON/OFFボタンはここには置かず、キーフレームパネル下部(Mirrorボタン左隣)に
+    // 常設する(VRMモデルの視線誘導というグローバル機能であり、カメラ固有の設定ではないため)。
 
     const [poseFovSl, poseFovVl]   = mkSl(10, 120, 1, editor.getFov(), v => editor.setFov(v));
     const [poseNearSl, poseNearVl] = mkSl(0.01, 5, 0.01, editor.getNear(), v => editor.setNear(v));
+
+    // 選択中カメラの名前表示/編集
+    const cameraNameIn = mkText(editor.getCameras().find(c => c.isActive)?.name ?? "");
+    cameraNameIn.addEventListener("change", () => {
+        editor.renameCamera(selectedCameraId, cameraNameIn.value);
+        refreshCameraList();
+        keyframePanel.refreshCameraSelect?.();
+    });
+
+    // カメラごとの色(キーフレームタイムラインのCam Switchトラックでキーの色として使われる)
+    const cameraColorPick = el("input", { type: "color",
+        value: editor.getCameras().find(c => c.isActive)?.color ?? "#66ddff",
+        style: "width:34px;height:24px;border:none;cursor:pointer;background:none;padding:0;flex-shrink:0;" });
+    const cameraColorHexIn = mkText(cameraColorPick.value, "68px");
+    function applyCameraColor(hex) {
+        editor.setCameraColor(selectedCameraId, hex);
+        refreshCameraList();
+        keyframePanel.refreshCameraSelect?.();
+        keyframePanel.refreshTimeline?.();
+    }
+    cameraColorPick.addEventListener("input", () => { cameraColorHexIn.value = cameraColorPick.value; applyCameraColor(cameraColorPick.value); });
+    cameraColorHexIn.addEventListener("change", () => {
+        if (/^#[0-9a-f]{6}$/i.test(cameraColorHexIn.value)) { cameraColorPick.value = cameraColorHexIn.value; applyCameraColor(cameraColorHexIn.value); }
+    });
+    const cameraColorRow = el("div", { style: "display:flex;align-items:center;gap:5px;flex:1;" });
+    cameraColorRow.append(cameraColorPick, cameraColorHexIn);
 
     // ---- Poseタブ Properties: モデル/ポーズデータ (VRM / VRMA / download / Save / Load from JSON) ----
     // VRM/VRMAロードはノード側のキャッシュ・サムネイル用バッファ・ノードサイズ再計算等の副作用があるため、
@@ -635,22 +737,37 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         poseJsonInput.value = "";
     });
 
-    posePropBody.append(
+    // Cameraサブタブ選択時のみ表示するセクション(要件: Cameraサブタブ選択時は右ペインに
+    // カメラごとの設定のみ表示、Shape Keysサブタブ選択時はModel/Pose Dataのみ表示)
+    const posePropCameraSection = el("div", {});
+    posePropCameraSection.append(
         sectionTitle("Camera"),
-        fieldRow("", row2(poseCamModeBtn, poseLookAtBtn)),
+        fieldRow("Name:", cameraNameIn),
+        fieldRow("Color:", cameraColorRow),
+        fieldRow("", poseCamModeBtn),
         sliderRow("FOV:", poseFovSl, poseFovVl),
         sliderRow("Near:", poseNearSl, poseNearVl),
+    );
+    const posePropModelSection = el("div", {});
+    posePropModelSection.append(
         sectionTitle("Model / Pose Data"),
         fieldRow("", row2(poseVrmBtn, poseVrmaBtn, poseVrmaEjectBtn, poseVrmaKeyBtn)),
         fieldRow("", row2(poseDownloadBtn, poseSaveBtn)),
         fieldRow("", poseLoadJsonBtn),
     );
+    posePropBody.append(posePropCameraSection, posePropModelSection);
 
     // Poseタブへ切り替える度に呼び出し、ノード側ボタン操作(モーダルを開いたまま裏でノードの
-    // OT/PR・LookAt・FOV・Nearを直接操作するケースがあり得る)による状態変化をこちらへ反映する
+    // OT/PR・FOV・Nearを直接操作するケースがあり得る)による状態変化をこちらへ反映する
     function syncPosePropPanel() {
         syncPoseCamModeBtn();
-        syncPoseLookAtBtn();
+        keyframePanel.syncLookAtBtn?.();
+        const activeCam = editor.getCameras().find(c => c.isActive);
+        if (activeCam) {
+            cameraNameIn.value = activeCam.name;
+            cameraColorPick.value = activeCam.color;
+            cameraColorHexIn.value = activeCam.color;
+        }
         const fovNow = editor.getFov();
         poseFovSl.value = String(fovNow);
         poseFovVl.value = fovNow.toFixed(1);
@@ -663,7 +780,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
     libPanel.style.display = "none";
 
-    body.append(lightLeftWrap, poseLeftPanel, previewPanel, propPanel, posePropPanel, libPanel);
+    body.append(lightLeftWrap, poseLeftWrap, previewPanel, propPanel, posePropPanel, libPanel);
     dialog.append(header, body, keyframePanel.el);
     overlay.appendChild(dialog);
 
@@ -709,10 +826,30 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     subTabE.onclick = () => { activeSubTab = "E"; applySubTab(); };
     subTabS.onclick = () => { activeSubTab = "S"; applySubTab(); };
 
+    // ---- Poseタブ 左ペイン サブタブ (K: Shape Keys / C: Camera) ----
+    let poseActiveSubTab = "K"; // "K" | "C"
+    function applyPoseSubTab() {
+        kBody.style.display = poseActiveSubTab === "K" ? "flex" : "none";
+        cBody.style.display = poseActiveSubTab === "C" ? "flex" : "none";
+        setSubTabActive(poseSubTabK, poseActiveSubTab === "K");
+        setSubTabActive(poseSubTabC, poseActiveSubTab === "C");
+        // 要件: Cameraサブタブ選択時は右ペインにカメラ設定のみ、Shape Keys選択時はModel/Pose Dataのみ
+        posePropCameraSection.style.display = poseActiveSubTab === "C" ? "" : "none";
+        posePropModelSection.style.display  = poseActiveSubTab === "K" ? "" : "none";
+        if (poseActiveSubTab === "C") {
+            refreshCameraList();
+            editor.showCameraHelpers();
+        } else {
+            editor.clearCameraHelpers();
+        }
+    }
+    poseSubTabK.onclick = () => { poseActiveSubTab = "K"; applyPoseSubTab(); };
+    poseSubTabC.onclick = () => { poseActiveSubTab = "C"; applyPoseSubTab(); };
+
     function applyMainTab() {
         const isLight = activeMainTab === "light";
         lightLeftWrap.style.display = isLight ? "flex" : "none";
-        poseLeftPanel.style.display = isLight ? "none" : "flex";
+        poseLeftWrap.style.display = isLight ? "none" : "flex";
         posePropPanel.style.display = isLight ? "none" : "flex";
         if (!isLight && libPanel.style.display !== "none") {
             libPanel.style.display = "none";
@@ -725,9 +862,12 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         propPanel.style.display = (isLight && activeSubTab === "L") ? "flex" : "none";
         setMainTabActive(lightTabBtn, isLight);
         setMainTabActive(poseTabBtn, !isLight);
-        if (!isLight) {
+        if (isLight) {
+            editor.clearCameraHelpers();
+        } else {
             rebuildShapeKeySliders();
             syncPosePropPanel();
+            applyPoseSubTab();
         }
     }
     lightTabBtn.onclick = () => { activeMainTab = "light"; applyMainTab(); };

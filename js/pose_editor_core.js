@@ -739,8 +739,12 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         if (!_altRightDrag) return;
         const dx = e.clientX - _altRightDragLastX;
         _altRightDragLastX = e.clientX;
-        const forward = new THREE.Vector3().subVectors(orbit.target, perspCamera.position).normalize();
-        perspCamera.up.applyAxisAngle(forward, dx * 0.005);
+        // isOrtho中はcamera===orthoCameraのため、常にcamera(現在表示中の実体)を基準に回転させる。
+        // perspCameraはロール後のupをここで同期しておかないと、複数カメラ機能のconfig保存
+        // (常にperspCameraを正として読む)がOrtho中のロール操作を反映できなくなる。
+        const forward = new THREE.Vector3().subVectors(orbit.target, camera.position).normalize();
+        camera.up.applyAxisAngle(forward, dx * 0.005);
+        if (isOrtho) perspCamera.up.copy(orthoCamera.up);
         orbit.update();
     }, true);
 
@@ -752,6 +756,146 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     }
     window.addEventListener("pointerup", _endAltRightDrag);
     window.addEventListener("blur", _endAltRightDrag);
+
+    // ================================================================
+    // Managed camera system
+    // ================================================================
+    // managedLights(複数ライト管理)と同じ「configの配列+ID管理」パターンだが、カメラは常に
+    // 1台だけがOrbitControls・レンダリングに使われる実体(perspCamera/orthoCamera/camera/orbit)を
+    // 占有する性質があるため、全カメラが常時Three.js実体を持つ方式ではなく、非アクティブな
+    // カメラは position/quaternion/up/target/fov/near/isOrtho の config スナップショットとして
+    // のみ保持する。アクティブ切替のたびに「現在のライブ値→config退避」「新カメラのconfig→
+    // ライブ変数へロード」を行う。orbit.target を読むため、orbit構築後に定義する必要がある。
+    let nextCameraId = 0;
+    let activeCameraId = null;
+    let _cameraHelpersShown = false;
+    const managedCameras = []; // { id, name, isDefault, color, config, helperMesh }
+    // カメラ追加時に自動割り当てする既定色(キーフレームタイムラインでカメラごとに見分けるため)
+    const CAMERA_COLOR_PALETTE = ["#66ddff", "#ff66aa", "#ffcc55", "#8affc1", "#c68cff", "#ff9955"];
+
+    function _captureLiveCameraConfig() {
+        return {
+            position:   { x: perspCamera.position.x, y: perspCamera.position.y, z: perspCamera.position.z },
+            quaternion: { x: perspCamera.quaternion.x, y: perspCamera.quaternion.y, z: perspCamera.quaternion.z, w: perspCamera.quaternion.w },
+            up:         { x: perspCamera.up.x, y: perspCamera.up.y, z: perspCamera.up.z },
+            target:     { x: orbit.target.x, y: orbit.target.y, z: orbit.target.z },
+            fov: perspCamera.fov,
+            near: perspCamera.near,
+            isOrtho,
+        };
+    }
+
+    // setCameraState()(キーフレーム補間用、既存・無改修)と似ているが、isOrtho/nearも含めて
+    // configを丸ごとライブ実体へロードする、カメラ切替専用の内部関数
+    function _applyCameraConfigToLive(cfg) {
+        if (!cfg) return;
+        if (cfg.position)   perspCamera.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+        if (cfg.quaternion) perspCamera.quaternion.set(cfg.quaternion.x, cfg.quaternion.y, cfg.quaternion.z, cfg.quaternion.w);
+        if (cfg.up)         perspCamera.up.set(cfg.up.x, cfg.up.y, cfg.up.z);
+        if (cfg.target)     orbit.target.set(cfg.target.x, cfg.target.y, cfg.target.z);
+        if (typeof cfg.fov === "number") {
+            perspCamera.fov = Math.min(170, Math.max(1, cfg.fov));
+            perspCamera.updateProjectionMatrix();
+        }
+        if (typeof cfg.near === "number") setNear(cfg.near);
+        isOrtho = !!cfg.isOrtho;
+        if (isOrtho) {
+            const dist = perspCamera.position.distanceTo(orbit.target);
+            const halfH = dist * Math.tan((perspCamera.fov / 2) * Math.PI / 180);
+            orthoCamera.left = -halfH; orthoCamera.right = halfH; orthoCamera.top = halfH; orthoCamera.bottom = -halfH;
+            orthoCamera.updateProjectionMatrix();
+            orthoCamera.position.copy(perspCamera.position);
+            orthoCamera.quaternion.copy(perspCamera.quaternion);
+            orthoCamera.up.copy(perspCamera.up);
+            camera = orthoCamera;
+        } else {
+            camera = perspCamera;
+        }
+        orbit.object = camera;
+        orbit.update();
+    }
+
+    // カメラを示す簡易ジオメトリ(前方(-Z)を向いた箱+コーン)。ドラッグ操作の対象には含めない
+    // (要件上、非アクティブカメラは選択→アクティブ化してOrbit操作する設計のため)
+    function _createCameraHelperMesh(id, cfg, color) {
+        const group = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color), depthTest: false });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.16), mat);
+        const lens = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.12, 12), mat);
+        lens.rotation.x = Math.PI / 2;
+        lens.position.z = -0.14;
+        group.add(body, lens);
+        group.renderOrder = 100;
+        group.userData.isCameraHelper = true;
+        group.userData.cameraId = id;
+        group.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
+        group.quaternion.set(cfg.quaternion.x, cfg.quaternion.y, cfg.quaternion.z, cfg.quaternion.w);
+        group.visible = false; // モーダルが開いてshowCameraHelpers()が呼ばれるまで非表示
+        return group;
+    }
+
+    function _addManagedCamera(config) {
+        const id = nextCameraId++;
+        const cfg = config.config ?? _captureLiveCameraConfig();
+        const color = config.color ?? CAMERA_COLOR_PALETTE[id % CAMERA_COLOR_PALETTE.length];
+        const entry = {
+            id,
+            name: config.name ?? `Camera ${id + 1}`,
+            isDefault: !!config.isDefault,
+            color,
+            config: cfg,
+        };
+        entry.helperMesh = _createCameraHelperMesh(id, cfg, color);
+        scene.add(entry.helperMesh);
+        managedCameras.push(entry);
+        return entry;
+    }
+
+    function _removeManagedCamera(id) {
+        const entry = managedCameras.find(c => c.id === id);
+        if (!entry || entry.isDefault) return; // デフォルトカメラは削除不可
+        managedCameras.splice(managedCameras.indexOf(entry), 1);
+        if (entry.helperMesh) {
+            scene.remove(entry.helperMesh);
+            entry.helperMesh.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+        }
+        if (activeCameraId === id) {
+            const fallback = managedCameras.find(c => c.isDefault) ?? managedCameras[0];
+            activeCameraId = null; // _setActiveCameraの早期returnガード(id===activeCameraId)を回避
+            _setActiveCamera(fallback?.id);
+        }
+    }
+
+    function _updateCameraHelperTransforms() {
+        managedCameras.forEach(c => {
+            if (!c.helperMesh || c.id === activeCameraId) return;
+            c.helperMesh.position.set(c.config.position.x, c.config.position.y, c.config.position.z);
+            c.helperMesh.quaternion.set(c.config.quaternion.x, c.config.quaternion.y, c.config.quaternion.z, c.config.quaternion.w);
+        });
+    }
+
+    function _updateCameraHelperVisibility() {
+        managedCameras.forEach(c => {
+            if (c.helperMesh) c.helperMesh.visible = _cameraHelpersShown && c.id !== activeCameraId;
+        });
+    }
+
+    function _setActiveCamera(id) {
+        if (id === undefined || id === null || id === activeCameraId) return;
+        const prev = managedCameras.find(c => c.id === activeCameraId);
+        if (prev) prev.config = _captureLiveCameraConfig();
+        const next = managedCameras.find(c => c.id === id);
+        if (!next) return;
+        _applyCameraConfigToLive(next.config);
+        activeCameraId = id;
+        _updateCameraHelperTransforms();
+        _updateCameraHelperVisibility();
+    }
+
+    // デフォルトカメラ登録(managedLightsのデフォルト登録と同じ位置づけ。orbit構築後でないと
+    // _captureLiveCameraConfig()がorbit.targetを読めないため、この位置で行う)
+    activeCameraId = _addManagedCamera({ name: "Default Camera", isDefault: true, config: _captureLiveCameraConfig() }).id;
+    _updateCameraHelperVisibility();
 
     // ---- Node2.0時のみイベント制御 ----
     if (isModern) {
@@ -1339,6 +1483,17 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
         }
         orbit.update();
+
+        // カメラヘルパーは画面上で常に一定サイズに見えるよう、現在のアクティブカメラからの
+        // 距離に応じてスケールする(そうしないと、追加直後のカメラ=現在の視点のすぐ近くに
+        // 非アクティブになった元のカメラのヘルパーが残り、至近距離のため異常に巨大に見えてしまう)
+        managedCameras.forEach(c => {
+            if (c.helperMesh && c.helperMesh.visible) {
+                const dist = camera.position.distanceTo(c.helperMesh.position);
+                c.helperMesh.scale.setScalar(Math.max(0.05, dist * 0.06));
+            }
+        });
+
         renderer.render(scene, camera);
 
         const camDir = new THREE.Vector3();
@@ -1407,6 +1562,8 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         interactableBones.forEach(h => h.visible = false);
         const helperVisState = managedLights.map(l => l.helperMesh ? l.helperMesh.visible : false);
         managedLights.forEach(l => { if (l.helperMesh) l.helperMesh.visible = false; });
+        const cameraHelperVisState = managedCameras.map(c => c.helperMesh ? c.helperMesh.visible : false);
+        managedCameras.forEach(c => { if (c.helperMesh) c.helperMesh.visible = false; });
         const lookAtHelperVisBefore = lookAtHelperMesh.visible;
         lookAtHelperMesh.visible = false;
         const windSourceHelperVisBefore = windSourceHelperMesh.visible;
@@ -1418,6 +1575,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         return () => {
             interactableBones.forEach(h => h.visible = true);
             managedLights.forEach((l, i) => { if (l.helperMesh) l.helperMesh.visible = helperVisState[i]; });
+            managedCameras.forEach((c, i) => { if (c.helperMesh) c.helperMesh.visible = cameraHelperVisState[i]; });
             lookAtHelperMesh.visible = lookAtHelperVisBefore;
             windSourceHelperMesh.visible = windSourceHelperVisBefore;
         };
@@ -1510,6 +1668,35 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             });
             _selectedHelperMesh = null;
         },
+
+        // ---- Camera management API (used by light_editor.js / pose_vrma_export.js) ----
+        getCameras() {
+            return managedCameras.map(c => ({ id: c.id, name: c.name, isDefault: c.isDefault, color: c.color, isActive: c.id === activeCameraId }));
+        },
+        getActiveCameraId()   { return activeCameraId; },
+        setActiveCameraId(id) { _setActiveCamera(id); },
+        addCamera(config) {
+            const entry = _addManagedCamera(config ?? {});
+            return { id: entry.id, name: entry.name, isDefault: entry.isDefault, color: entry.color };
+        },
+        removeCamera(id) { _removeManagedCamera(id); },
+        renameCamera(id, name) {
+            const c = managedCameras.find(x => x.id === id);
+            if (c && name) c.name = name;
+        },
+        // キーフレームタイムラインでカメラごとにキーの色を見分けられるようにするための設定API
+        setCameraColor(id, color) {
+            const c = managedCameras.find(x => x.id === id);
+            if (!c || !color) return;
+            c.color = color;
+            if (c.helperMesh) {
+                c.helperMesh.traverse(o => { if (o.material) o.material.color.set(color); });
+            }
+        },
+        // カメラヘルパー(非アクティブカメラの位置を示すアイコン)の表示切替。エディタが
+        // 開いている間だけ表示する(ライトのselectLightHelper/clearLightHelpersと同じ設計)
+        showCameraHelpers() { _cameraHelpersShown = true;  _updateCameraHelperVisibility(); },
+        clearCameraHelpers(){ _cameraHelpersShown = false; _updateCameraHelperVisibility(); },
 
         // ---- Canvas (for preview mirror) ----
         getCanvas() { return canvas; },

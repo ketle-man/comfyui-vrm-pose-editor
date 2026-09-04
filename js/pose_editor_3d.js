@@ -586,8 +586,8 @@ app.registerExtension({
                 cpSlider.value = String(ps);
                 cpValLabel.textContent = ps.toFixed(1);
 
-                // Light & Pose Editor(PoseタブのProperties)にも複製したカメラ/LookAt/FOV/Nearコントロール
-                // で値が変わった可能性があるため、ノード側の表示も再同期する
+                // Light & Pose Editor(PoseタブのProperties・キーフレームパネル)にも複製した
+                // カメラ/LookAt/FOV/Nearコントロールで値が変わった可能性があるため、ノード側の表示も再同期する
                 const orthoOn = editor.getIsOrtho();
                 camModeBtn.dataset.mode     = orthoOn ? "ortho" : "persp";
                 camModeBtn.textContent      = orthoOn ? "PR" : "OT";
