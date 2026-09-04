@@ -175,9 +175,11 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     };
     const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
     const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
+    // downloadBtn(Save .vrma)/webmBtn/gifBtnはPoseタブ Kサブタブ Properties(Model/Pose Data・
+    // Outputセクション)へ移設したため、ここには配置しない(呼び出し元がbtnそのものをDOM移動する)
     previewPanel.append(
         fpsLbl, fpsInput, newBtn, projBtn, rpBtn, rcBtn, statusMsg, lookAtBtn, mirrorBtn,
-        playBtn, downloadBtn, captureBtn, webmBtn, gifBtn,
+        playBtn, captureBtn,
     );
 
     panel.append(toolbar, libView, projView, timelineWrap, previewPanel);
@@ -1501,7 +1503,14 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         resizeObserver.observe(canvas);
     });
 
-    return { el: panel, destroy, getState, importVrmaAsKeyframes, refreshCameraSelect, syncLookAtBtn, refreshTimeline: drawTimeline };
+    return {
+        el: panel, destroy, getState, importVrmaAsKeyframes, refreshCameraSelect, syncLookAtBtn,
+        refreshTimeline: drawTimeline,
+        // Poseタブ Kサブタブ Properties(Model/Pose Data・Outputセクション)へ配置するためのボタン。
+        // ロジック(editor/keyframes/fps等のクロージャ変数への依存)はこのファイル内に残したまま、
+        // DOM要素そのものを呼び出し元がappendChildで移動する
+        downloadBtn, webmBtn, gifBtn,
+    };
 }
 
 // ----------------------------------------------------------------

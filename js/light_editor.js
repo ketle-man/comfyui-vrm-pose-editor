@@ -754,6 +754,11 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         fieldRow("", row2(poseVrmBtn, poseVrmaBtn, poseVrmaEjectBtn, poseVrmaKeyBtn)),
         fieldRow("", row2(poseDownloadBtn, poseSaveBtn)),
         fieldRow("", poseLoadJsonBtn),
+        // 下部のキーフレームパネルはボタンが増えて手狭になったため、Save .vrma/WebM/GIFの3つを
+        // こちらへ移設した(ロジックはpose_vrma_export.js内に残したまま、ボタンのDOM要素だけを移動)
+        fieldRow("", keyframePanel.downloadBtn),
+        sectionTitle("Output"),
+        fieldRow("", row2(keyframePanel.webmBtn, keyframePanel.gifBtn)),
     );
     posePropBody.append(posePropCameraSection, posePropModelSection);
 
