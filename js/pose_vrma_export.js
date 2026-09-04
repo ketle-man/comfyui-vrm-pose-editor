@@ -481,44 +481,46 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // ----------------------------------------------------------------
     // トラック選択(Pose/Camera/Light)と、Add/Delete KFボタンの選択中トラックへのディスパッチ
     // ----------------------------------------------------------------
+    // Add/Deleteボタンのラベルは、trackSelectで既にトラック種別を選んでいるため
+    // トラック名や「KF」を含めず絵文字+記号のみとする(何のトラックかはドロップダウン側で分かる)
     const TRACKS = {
         pose: {
             field: "bones", color: "#ffdd44",
-            addLabel: "✚ Add/Update Pose KF", addColor: "#4a7a4a",
+            addLabel: "✚ Add/Update", addColor: "#4a7a4a",
             addTitle: "現在フレームに、今のポーズ(シェイプキー・Look at Target含む)をキーフレームとして追加/上書き",
-            delLabel: "− Delete Pose KF",
+            delLabel: "− Delete",
             delTitle: "現在フレームのポーズキーフレームを削除",
             capture: () => captureAtCurrentFrame(), delete: () => deleteAtCurrentFrame(),
         },
         camera: {
             field: "camera", color: "#cc66ff",
-            addLabel: "📷 + Cam KF", addColor: "#3a6a8a",
+            addLabel: "📷 +", addColor: "#3a6a8a",
             addTitle: "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き",
-            delLabel: "📷 − Cam KF",
+            delLabel: "📷 −",
             delTitle: "現在フレームのカメラキーフレームを削除",
             capture: () => captureCameraAtCurrentFrame(), delete: () => deleteCameraAtCurrentFrame(),
         },
         cameraSwitch: {
             field: "cameraId", color: "#66ddff",
-            addLabel: "🎬 + Cam Switch", addColor: "#2a6a8a",
+            addLabel: "🎬 +", addColor: "#2a6a8a",
             addTitle: "現在フレームに、今アクティブなカメラへの切替(カット)をキーフレームとして追加/上書き",
-            delLabel: "🎬 − Cam Switch",
+            delLabel: "🎬 −",
             delTitle: "現在フレームのカメラ切替キーフレームを削除",
             capture: () => captureCameraSwitchAtCurrentFrame(), delete: () => deleteCameraSwitchAtCurrentFrame(),
         },
         light: {
             field: "light", color: "#ff9f40",
-            addLabel: "💡 + Light KF", addColor: "#8a6a2a",
+            addLabel: "💡 +", addColor: "#8a6a2a",
             addTitle: "現在フレームに、今のライト設定をキーフレームとして追加/上書き",
-            delLabel: "💡 − Light KF",
+            delLabel: "💡 −",
             delTitle: "現在フレームのライトキーフレームを削除",
             capture: () => captureLightAtCurrentFrame(), delete: () => deleteLightAtCurrentFrame(),
         },
         wind: {
             field: "wind", color: "#33ccff",
-            addLabel: "🌬 + Wind KF", addColor: "#2a6a8a",
+            addLabel: "🌬 +", addColor: "#2a6a8a",
             addTitle: "現在フレームに、今のWind設定をキーフレームとして追加/上書き",
-            delLabel: "🌬 − Wind KF",
+            delLabel: "🌬 −",
             delTitle: "現在フレームのWindキーフレームを削除",
             capture: () => captureWindAtCurrentFrame(), delete: () => deleteWindAtCurrentFrame(),
         },
