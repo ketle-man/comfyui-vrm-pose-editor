@@ -502,18 +502,16 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                 colorDot,
                 el("span", {
                     style: "flex:1;font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
-                }, `${icon} ${cam.name}${cam.isDefault ? " (Default)" : ""}`),
-            ];
-            if (!cam.isDefault) {
-                children.push(mkDel(() => {
+                }, `${icon} ${cam.name}`),
+                mkDel(() => {
                     editor.removeCamera(cam.id);
                     if (selectedCameraId === cam.id) selectedCameraId = editor.getActiveCameraId();
                     refreshCameraList(); syncPosePropPanel();
                     // カメラが1台減るとキーフレームパネルのトラック選択肢も減るため両方再構築する
                     keyframePanel.refreshActiveCameraLabel?.();
                     keyframePanel.refreshTracks?.();
-                }));
-            }
+                }),
+            ];
             item.append(...children);
             item.addEventListener("click", () => {
                 selectedCameraId = cam.id;
@@ -526,7 +524,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         });
     }
     cameraAddBtn.addEventListener("click", () => {
-        const cfg = editor.addCamera({ name: `Camera ${editor.getCameras().length}` });
+        // 命名はeditor.addCamera側の既定(nextCameraId由来の連番)に委ねる。削除後の再追加でも
+        // 番号が重複しない(getCameras().length基準だと削除後の再追加で重複し得た)。
+        const cfg = editor.addCamera({});
         selectedCameraId = cfg.id;
         editor.setActiveCameraId(cfg.id);
         refreshCameraList(); syncPosePropPanel();
@@ -792,6 +792,11 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         poseNearSl.value = String(nearNow);
         poseNearVl.value = nearNow.toFixed(2);
     }
+
+    // モニター(第三者自由視点)のON/OFFはキーフレームパネルのトグルボタンから行われ、その際
+    // activeCameraIdが変化する(どのカメラも非アクティブになる/元のカメラへ戻る)。Cサブタブの
+    // カメラ一覧はこちらから能動的に再同期しないと古い🎥表示のまま残ってしまうため、フックする。
+    keyframePanel.setOnCameraStateChanged?.(() => { refreshCameraList(); syncPosePropPanel(); });
 
     // ---- Col: Library panel (光源プリセット、hidden initially、Lightタブ専用) ----
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);

@@ -71,16 +71,41 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const totalInput = mkNumInput(1, 100000, 1, 60);
     const nextBtn = mkBtn("❯", "#333344", "1フレーム進む");
 
+    // ---- モニター(第三者自由視点)トグル(要件: タイムライン上右端) ----
+    // ONの間はタイムラインのカメラ関連キーフレーム(Cam Switch・カメラ位置トラック)の影響を
+    // 受けない自由な視点になる(モニター自体はキーフレームを記録できない)。
+    // light_editor.js側のCサブタブ カメラ一覧はactiveCameraIdの変化を自動検知できないため、
+    // モニターのON/OFFで能動的に再同期してもらうためのフック(setOnCameraStateChangedで登録)。
+    let onCameraStateChanged = null;
+    const monitorBtn = mkToggle("🖥 Monitor",
+        "ONの間はタイムラインのキーの影響を受けない自由な第三者視点でプレビューできます" +
+        "(この間はカメラの位置・切替キーフレームを記録できません)");
+    monitorBtn.onclick = () => {
+        const turningOn = !editor.isMonitorMode?.();
+        editor.setMonitorMode?.(turningOn);
+        if (!turningOn) {
+            // OFFにした直後はタイムラインのCam Switch状態(あれば)に従わせる
+            applyCameraSwitchForFrame(currentFrame);
+            applyAllCameraTracksForFrame(currentFrame);
+        }
+        refreshActiveCameraLabel();
+        onCameraStateChanged?.();
+    };
+
     // ---- アクティブカメラ表示(要件: フレーム数入力・送りボタンの右端) ----
     // 「選択(操作対象の切替)」と「表示(今どれがアクティブか)」が同居して紛らわしいという指摘を受け、
     // クリック不可の表示専用ラベルにした。カメラの選択/アクティブ化はPoseタブCサブタブの一覧でのみ行う。
+    // モニターのON/OFF状態もisMonitorMode()由来で常に同じ判定なので、ボタンの見た目もここで揃えて更新する。
     const activeCameraLabel = el("span", {
         style: "font-size:11px;color:#9ab;padding:4px 8px;white-space:nowrap;",
     });
     function refreshActiveCameraLabel() {
+        const monitorOn = editor.isMonitorMode?.() ?? false;
+        monitorBtn.style.background = monitorOn ? "#3a7a9a" : "#333344";
+        if (monitorOn) { activeCameraLabel.textContent = "🖥 Monitor"; return; }
         const cams = editor.getCameras?.() ?? [];
         const cur = cams.find(c => c.isActive);
-        activeCameraLabel.textContent = cur ? ((cur.isDefault ? "🎥 " : "📷 ") + cur.name) : "";
+        activeCameraLabel.textContent = cur ? ("🎥 " + cur.name) : "";
     }
     refreshActiveCameraLabel();
 
@@ -88,7 +113,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         titleEl, trackSelect, addBtn, delBtn, addFromLibBtn,
         sep(), moveBtn, deleteModeBtn,
         sep(), gotoStartBtn, prevBtn, frameInput, slashLbl, totalInput, nextBtn,
-        sep(), activeCameraLabel,
+        sep(), activeCameraLabel, monitorBtn,
     );
 
     // ---- ライブラリピッカー(サブビュー、通常は非表示) ----
@@ -420,7 +445,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // ----------------------------------------------------------------
     // カメラ切替(カット)キーフレーム — 複数カメラのうち「どれがアクティブか」を離散的に記録・再生する。
     // 既存のcameraトラック(position/target/up/fovの連続値補間)とは別フィールド(cameraId)として
-    // 同一エントリに同居させる。cameraIdはデフォルトカメラの0を取り得るためJSのfalsy判定に注意し、
+    // 同一エントリに同居させる。cameraIdは最初に作成されるカメラの0を取り得るためJSのfalsy判定に注意し、
     // 判定は必ず !== undefined で行うこと(truthyチェックすると id=0 のKFが無視されてしまう)。
     // 位置の線形補間はせず、Look at Target ON/OFFと同じ「区間終端で切り替わる」離散パターンを踏襲する。
     // ----------------------------------------------------------------
@@ -455,6 +480,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // cameraIdをアクティブカメラへ適用する(区間終端で切り替わる離散パターン、線形補間はしない)。
     // カメラ切替KFが1つも無ければ何もしない(手動のカメラ選択操作を妨げない)。
     function applyCameraSwitchForFrame(frame) {
+        if (editor.isMonitorMode?.()) return; // モニター中はタイムラインのカメラ関連適用を一切受け付けない
         const kfs = keyframes.filter(k => k.cameraId !== undefined).sort((a, b) => a.frame - b.frame);
         if (kfs.length === 0) return;
         let before = null;
@@ -605,6 +631,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // 前後から線形補間してそのカメラへ適用する。そのカメラのKFが1つも無ければ何もしない
     // (手動オービットや他カメラの記録を妨げない)。
     function applyCameraTrackForFrame(cameraId, frame) {
+        if (editor.isMonitorMode?.()) return; // モニター中はタイムラインのカメラ関連適用を一切受け付けない
         const track = TRACKS["camera:" + cameraId];
         if (!track) return;
         const camKfs = keyframes.filter(k => track.hasData(k)).sort((a, b) => a.frame - b.frame);
@@ -1332,14 +1359,13 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     // 旧形式(kf.camera、カメラ非依存の単一フィールド)を新形式(kf.cameras[cameraId])へ変換する。
     // .kf_projects/やeditor._kfPanelStateに保存された、複数カメラ対応より前のタイムラインを
-    // 読み込んだ場合の後方互換対応。記録時点ではカメラは1台(デフォルトカメラ)だったはずなので、
+    // 読み込んだ場合の後方互換対応。記録時点ではカメラは1台(id=0)だったはずなので、
     // そのデータとして読み替える。
     function migrateLegacyCameraField(kfs) {
-        const defaultCam = (editor.getCameras?.() ?? []).find(c => c.isDefault);
-        if (!defaultCam) return;
         kfs.forEach(kf => {
             if (kf.camera && !kf.cameras) {
-                kf.cameras = { [defaultCam.id]: kf.camera };
+                // カメラIDは0番から採番されるため、最初に作成されるカメラのトラックとして引き継ぐ
+                kf.cameras = { 0: kf.camera };
                 delete kf.camera;
             }
         });
@@ -1580,6 +1606,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     return {
         el: panel, destroy, getState, importVrmaAsKeyframes, refreshActiveCameraLabel, syncLookAtBtn,
         refreshTimeline: drawTimeline, refreshTracks,
+        // light_editor.js側のCサブタブ カメラ一覧をモニターのON/OFFに合わせて再同期するためのフック
+        setOnCameraStateChanged(fn) { onCameraStateChanged = fn; },
         // Poseタブ Kサブタブ Properties(Model/Pose Data・Outputセクション)へ配置するためのボタン。
         // ロジック(editor/keyframes/fps等のクロージャ変数への依存)はこのファイル内に残したまま、
         // DOM要素そのものを呼び出し元がappendChildで移動する

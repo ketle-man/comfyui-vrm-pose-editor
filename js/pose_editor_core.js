@@ -796,7 +796,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     let nextCameraId = 0;
     let activeCameraId = null;
     let _cameraHelpersShown = false;
-    const managedCameras = []; // { id, name, isDefault, color, config, helperMesh }
+    const managedCameras = []; // { id, name, color, config, helperMesh }
     // カメラ追加時に自動割り当てする既定色(キーフレームタイムラインでカメラごとに見分けるため)
     const CAMERA_COLOR_PALETTE = ["#66ddff", "#ff66aa", "#ffcc55", "#8affc1", "#c68cff", "#ff9955"];
 
@@ -869,7 +869,6 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         const entry = {
             id,
             name: config.name ?? `Camera ${id + 1}`,
-            isDefault: !!config.isDefault,
             color,
             config: cfg,
         };
@@ -879,18 +878,20 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         return entry;
     }
 
+    // 全カメラ同格(削除不可のカメラは無い)。最後の1台を削除した場合はモニター(null)へフォールバックする。
     function _removeManagedCamera(id) {
         const entry = managedCameras.find(c => c.id === id);
-        if (!entry || entry.isDefault) return; // デフォルトカメラは削除不可
+        if (!entry) return;
         managedCameras.splice(managedCameras.indexOf(entry), 1);
         if (entry.helperMesh) {
             scene.remove(entry.helperMesh);
             entry.helperMesh.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
         }
+        if (_lastActiveBeforeMonitor === id) _lastActiveBeforeMonitor = null;
         if (activeCameraId === id) {
-            const fallback = managedCameras.find(c => c.isDefault) ?? managedCameras[0];
-            activeCameraId = null; // _setActiveCameraの早期returnガード(id===activeCameraId)を回避
-            _setActiveCamera(fallback?.id);
+            const fallback = managedCameras[0] ?? null;
+            activeCameraId = undefined; // _setActiveCameraの早期returnガード(id===activeCameraId)を回避
+            _setActiveCamera(fallback ? fallback.id : null);
         }
     }
 
@@ -902,22 +903,49 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         });
     }
 
+    // モニター(第三者自由視点)中は、Cサブタブを開いているかどうかに関わらず常に全カメラの
+    // ヘルパーを表示する(モニターは「カメラを配置し直しながら自由に見て回る」モードのため)。
     function _updateCameraHelperVisibility() {
+        const show = _cameraHelpersShown || activeCameraId === null;
         managedCameras.forEach(c => {
-            if (c.helperMesh) c.helperMesh.visible = _cameraHelpersShown && c.id !== activeCameraId;
+            if (c.helperMesh) c.helperMesh.visible = show && c.id !== activeCameraId;
         });
     }
 
+    // id===nullは「モニター(第三者自由視点)へ遷移」を意味する特別な値。ライブのカメラ実体は
+    // そのままの位置に留まり、以後どの管理カメラにも属さない(全カメラのヘルパーが表示・
+    // ドラッグ可能になる)。既存のカメラのライブ値はconfigへ退避してから遷移する。
     function _setActiveCamera(id) {
-        if (id === undefined || id === null || id === activeCameraId) return;
+        if (id === undefined || id === activeCameraId) return;
         const prev = managedCameras.find(c => c.id === activeCameraId);
         if (prev) prev.config = _captureLiveCameraConfig();
+        if (id === null) {
+            activeCameraId = null;
+            _updateCameraHelperTransforms();
+            _updateCameraHelperVisibility();
+            return;
+        }
         const next = managedCameras.find(c => c.id === id);
         if (!next) return;
         _applyCameraConfigToLive(next.config);
         activeCameraId = id;
         _updateCameraHelperTransforms();
         _updateCameraHelperVisibility();
+    }
+
+    // モニター(第三者自由視点)のON/OFF。ONにする直前にアクティブだったカメラを覚えておき、
+    // OFFにした際のフォールバック先として使う(呼び出し側がタイムラインのCam Switch状態に
+    // 従わせたい場合は、setMonitorMode(false)の直後に自前でapplyCameraSwitchForFrame等を呼ぶこと)。
+    let _lastActiveBeforeMonitor = null;
+    function _setMonitorMode(on) {
+        if (on) {
+            if (activeCameraId !== null) _lastActiveBeforeMonitor = activeCameraId;
+            _setActiveCamera(null);
+        } else {
+            const fallback = managedCameras.find(c => c.id === _lastActiveBeforeMonitor) ?? managedCameras[0];
+            if (fallback) _setActiveCamera(fallback.id);
+            // カメラが1つも無ければモニターのまま(何もしない)
+        }
     }
 
     // カメラIDを指定してconfigを読み書きする汎用API。アクティブなカメラかどうかに関わらず
@@ -952,9 +980,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         return result;
     }
 
-    // デフォルトカメラ登録(managedLightsのデフォルト登録と同じ位置づけ。orbit構築後でないと
-    // _captureLiveCameraConfig()がorbit.targetを読めないため、この位置で行う)
-    activeCameraId = _addManagedCamera({ name: "Default Camera", isDefault: true, config: _captureLiveCameraConfig() }).id;
+    // 初期カメラ登録(managedLightsのデフォルト登録と同じ位置づけ。orbit構築後でないと
+    // _captureLiveCameraConfig()がorbit.targetを読めないため、この位置で行う)。特別扱い(削除不可)
+    // はせず、他のカメラと同格の1台として登録する(既定命名により"Camera 1"になる)。
+    activeCameraId = _addManagedCamera({ config: _captureLiveCameraConfig() }).id;
     _updateCameraHelperVisibility();
 
     // ---- Node2.0時のみイベント制御 ----
@@ -1731,13 +1760,13 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
         // ---- Camera management API (used by light_editor.js / pose_vrma_export.js) ----
         getCameras() {
-            return managedCameras.map(c => ({ id: c.id, name: c.name, isDefault: c.isDefault, color: c.color, isActive: c.id === activeCameraId }));
+            return managedCameras.map(c => ({ id: c.id, name: c.name, color: c.color, isActive: c.id === activeCameraId }));
         },
         getActiveCameraId()   { return activeCameraId; },
         setActiveCameraId(id) { _setActiveCamera(id); },
         addCamera(config) {
             const entry = _addManagedCamera(config ?? {});
-            return { id: entry.id, name: entry.name, isDefault: entry.isDefault, color: entry.color };
+            return { id: entry.id, name: entry.name, color: entry.color };
         },
         removeCamera(id) { _removeManagedCamera(id); },
         renameCamera(id, name) {
@@ -1757,6 +1786,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         // アクティブ/非アクティブを問わず透過的に扱える(キーフレームのカメラ別トラック記録用)
         getCameraConfig(id)         { return _getCameraConfig(id); },
         updateCameraConfig(id, changes) { _updateCameraConfig(id, changes); },
+        // モニター(第三者自由視点)。ONの間はactiveCameraIdがnullになり、どの管理カメラにも
+        // 属さない自由な視点になる(タイムラインのカメラ関連キーフレームの影響を受けない)。
+        isMonitorMode()      { return activeCameraId === null; },
+        setMonitorMode(on)   { _setMonitorMode(on); },
         // カメラヘルパー(非アクティブカメラの位置を示すアイコン)の表示切替。エディタが
         // 開いている間だけ表示する(ライトのselectLightHelper/clearLightHelpersと同じ設計)
         showCameraHelpers() { _cameraHelpersShown = true;  _updateCameraHelperVisibility(); },
