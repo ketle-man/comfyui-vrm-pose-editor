@@ -509,7 +509,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                     editor.removeCamera(cam.id);
                     if (selectedCameraId === cam.id) selectedCameraId = editor.getActiveCameraId();
                     refreshCameraList(); syncPosePropPanel();
-                    keyframePanel.refreshCameraSelect?.();
+                    // カメラが1台減るとキーフレームパネルのトラック選択肢も減るため両方再構築する
+                    keyframePanel.refreshActiveCameraLabel?.();
+                    keyframePanel.refreshTracks?.();
                 }));
             }
             item.append(...children);
@@ -517,7 +519,8 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                 selectedCameraId = cam.id;
                 editor.setActiveCameraId(cam.id);
                 refreshCameraList(); syncPosePropPanel();
-                keyframePanel.refreshCameraSelect?.();
+                // 選択(アクティブ化)自体はトラック構成を変えないためラベルのみ更新すればよい
+                keyframePanel.refreshActiveCameraLabel?.();
             });
             cameraListContent.appendChild(item);
         });
@@ -527,7 +530,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         selectedCameraId = cfg.id;
         editor.setActiveCameraId(cfg.id);
         refreshCameraList(); syncPosePropPanel();
-        keyframePanel.refreshCameraSelect?.();
+        // カメラが1台増えるとキーフレームパネルのトラック選択肢も増えるため両方再構築する
+        keyframePanel.refreshActiveCameraLabel?.();
+        keyframePanel.refreshTracks?.();
     });
 
     poseSubTabContent.append(kBody, cBody);
@@ -605,10 +610,13 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     cameraNameIn.addEventListener("change", () => {
         editor.renameCamera(selectedCameraId, cameraNameIn.value);
         refreshCameraList();
-        keyframePanel.refreshCameraSelect?.();
+        // トラックのoptionLabelにカメラ名が入っているため両方再構築する
+        keyframePanel.refreshActiveCameraLabel?.();
+        keyframePanel.refreshTracks?.();
     });
 
-    // カメラごとの色(キーフレームタイムラインのCam Switchトラックでキーの色として使われる)
+    // カメラごとの色(キーフレームタイムラインのCam Switchトラック・カメラ別位置トラックで
+    // キーの色として使われる)
     const cameraColorPick = el("input", { type: "color",
         value: editor.getCameras().find(c => c.isActive)?.color ?? "#66ddff",
         style: "width:34px;height:24px;border:none;cursor:pointer;background:none;padding:0;flex-shrink:0;" });
@@ -616,7 +624,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     function applyCameraColor(hex) {
         editor.setCameraColor(selectedCameraId, hex);
         refreshCameraList();
-        keyframePanel.refreshCameraSelect?.();
+        // トラックのcolorが古くならないようrefreshTracksも呼ぶ(refreshTimelineはCam Switchの
+        // マーカー色即時反映用、既存のまま維持)
+        keyframePanel.refreshTracks?.();
         keyframePanel.refreshTimeline?.();
     }
     cameraColorPick.addEventListener("input", () => { cameraColorHexIn.value = cameraColorPick.value; applyCameraColor(cameraColorPick.value); });

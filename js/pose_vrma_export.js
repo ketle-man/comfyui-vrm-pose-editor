@@ -47,19 +47,15 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     });
     const titleEl = el("span", { style: "font-size:11px;font-weight:bold;color:#9aa;margin-right:2px;" }, "🎬 Keyframes");
 
-    // ---- トラック選択(Pose/Camera/Light) ----
+    // ---- トラック選択(Pose/Camera:各カメラ/Cam Switch/Light/Wind) ----
     // 統合タイムラインは選択中トラックのKFだけを表示し、Add/Delete KFボタンも選択中トラック用の
     // 1組に差し替える(以前はトラックごとに専用ボタンが並んでいたが、3トラック化で煩雑になったため統一)。
+    // カメラトラックはカメラの数だけ動的に増減するため、optionはハードコードせずrefreshTracks()で構築する。
     const trackSelect = document.createElement("select");
     trackSelect.style.cssText =
         "background:#222236;color:#ddd;border:1px solid #444;border-radius:4px;" +
         "padding:4px 6px;font-size:11px;font-weight:bold;cursor:pointer;";
     trackSelect.title = "編集するトラックを選択";
-    [["pose", "🕺 Pose"], ["camera", "📷 Camera"], ["cameraSwitch", "🎬 Cam Switch"], ["light", "💡 Light"], ["wind", "🌬 Wind"]].forEach(([v, t]) => {
-        const opt = document.createElement("option");
-        opt.value = v; opt.textContent = t;
-        trackSelect.appendChild(opt);
-    });
     trackSelect.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
 
     const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "");
@@ -75,37 +71,24 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const totalInput = mkNumInput(1, 100000, 1, 60);
     const nextBtn = mkBtn("❯", "#333344", "1フレーム進む");
 
-    // ---- アクティブカメラ手動切替(要件: フレーム数入力・送りボタンの右端) ----
-    // 選択すると即座にアクティブカメラを切り替えるだけで、キーフレーム記録は行わない
-    // (記録は従来通りtrackSelectで"🎬 Cam Switch"を選びaddBtnを押す既存フローに統一)
-    const activeCameraSelect = document.createElement("select");
-    activeCameraSelect.style.cssText =
-        "background:#222236;color:#ddd;border:1px solid #444;border-radius:4px;" +
-        "padding:4px 6px;font-size:11px;cursor:pointer;";
-    activeCameraSelect.title = "アクティブカメラを手動切替";
-    activeCameraSelect.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
-    function refreshCameraSelect() {
-        const cams = editor.getCameras?.() ?? [];
-        const cur = editor.getActiveCameraId?.();
-        activeCameraSelect.innerHTML = "";
-        cams.forEach(c => {
-            const opt = document.createElement("option");
-            opt.value = String(c.id);
-            opt.textContent = (c.isDefault ? "🎥 " : "📷 ") + c.name;
-            activeCameraSelect.appendChild(opt);
-        });
-        activeCameraSelect.value = String(cur);
-    }
-    activeCameraSelect.addEventListener("change", () => {
-        editor.setActiveCameraId?.(Number(activeCameraSelect.value));
+    // ---- アクティブカメラ表示(要件: フレーム数入力・送りボタンの右端) ----
+    // 「選択(操作対象の切替)」と「表示(今どれがアクティブか)」が同居して紛らわしいという指摘を受け、
+    // クリック不可の表示専用ラベルにした。カメラの選択/アクティブ化はPoseタブCサブタブの一覧でのみ行う。
+    const activeCameraLabel = el("span", {
+        style: "font-size:11px;color:#9ab;padding:4px 8px;white-space:nowrap;",
     });
-    refreshCameraSelect();
+    function refreshActiveCameraLabel() {
+        const cams = editor.getCameras?.() ?? [];
+        const cur = cams.find(c => c.isActive);
+        activeCameraLabel.textContent = cur ? ((cur.isDefault ? "🎥 " : "📷 ") + cur.name) : "";
+    }
+    refreshActiveCameraLabel();
 
     toolbar.append(
         titleEl, trackSelect, addBtn, delBtn, addFromLibBtn,
         sep(), moveBtn, deleteModeBtn,
         sep(), gotoStartBtn, prevBtn, frameInput, slashLbl, totalInput, nextBtn,
-        sep(), activeCameraSelect,
+        sep(), activeCameraLabel,
     );
 
     // ---- ライブラリピッカー(サブビュー、通常は非表示) ----
@@ -229,7 +212,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     function updateStatus() {
         const poseCount = keyframes.filter(k => k.bones).length;
-        const camCount  = keyframes.filter(k => k.camera).length;
+        // カメラ位置KFは全カメラ分を合算してカウントする(カメラごとに独立トラックのため)
+        const camCount  = keyframes.reduce((sum, k) => sum + (k.cameras ? Object.keys(k.cameras).length : 0), 0);
         const camSwitchCount = keyframes.filter(k => k.cameraId !== undefined).length;
         const lightCount = keyframes.filter(k => k.light).length;
         const windCount = keyframes.filter(k => k.wind).length;
@@ -245,10 +229,10 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         if (editor.hasVRMA()) {
             editor.seekVRMA(currentFrame / fps);
         }
-        // カット切替(cameraSwitch)でアクティブカメラを先に確定させてから、連続値cameraトラックの
-        // 補間値をそのカメラへ適用する(順序が逆だと古いアクティブカメラに位置を書いてしまう)
+        // カット切替(cameraSwitch)でアクティブカメラを先に確定させてから、カメラごとの位置
+        // トラックの補間値を各カメラへ適用する(順序が逆だと古いアクティブカメラに位置を書いてしまう)
         applyCameraSwitchForFrame(currentFrame);
-        applyCameraForFrame(currentFrame);
+        applyAllCameraTracksForFrame(currentFrame);
         applyShapeKeysForFrame(currentFrame);
         applyLookAtForFrame(currentFrame);
         applyLightForFrame(currentFrame);
@@ -316,41 +300,45 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         delete kf.label;
         delete kf.shapeKeys;
         delete kf.lookAt;
-        if (!kf.camera && !kf.light && !kf.wind && kf.cameraId === undefined) keyframes.splice(idx, 1);
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         schedulePreviewRefresh();
     }
 
     // ----------------------------------------------------------------
-    // カメラキーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)
+    // カメラ位置キーフレーム(プレビュー内シーク/再生専用、.vrma書き出しには含めない)
+    // カメラごとに独立したトラックとして kf.cameras[cameraId] に記録する(以前は kf.camera という
+    // 単一フィールドでカメラ非依存だったが、複数カメラ対応のためカメラIDをキーとするオブジェクトへ変更)。
+    // 記録対象のカメラはアクティブである必要はない — editor.getCameraConfig(id)/updateCameraConfig(id)
+    // がアクティブ/非アクティブを問わず透過的にconfigを読み書きするため、ヘルパードラッグで非アクティブ
+    // カメラの位置を決めてそのまま記録できる。
     // ----------------------------------------------------------------
-    function captureCameraAtCurrentFrame() {
-        const state = editor.getCameraState?.();
+    function captureCameraTrackAtCurrentFrame(cameraId) {
+        const state = editor.getCameraConfig?.(cameraId);
         if (!state) return;
         const existing = keyframes.find(k => k.frame === currentFrame);
-        if (existing) {
-            existing.camera = state;
-        } else {
-            keyframes.push({ frame: currentFrame, camera: state });
-            keyframes.sort((a, b) => a.frame - b.frame);
-        }
+        const kf = existing ?? { frame: currentFrame };
+        kf.cameras = kf.cameras ?? {};
+        kf.cameras[cameraId] = state;
+        if (!existing) { keyframes.push(kf); keyframes.sort((a, b) => a.frame - b.frame); }
         ensureTotalFrames();
         drawTimeline();
         updateStatus();
     }
 
-    function deleteCameraAtCurrentFrame() {
+    function deleteCameraTrackAtCurrentFrame(cameraId) {
         const idx = keyframes.findIndex(k => k.frame === currentFrame);
         if (idx === -1) return;
         const kf = keyframes[idx];
-        if (!kf.camera) return;
-        delete kf.camera;
-        if (!kf.bones && !kf.light && !kf.wind && kf.cameraId === undefined) keyframes.splice(idx, 1);
+        if (!kf.cameras || kf.cameras[cameraId] === undefined) return;
+        delete kf.cameras[cameraId];
+        if (Object.keys(kf.cameras).length === 0) delete kf.cameras;
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         applyCameraSwitchForFrame(currentFrame);
-        applyCameraForFrame(currentFrame);
+        applyCameraTrackForFrame(cameraId, currentFrame);
     }
 
     // ----------------------------------------------------------------
@@ -381,7 +369,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const kf = keyframes[idx];
         if (!kf.light) return;
         delete kf.light;
-        if (!kf.bones && !kf.camera && !kf.wind && kf.cameraId === undefined) keyframes.splice(idx, 1);
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         applyLightForFrame(currentFrame);
@@ -423,7 +411,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const kf = keyframes[idx];
         if (!kf.wind) return;
         delete kf.wind;
-        if (!kf.bones && !kf.camera && !kf.light && kf.cameraId === undefined) keyframes.splice(idx, 1);
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         applyWindForFrame(currentFrame);
@@ -457,7 +445,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const kf = keyframes[idx];
         if (kf.cameraId === undefined) return;
         delete kf.cameraId;
-        if (!kf.bones && !kf.camera && !kf.light && !kf.wind) keyframes.splice(idx, 1);
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
         applyCameraSwitchForFrame(currentFrame);
@@ -474,57 +462,95 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const target = before ?? kfs[0]; // 先頭KFより前のフレームでは先頭KFのカメラを採用
         if (editor.getActiveCameraId?.() !== target.cameraId) {
             editor.setActiveCameraId?.(target.cameraId);
-            refreshCameraSelect(); // 再生中(rAFループ)の毎フレーム呼び出しでDOM再構築しないよう、切替時のみ更新
+            refreshActiveCameraLabel(); // 再生中(rAFループ)の毎フレーム呼び出しでDOM再構築しないよう、切替時のみ更新
         }
     }
 
     // ----------------------------------------------------------------
-    // トラック選択(Pose/Camera/Light)と、Add/Delete KFボタンの選択中トラックへのディスパッチ
+    // トラック選択(Pose/Camera:カメラごと/Cam Switch/Light/Wind)と、Add/Delete KFボタンの
+    // 選択中トラックへのディスパッチ。カメラトラックはカメラの数だけ動的に増減するため、
+    // TRACKSは静的オブジェクトではなくbuildTracks()で毎回組み直す(refreshTracks()参照)。
+    // 各トラックは hasData/getValue/setValue/clearValue という汎用アクセサを持ち、field方式の
+    // 単純フィールド(pose/cameraSwitch/light/wind)とカメラごとのネストしたフィールド
+    // (kf.cameras[cameraId])を同じインターフェースで扱えるようにしている。
     // ----------------------------------------------------------------
+    function fieldAccessors(field) {
+        return {
+            hasData:    kf => kf[field] !== undefined,
+            getValue:   kf => kf[field],
+            setValue:   (kf, v) => { kf[field] = v; },
+            clearValue: kf => { delete kf[field]; },
+        };
+    }
+    function cameraTrackAccessors(cameraId) {
+        return {
+            hasData:    kf => kf.cameras?.[cameraId] !== undefined,
+            getValue:   kf => kf.cameras?.[cameraId],
+            setValue:   (kf, v) => { kf.cameras = kf.cameras ?? {}; kf.cameras[cameraId] = v; },
+            clearValue: kf => {
+                if (!kf.cameras) return;
+                delete kf.cameras[cameraId];
+                if (Object.keys(kf.cameras).length === 0) delete kf.cameras;
+            },
+        };
+    }
+    // どのトラックにもデータを持たないエントリかどうか(frame以外のプロパティが無いか)を、
+    // 動的トラック構成に関わらず正しく判定する。既存の羅列判定(!kf.bones && ...)を置き換える。
+    function isEntryEmpty(kf) {
+        return Object.values(TRACKS).every(t => !t.hasData(kf));
+    }
+
     // Add/Deleteボタンのラベルは、trackSelectで既にトラック種別を選んでいるため
     // トラック名や「KF」を含めず絵文字+記号のみとする(何のトラックかはドロップダウン側で分かる)
-    const TRACKS = {
-        pose: {
-            field: "bones", color: "#ffdd44",
-            addLabel: "✚ Add/Update", addColor: "#4a7a4a",
-            addTitle: "現在フレームに、今のポーズ(シェイプキー・Look at Target含む)をキーフレームとして追加/上書き",
-            delLabel: "− Delete",
-            delTitle: "現在フレームのポーズキーフレームを削除",
-            capture: () => captureAtCurrentFrame(), delete: () => deleteAtCurrentFrame(),
-        },
-        camera: {
-            field: "camera", color: "#cc66ff",
-            addLabel: "📷 +", addColor: "#3a6a8a",
-            addTitle: "現在フレームに、今のカメラ位置をキーフレームとして追加/上書き",
-            delLabel: "📷 −",
-            delTitle: "現在フレームのカメラキーフレームを削除",
-            capture: () => captureCameraAtCurrentFrame(), delete: () => deleteCameraAtCurrentFrame(),
-        },
-        cameraSwitch: {
-            field: "cameraId", color: "#66ddff",
+    function buildTracks() {
+        const tracks = {
+            pose: {
+                ...fieldAccessors("bones"), color: "#ffdd44", optionLabel: "🕺 Pose",
+                addLabel: "✚ Add/Update", addColor: "#4a7a4a",
+                addTitle: "現在フレームに、今のポーズ(シェイプキー・Look at Target含む)をキーフレームとして追加/上書き",
+                delLabel: "− Delete",
+                delTitle: "現在フレームのポーズキーフレームを削除",
+                capture: () => captureAtCurrentFrame(), delete: () => deleteAtCurrentFrame(),
+            },
+        };
+        (editor.getCameras?.() ?? []).forEach(c => {
+            tracks["camera:" + c.id] = {
+                ...cameraTrackAccessors(c.id), isCameraTrack: true, cameraId: c.id, color: c.color,
+                optionLabel: (c.isActive ? "🎥 " : "📷 ") + c.name,
+                addLabel: "📷 +", addColor: "#3a6a8a",
+                addTitle: `現在フレームに${c.name}の位置をキーフレームとして追加/上書き`,
+                delLabel: "📷 −",
+                delTitle: `現在フレームの${c.name}の位置キーフレームを削除`,
+                capture: () => captureCameraTrackAtCurrentFrame(c.id), delete: () => deleteCameraTrackAtCurrentFrame(c.id),
+            };
+        });
+        tracks.cameraSwitch = {
+            ...fieldAccessors("cameraId"), color: "#66ddff", optionLabel: "🎬 Cam Switch",
             addLabel: "🎬 +", addColor: "#2a6a8a",
             addTitle: "現在フレームに、今アクティブなカメラへの切替(カット)をキーフレームとして追加/上書き",
             delLabel: "🎬 −",
             delTitle: "現在フレームのカメラ切替キーフレームを削除",
             capture: () => captureCameraSwitchAtCurrentFrame(), delete: () => deleteCameraSwitchAtCurrentFrame(),
-        },
-        light: {
-            field: "light", color: "#ff9f40",
+        };
+        tracks.light = {
+            ...fieldAccessors("light"), color: "#ff9f40", optionLabel: "💡 Light",
             addLabel: "💡 +", addColor: "#8a6a2a",
             addTitle: "現在フレームに、今のライト設定をキーフレームとして追加/上書き",
             delLabel: "💡 −",
             delTitle: "現在フレームのライトキーフレームを削除",
             capture: () => captureLightAtCurrentFrame(), delete: () => deleteLightAtCurrentFrame(),
-        },
-        wind: {
-            field: "wind", color: "#33ccff",
+        };
+        tracks.wind = {
+            ...fieldAccessors("wind"), color: "#33ccff", optionLabel: "🌬 Wind",
             addLabel: "🌬 +", addColor: "#2a6a8a",
             addTitle: "現在フレームに、今のWind設定をキーフレームとして追加/上書き",
             delLabel: "🌬 −",
             delTitle: "現在フレームのWindキーフレームを削除",
             capture: () => captureWindAtCurrentFrame(), delete: () => deleteWindAtCurrentFrame(),
-        },
-    };
+        };
+        return tracks;
+    }
+    let TRACKS = buildTracks();
     let selectedTrack = "pose";
 
     function applyTrackUI() {
@@ -535,11 +561,27 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         addFromLibBtn.style.display = selectedTrack === "pose" ? "" : "none";
         drawTimeline();
     }
-    trackSelect.value = selectedTrack;
+
+    // カメラの追加/削除/リネーム/色変更のたびにlight_editor.js側から呼ばれ、trackSelectの
+    // 選択肢を最新のカメラ一覧に合わせて組み直す。選択中トラックが削除されたカメラのものだった
+    // 場合はposeトラックへフォールバックする。
+    function refreshTracks() {
+        const prevSelected = selectedTrack;
+        TRACKS = buildTracks();
+        trackSelect.innerHTML = "";
+        Object.entries(TRACKS).forEach(([key, t]) => {
+            const opt = document.createElement("option");
+            opt.value = key; opt.textContent = t.optionLabel;
+            trackSelect.appendChild(opt);
+        });
+        selectedTrack = TRACKS[prevSelected] ? prevSelected : "pose";
+        trackSelect.value = selectedTrack;
+        applyTrackUI();
+    }
     trackSelect.addEventListener("change", () => { selectedTrack = trackSelect.value; applyTrackUI(); });
     addBtn.onclick = () => TRACKS[selectedTrack].capture();
     delBtn.onclick = () => TRACKS[selectedTrack].delete();
-    applyTrackUI();
+    refreshTracks();
 
     function lerp(a, b, t) { return a + (b - a) * t; }
     function lerpVec3(a, b, t) {
@@ -559,10 +601,13 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         };
     }
 
-    // camera を持つエントリだけを対象に、指定フレームの状態を前後から線形補間してカメラへ適用する。
-    // カメラKFが1つも無ければ何もしない(ユーザーの手動オービットを妨げない)。
-    function applyCameraForFrame(frame) {
-        const camKfs = keyframes.filter(k => k.camera).sort((a, b) => a.frame - b.frame);
+    // 指定カメラのトラック(kf.cameras[cameraId])を持つエントリだけを対象に、指定フレームの状態を
+    // 前後から線形補間してそのカメラへ適用する。そのカメラのKFが1つも無ければ何もしない
+    // (手動オービットや他カメラの記録を妨げない)。
+    function applyCameraTrackForFrame(cameraId, frame) {
+        const track = TRACKS["camera:" + cameraId];
+        if (!track) return;
+        const camKfs = keyframes.filter(k => track.hasData(k)).sort((a, b) => a.frame - b.frame);
         if (camKfs.length === 0) return;
         let before = null, after = null;
         for (const k of camKfs) {
@@ -572,12 +617,17 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         let state;
         if (before && after) {
             state = before.frame === after.frame
-                ? before.camera
-                : lerpCameraState(before.camera, after.camera, (frame - before.frame) / (after.frame - before.frame));
+                ? track.getValue(before)
+                : lerpCameraState(track.getValue(before), track.getValue(after), (frame - before.frame) / (after.frame - before.frame));
         } else {
-            state = (before ?? after).camera;
+            state = track.getValue(before ?? after);
         }
-        editor.setCameraState?.(state);
+        editor.updateCameraConfig?.(cameraId, state);
+    }
+
+    // 全カメラ分をまとめて適用する(seekToFrame等、フレーム単位の再適用箇所から呼ぶ)
+    function applyAllCameraTracksForFrame(frame) {
+        (editor.getCameras?.() ?? []).forEach(c => applyCameraTrackForFrame(c.id, frame));
     }
 
     // ----------------------------------------------------------------
@@ -824,14 +874,14 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         ctx.lineTo(cssW - 6, midY);
         ctx.stroke();
 
-        // 選択中トラック(Pose/Camera/Light)のKFだけを表示する
-        const trackField = TRACKS[selectedTrack].field;
-        const trackColor = TRACKS[selectedTrack].color;
+        // 選択中トラック(Pose/Camera:各カメラ/Cam Switch/Light/Wind)のKFだけを表示する
+        const track = TRACKS[selectedTrack];
+        const trackColor = track.color;
         // Cam Switchトラックのみ、どのカメラへの切替かをキーの色で見分けられるようにする
         const cameraColorMap = selectedTrack === "cameraSwitch"
             ? new Map((editor.getCameras?.() ?? []).map(c => [c.id, c.color]))
             : null;
-        keyframes.filter(kf => kf[trackField] !== undefined).forEach(kf => {
+        keyframes.filter(kf => track.hasData(kf)).forEach(kf => {
             const x = xForFrame(kf.frame, cssW);
             const isCurrent = kf.frame === currentFrame;
             const size = isCurrent ? 9 : 7;
@@ -885,9 +935,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     function nearestKeyframe(clientX) {
         const rect = canvas.getBoundingClientRect();
         const usableW = Math.max(1, rect.width - 12);
-        const trackField = TRACKS[selectedTrack].field;
+        const track = TRACKS[selectedTrack];
         let best = null, bestDist = Infinity;
-        keyframes.filter(kf => kf[trackField] !== undefined).forEach(kf => {
+        keyframes.filter(kf => track.hasData(kf)).forEach(kf => {
             const t = totalFrames > 0 ? kf.frame / totalFrames : 0;
             const x = rect.left + 6 + t * usableW;
             const dist = Math.abs(clientX - x);
@@ -898,19 +948,24 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     // 移動先に既存KFがあれば、選択中トラックのフィールドだけを上書きしてマージする(他トラックの
     // データが非表示のまま移動先に残っている場合でも、それを消さないようにするため)。
+    // 以前の実装は移動元エントリ全体を丸ごとコピーしてしまい、選択中トラック以外のデータも
+    // 意図せず移動先へ持って行かれてしまうバグがあった(カメラトラックが複数になり影響が
+    // 拡大するため、このタイミングで選択中トラックの値だけを移動する実装に修正した)。
     function moveKeyframeFrame(fromFrame, toFrame) {
         if (fromFrame === toFrame) return;
         const idx = keyframes.findIndex(k => k.frame === fromFrame);
         if (idx === -1) return;
-        const moved = keyframes[idx];
-        keyframes.splice(idx, 1);
-        const destIdx = keyframes.findIndex(k => k.frame === toFrame);
-        if (destIdx !== -1) {
-            Object.assign(keyframes[destIdx], moved, { frame: toFrame });
-        } else {
-            moved.frame = toFrame;
-            keyframes.push(moved);
-        }
+        const srcKf = keyframes[idx];
+        const track = TRACKS[selectedTrack];
+        if (!track.hasData(srcKf)) return;
+        const val = track.getValue(srcKf);
+        track.clearValue(srcKf);
+        if (isEntryEmpty(srcKf)) keyframes.splice(idx, 1);
+
+        let destKf = keyframes.find(k => k.frame === toFrame);
+        if (!destKf) { destKf = { frame: toFrame }; keyframes.push(destKf); }
+        track.setValue(destKf, val);
+
         keyframes.sort((a, b) => a.frame - b.frame);
         ensureTotalFrames();
         updateStatus();
@@ -1038,7 +1093,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     //   (=最後のポーズKFの時刻)までに制限され、totalFramesまで再生されない問題があった。
     // - PSD-Figure-Creator(feat/keyframe-video)のstartPlayback()と同じ、自前のrAFタイマーで
     //   フレームを進める方式に変更。毎フレームseekToFrame()を呼ぶことで、ポーズKFがあれば
-    //   editor.seekVRMA()・カメラKFがあればapplyCameraForFrame()・シェイプキーKFがあれば
+    //   editor.seekVRMA()・カメラKFがあればapplyAllCameraTracksForFrame()・シェイプキーKFがあれば
     //   applyShapeKeysForFrame()がそれぞれ独立して反映される。0〜totalFramesを再生し、
     //   末尾に達したら先頭へループする。
     // ----------------------------------------------------------------
@@ -1275,10 +1330,26 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return { fps, totalFrames, keyframes: JSON.parse(JSON.stringify(keyframes)) };
     }
 
+    // 旧形式(kf.camera、カメラ非依存の単一フィールド)を新形式(kf.cameras[cameraId])へ変換する。
+    // .kf_projects/やeditor._kfPanelStateに保存された、複数カメラ対応より前のタイムラインを
+    // 読み込んだ場合の後方互換対応。記録時点ではカメラは1台(デフォルトカメラ)だったはずなので、
+    // そのデータとして読み替える。
+    function migrateLegacyCameraField(kfs) {
+        const defaultCam = (editor.getCameras?.() ?? []).find(c => c.isDefault);
+        if (!defaultCam) return;
+        kfs.forEach(kf => {
+            if (kf.camera && !kf.cameras) {
+                kf.cameras = { [defaultCam.id]: kf.camera };
+                delete kf.camera;
+            }
+        });
+    }
+
     function applyProject(data) {
         fps = data.fps ?? 24;
         totalFrames = data.totalFrames ?? 60;
         keyframes = Array.isArray(data.keyframes) ? data.keyframes : [];
+        migrateLegacyCameraField(keyframes);
         keyframes.sort((a, b) => a.frame - b.frame);
         currentFrame = 0;
         fpsInput.value = String(fps);
@@ -1287,7 +1358,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         drawTimeline();
         updateStatus();
         applyCameraSwitchForFrame(0);
-        applyCameraForFrame(0);
+        applyAllCameraTracksForFrame(0);
         applyShapeKeysForFrame(0);
         applyLookAtForFrame(0);
         applyLightForFrame(0);
@@ -1404,6 +1475,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         fps = state.fps ?? fps;
         totalFrames = state.totalFrames ?? totalFrames;
         keyframes = Array.isArray(state.keyframes) ? state.keyframes : keyframes;
+        migrateLegacyCameraField(keyframes);
         keyframes.sort((a, b) => a.frame - b.frame);
         poseCounter = state.poseCounter ?? poseCounter;
         currentFrame = clampFrame(state.currentFrame ?? 0);
@@ -1413,7 +1485,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         drawTimeline();
         updateStatus();
         applyCameraSwitchForFrame(currentFrame);
-        applyCameraForFrame(currentFrame);
+        applyAllCameraTracksForFrame(currentFrame);
         applyShapeKeysForFrame(currentFrame);
         applyLookAtForFrame(currentFrame);
         applyLightForFrame(currentFrame);
@@ -1455,7 +1527,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         for (let i = keyframes.length - 1; i >= 0; i--) {
             const kf = keyframes[i];
             if (kf.bones) { delete kf.bones; delete kf.label; delete kf.shapeKeys; delete kf.lookAt; }
-            if (!kf.bones && !kf.camera && !kf.light && !kf.wind && kf.cameraId === undefined) keyframes.splice(i, 1);
+            if (isEntryEmpty(kf)) keyframes.splice(i, 1);
         }
 
         const duration = editor.getVRMADuration();
@@ -1506,8 +1578,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     });
 
     return {
-        el: panel, destroy, getState, importVrmaAsKeyframes, refreshCameraSelect, syncLookAtBtn,
-        refreshTimeline: drawTimeline,
+        el: panel, destroy, getState, importVrmaAsKeyframes, refreshActiveCameraLabel, syncLookAtBtn,
+        refreshTimeline: drawTimeline, refreshTracks,
         // Poseタブ Kサブタブ Properties(Model/Pose Data・Outputセクション)へ配置するためのボタン。
         // ロジック(editor/keyframes/fps等のクロージャ変数への依存)はこのファイル内に残したまま、
         // DOM要素そのものを呼び出し元がappendChildで移動する

@@ -575,6 +575,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     let _draggingEntry = null;
     let _draggingLookAt = false;
     let _draggingWindSource = false;
+    let _draggingCameraEntry = null; // 非アクティブカメラのヘルパードラッグ対象(managedCamerasの1エントリ)
     const _dragPlane = new THREE.Plane();
     const _dragPt    = new THREE.Vector3();
     let _selectedHelperMesh = null;
@@ -590,6 +591,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         const targets = _getHelperMeshes();
         if (lookAtHelperMesh.visible) targets.push(lookAtHelperMesh);
         if (windSourceHelperMesh.visible) targets.push(windSourceHelperMesh);
+        targets.push(..._getCameraHelperMeshChildren());
         const hits = raycaster.intersectObjects(targets);
         if (hits.length > 0) {
             const hit = hits[0];
@@ -609,6 +611,20 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 _dragPlane.setFromNormalAndCoplanarPoint(camDir, hit.point);
                 orbit.enabled = false;
                 e.stopImmediatePropagation();
+                return;
+            }
+            // カメラヘルパーはThREE.Group(箱+コーン)なので、ヒットは子メッシュに対して発生する。
+            // 親を辿ってuserData.isCameraHelperを判定する。
+            if (hit.object.parent?.userData?.isCameraHelper) {
+                const camEntry = managedCameras.find(c => c.id === hit.object.parent.userData.cameraId);
+                if (camEntry) {
+                    _draggingCameraEntry = camEntry;
+                    const camDir = new THREE.Vector3();
+                    camera.getWorldDirection(camDir);
+                    _dragPlane.setFromNormalAndCoplanarPoint(camDir, hit.point);
+                    orbit.enabled = false;
+                    e.stopImmediatePropagation();
+                }
                 return;
             }
             const entry = managedLights.find(l => l.helperMesh === hit.object);
@@ -641,6 +657,16 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             }
             return;
         }
+        if (_draggingCameraEntry) {
+            updateMouse(e);
+            raycaster.setFromCamera(mouse, camera);
+            if (raycaster.ray.intersectPlane(_dragPlane, _dragPt)) {
+                _updateCameraConfig(_draggingCameraEntry.id, {
+                    position: { x: _dragPt.x, y: _dragPt.y, z: _dragPt.z },
+                });
+            }
+            return;
+        }
         if (!_draggingEntry) return;
         updateMouse(e);
         raycaster.setFromCamera(mouse, camera);
@@ -654,6 +680,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     canvas.addEventListener("pointerup", () => {
         if (_draggingLookAt) { _draggingLookAt = false; orbit.enabled = true; return; }
         if (_draggingWindSource) { _draggingWindSource = false; orbit.enabled = true; return; }
+        if (_draggingCameraEntry) { _draggingCameraEntry = null; orbit.enabled = true; return; }
         if (_draggingEntry) { _draggingEntry = null; orbit.enabled = true; }
     });
 
@@ -815,8 +842,9 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         orbit.update();
     }
 
-    // カメラを示す簡易ジオメトリ(前方(-Z)を向いた箱+コーン)。ドラッグ操作の対象には含めない
-    // (要件上、非アクティブカメラは選択→アクティブ化してOrbit操作する設計のため)
+    // カメラを示す簡易ジオメトリ(前方(-Z)を向いた箱+コーン)。ライトヘルパーと同様に
+    // ドラッグで位置移動できる(586行目付近のpointerdownハンドラでuserData.isCameraHelperを
+    // 判定して処理する)。向きの変更は従来通り選択→アクティブ化してOrbit操作で行う。
     function _createCameraHelperMesh(id, cfg, color) {
         const group = new THREE.Group();
         const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color), depthTest: false });
@@ -890,6 +918,38 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         activeCameraId = id;
         _updateCameraHelperTransforms();
         _updateCameraHelperVisibility();
+    }
+
+    // カメラIDを指定してconfigを読み書きする汎用API。アクティブなカメラかどうかに関わらず
+    // 透過的に扱える(キーフレームのカメラごとのトラック記録・ヘルパードラッグの両方から使う)。
+    function _getCameraConfig(id) {
+        if (id === activeCameraId) return _captureLiveCameraConfig();
+        const entry = managedCameras.find(c => c.id === id);
+        return entry ? { ...entry.config } : null;
+    }
+
+    function _updateCameraConfig(id, changes) {
+        if (id === activeCameraId) {
+            _applyCameraConfigToLive({ ..._captureLiveCameraConfig(), ...changes });
+        } else {
+            const entry = managedCameras.find(c => c.id === id);
+            if (!entry) return;
+            entry.config = { ...entry.config, ...changes };
+            if (entry.helperMesh) {
+                if (changes.position)   entry.helperMesh.position.set(changes.position.x, changes.position.y, changes.position.z);
+                if (changes.quaternion) entry.helperMesh.quaternion.set(changes.quaternion.x, changes.quaternion.y, changes.quaternion.z, changes.quaternion.w);
+            }
+        }
+    }
+
+    // ヘルパードラッグのレイキャスト対象。表示中(showCameraHelpers()呼び出し後)の
+    // 非アクティブカメラのヘルパー(Group)の子メッシュ(箱+コーン)を平坦化して返す。
+    function _getCameraHelperMeshChildren() {
+        const result = [];
+        managedCameras.forEach(c => {
+            if (c.helperMesh && c.helperMesh.visible) result.push(...c.helperMesh.children);
+        });
+        return result;
     }
 
     // デフォルトカメラ登録(managedLightsのデフォルト登録と同じ位置づけ。orbit構築後でないと
@@ -1693,6 +1753,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 c.helperMesh.traverse(o => { if (o.material) o.material.color.set(color); });
             }
         },
+        // カメラIDを指定してconfig(position/quaternion/up/target/fov/near/isOrtho)を読み書きする。
+        // アクティブ/非アクティブを問わず透過的に扱える(キーフレームのカメラ別トラック記録用)
+        getCameraConfig(id)         { return _getCameraConfig(id); },
+        updateCameraConfig(id, changes) { _updateCameraConfig(id, changes); },
         // カメラヘルパー(非アクティブカメラの位置を示すアイコン)の表示切替。エディタが
         // 開いている間だけ表示する(ライトのselectLightHelper/clearLightHelpersと同じ設計)
         showCameraHelpers() { _cameraHelpersShown = true;  _updateCameraHelperVisibility(); },
