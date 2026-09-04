@@ -629,7 +629,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // ---- Poseタブ Properties: モデル/ポーズデータ (VRM / VRMA / download / Save / Load from JSON) ----
     // VRM/VRMAロードはノード側のキャッシュ・サムネイル用バッファ・ノードサイズ再計算等の副作用があるため、
     // nodeActions経由でpose_editor_3d.js側のloadVrmFile/loadVrmaFileをそのまま呼び出す。
-    const poseVrmBtn = mkBtn("VRM", "#7a5a9a");
+    const poseVrmBtn = mkBtn("Load MODEL", "#7a5a9a");
     poseVrmBtn.title = "Load VRM/GLB/GLTF file";
     const poseVrmInput = mkFileInput(".vrm,.glb,.gltf");
     poseVrmBtn.onclick = () => poseVrmInput.click();
@@ -750,8 +750,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     );
     const posePropModelSection = el("div", {});
     posePropModelSection.append(
-        sectionTitle("Model / Pose Data"),
-        fieldRow("", row2(poseVrmBtn, poseVrmaBtn, poseVrmaEjectBtn, poseVrmaKeyBtn)),
+        sectionTitle("Model"),
+        fieldRow("", poseVrmBtn),
+        sectionTitle("Pose Data"),
+        fieldRow("", row2(poseVrmaBtn, poseVrmaEjectBtn, poseVrmaKeyBtn)),
         fieldRow("", row2(poseDownloadBtn, poseSaveBtn)),
         fieldRow("", poseLoadJsonBtn),
         // 下部のキーフレームパネルはボタンが増えて手狭になったため、Save .vrma/WebM/GIFの3つを
