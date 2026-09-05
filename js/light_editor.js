@@ -770,7 +770,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         // こちらへ移設した(ロジックはpose_vrma_export.js内に残したまま、ボタンのDOM要素だけを移動)
         fieldRow("", keyframePanel.downloadBtn),
         sectionTitle("Output"),
-        fieldRow("", row2(keyframePanel.webmBtn, keyframePanel.gifBtn)),
+        fieldRow("", row2(keyframePanel.webmBtn, keyframePanel.mp4Btn, keyframePanel.gifBtn)),
     );
     posePropBody.append(posePropCameraSection, posePropModelSection);
 

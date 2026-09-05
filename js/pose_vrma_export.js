@@ -182,6 +182,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         }, 1500);
     };
     const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
+    const mp4Btn = mkBtn("🎥 MP4", "#3a6a8a", "タイムライン全体をMP4動画としてダウンロード(サーバー側でffmpeg変換、要imageio-ffmpeg)");
     const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
     // downloadBtn(Save .vrma)/webmBtn/gifBtnはPoseタブ Kサブタブ Properties(Model/Pose Data・
     // Outputセクション)へ移設したため、ここには配置しない(呼び出し元がbtnそのものをDOM移動する)
@@ -1281,6 +1282,24 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return new Blob(chunks, { type: "video/webm" });
     }
 
+    // アニメーション全体をMP4動画としてエクスポートする。ブラウザのMediaRecorderはvideo/mp4に
+    // 未対応な環境が多いため、まずexportVideoWebM()でWebMを生成し、サーバー(pose_library_server.py)の
+    // ffmpeg変換エンドポイントへ送ってMP4化する(ComfyUI-VideoHelperSuite等と同じimageio-ffmpeg方式)。
+    async function exportVideoMp4(onProgress) {
+        const webmBlob = await exportVideoWebM(onProgress);
+        onProgress?.("⏳ Converting to MP4...");
+        const res = await fetch(`/pose_library/webm_to_mp4?fps=${fps}`, {
+            method: "POST",
+            headers: { "Content-Type": "video/webm" },
+            body: webmBlob,
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `MP4 conversion failed (HTTP ${res.status})`);
+        }
+        return await res.blob();
+    }
+
     // アニメーション全体を透過GIFとしてエクスポートする(gif_encoder.jsを動的import)。
     async function exportAnimatedGif(onProgress) {
         const { AnimGifEncoder } = await import("./gif_encoder.js");
@@ -1306,11 +1325,11 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return new Blob([bytes], { type: "image/gif" });
     }
 
-    async function runExport(btn, otherBtn, exportFn, filename) {
+    async function runExport(btn, otherBtns, exportFn, filename) {
         stopPlayback();
         const savedFrame = currentFrame;
         const origLabel = btn.textContent;
-        btn.disabled = true; otherBtn.disabled = true;
+        btn.disabled = true; otherBtns.forEach(b => b.disabled = true);
         try {
             const blob = await exportFn(text => { btn.textContent = text; });
             downloadBlob(blob, filename);
@@ -1318,12 +1337,13 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             alert("Export failed: " + e.message);
         } finally {
             btn.textContent = origLabel;
-            btn.disabled = false; otherBtn.disabled = false;
+            btn.disabled = false; otherBtns.forEach(b => b.disabled = false);
             seekToFrame(savedFrame);
         }
     }
-    webmBtn.onclick = () => runExport(webmBtn, gifBtn, exportVideoWebM, "animation.webm");
-    gifBtn.onclick  = () => runExport(gifBtn, webmBtn, exportAnimatedGif, "animation.gif");
+    webmBtn.onclick = () => runExport(webmBtn, [mp4Btn, gifBtn], exportVideoWebM, "animation.webm");
+    mp4Btn.onclick  = () => runExport(mp4Btn, [webmBtn, gifBtn], exportVideoMp4, "animation.mp4");
+    gifBtn.onclick  = () => runExport(gifBtn, [webmBtn, mp4Btn], exportAnimatedGif, "animation.gif");
 
     // ----------------------------------------------------------------
     // Reset Pose / Reset Camera (旧: ノード側ツールバーにあったRP/RCボタンをここへ移設)
@@ -1623,7 +1643,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         // Poseタブ Kサブタブ Properties(Model/Pose Data・Outputセクション)へ配置するためのボタン。
         // ロジック(editor/keyframes/fps等のクロージャ変数への依存)はこのファイル内に残したまま、
         // DOM要素そのものを呼び出し元がappendChildで移動する
-        downloadBtn, webmBtn, gifBtn,
+        downloadBtn, webmBtn, mp4Btn, gifBtn,
     };
 }
 

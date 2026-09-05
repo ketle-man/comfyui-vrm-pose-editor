@@ -12,6 +12,10 @@ import os
 import json
 import hashlib
 import base64
+import shutil
+import asyncio
+import tempfile
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -370,6 +374,94 @@ async def rename_pose(request):
         "new_name": new_path.stem,
         "has_thumb": (_THUMB_DIR / f"{new_fid}.png").exists(),
     })
+
+
+# ----------------------------------------------------------------
+# API: WebM → MP4 変換
+# ブラウザのMediaRecorderはvideo/mp4に未対応な環境が多いため、フロント側でWebMを生成した後
+# ここへ送ってffmpegでH.264 MP4に変換する。ffmpegの探索順はComfyUI-VideoHelperSuiteと同様
+# 「システムPATH → imageio-ffmpeg同梱バイナリ」。
+# ----------------------------------------------------------------
+
+def _find_ffmpeg() -> str | None:
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+        return get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+# StabilityMatrix同梱ffmpeg等、GPLライセンス回避のためlibx264/libx265を無効化してビルドされた
+# バイナリが少なくない(--disable-libx264)。その場合"Unknown encoder 'libx264'"で変換が失敗するため、
+# 実際に使えるH.264エンコーダを`-encoders`出力から検出し、無ければlibopenh264(BSDライセンスの
+# Cisco実装、ffmpeg本体に組み込み済みでほぼ確実に使える)へフォールバックする。
+def _pick_h264_encoder(ffmpeg_path: str) -> str:
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-encoders"], capture_output=True, timeout=10,
+        )
+        out = result.stdout.decode("utf-8", errors="ignore")
+        if "libx264" in out:
+            return "libx264"
+    except Exception:
+        pass
+    return "libopenh264"
+
+
+@server.PromptServer.instance.routes.post("/pose_library/webm_to_mp4")
+async def webm_to_mp4(request):
+    """
+    POST /pose_library/webm_to_mp4?fps=<fps>
+    body: WebM動画のバイナリ(Content-Type: video/webm)をそのまま送る。
+    ffmpegでH.264/yuv420pのMP4(音声トラックなし)に変換して返す。
+
+    WebM生成側(exportVideoWebM)はMediaRecorder.captureStream(0)+手動requestFrame()方式で、
+    フレームは「タイムラインのfps」ではなく「描画+recorderへの受け渡しにかかった実時間」の
+    間隔で記録される(=コンテナ内のタイムスタンプはタイムライン上の意図した速度と一致しない)。
+    そのため出力ではなく入力側に-rを指定し、コンテナのタイムスタンプを無視してフレームを
+    指定fpsで均等に再解釈させることで、意図した再生速度のMP4にする。
+    """
+    ffmpeg_path = _find_ffmpeg()
+    if not ffmpeg_path:
+        return web.json_response(
+            {"error": "ffmpeg not found. Install imageio-ffmpeg or add ffmpeg to PATH."},
+            status=500,
+        )
+
+    try:
+        fps = max(1, int(request.rel_url.query.get("fps", 24)))
+    except ValueError:
+        fps = 24
+
+    webm_bytes = await request.read()
+    if not webm_bytes:
+        return web.json_response({"error": "empty body"}, status=400)
+
+    encoder = await asyncio.to_thread(_pick_h264_encoder, ffmpeg_path)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in.webm"
+        dst = Path(tmp) / "out.mp4"
+        src.write_bytes(webm_bytes)
+
+        cmd = [
+            ffmpeg_path, "-y", "-r", str(fps), "-i", str(src),
+            "-c:v", encoder, "-pix_fmt", "yuv420p", "-b:v", "8M",
+            "-movflags", "+faststart", "-an", str(dst),
+        ]
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+        )
+        if proc.returncode != 0 or not dst.exists():
+            err = proc.stderr.decode("utf-8", errors="ignore")[-2000:]
+            return web.json_response({"error": f"ffmpeg failed: {err}"}, status=500)
+
+        return web.Response(body=dst.read_bytes(), content_type="video/mp4")
 
 
 # ================================================================

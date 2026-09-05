@@ -121,7 +121,7 @@ The right pane (kept at the same width as the Light tab's Properties panel so th
 - **K sub-tab**:
   - **Model** — **Load MODEL**, a duplicate of the node's own model loader.
   - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind)).
-  - **Output** — **🎬 WebM** and **🎞️ GIF**, also moved here from the keyframe panel for the same reason.
+  - **Output** — **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF**, also moved here from the keyframe panel for the same reason.
 - **C sub-tab**: **Camera** properties for whichever camera is selected in the list — Name, Color, an OT/PR toggle, and **FOV**/**Near** sliders. These read/write the shared `editor` state for the currently *active* camera (same as the node's own OT/RC/FOV/Near controls), so either side stays in sync once the modal is closed or you switch tabs/cameras. (The Look at Target toggle used to live here too — it's been moved to the keyframe panel below, since it's a model-wide setting rather than a per-camera one.)
 
 VRM/VRMA loading and unloading are routed through the same `nodeActions` bridge the node uses internally, so the node's own buttons/labels stay in sync too.
@@ -145,7 +145,7 @@ Turning Monitor **OFF** hands control back to a real camera: if the current fram
 
 ### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind)
 
-Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / GIF.
+Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / MP4 / GIF.
 
 The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one **Camera** track *per camera currently in the scene* (labelled with that camera's own icon and name, e.g. "🎥 Camera 1" / "📷 Camera 2" — the list grows/shrinks live as you add, delete, or rename cameras in the [C sub-tab](#camera-management-)), **🎬 Cam Switch**, **💡 Light**, and **🌬 Wind**. Only the selected track's keyframes are drawn on the timeline (pose = yellow, light = orange, wind = cyan, each per-camera Camera track = that camera's own color; Cam Switch markers are drawn in *each keyframe's own camera's color* too — see [Camera Management](#camera-management-)), and the **✚ Add/Update** / **− Delete** buttons always act on whichever track is selected (their color changes to match; the label itself no longer spells out the track name, since the dropdown already shows which one is selected). Dragging a marker (🔀 Move) onto a frame that already has a keyframe on a *different* track merges the two instead of overwriting the hidden track's data.
 
@@ -172,7 +172,7 @@ The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one *
 | ▶ / ⏸ | Play/pause the timeline. Plays from the current frame through the last frame and loops back to 0, regardless of whether any pose keyframes exist |
 | 📸 Capture | Same as the node's own 📸 Capture button — sends the current frame to the node's output |
 
-> **💾 Save .vrma**, **🎬 WebM**, and **🎞️ GIF** used to live in this panel too — they've moved to the Pose tab's **K** sub-tab Properties (Pose Data / Output sections) to keep this toolbar from getting overcrowded. See [Pose tab](#pose-tab) above.
+> **💾 Save .vrma**, **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF** used to live in this panel too — they've moved to the Pose tab's **K** sub-tab Properties (Pose Data / Output sections) to keep this toolbar from getting overcrowded. See [Pose tab](#pose-tab) above.
 
 #### Pose track — LookAt Target and Shape Keys
 
@@ -203,7 +203,7 @@ Instead of playing a `.vrma` back as a single clip (see [VRMA Animation Playback
 - If the Pose track already has keyframes, a confirmation dialog appears first (camera/light/wind keyframes are never touched by this).
 - **VRMA (KEY)** works even if the Light & Pose Editor isn't open yet — it opens on the Pose tab automatically and imports right after.
 
-WebM export uses `MediaRecorder` + `canvas.captureStream()`; GIF export uses a small self-contained encoder (`js/gif_encoder.js`, NeuQuant color quantization + LZW, no external dependencies) and encodes one frame at a time so the browser tab stays responsive even on longer timelines — a GIF with many frames will still take a while to encode (color quantization is the slow part), the button label shows `Encode n/total` progress while it works.
+WebM export uses `MediaRecorder` + `canvas.captureStream()`; GIF export uses a small self-contained encoder (`js/gif_encoder.js`, NeuQuant color quantization + LZW, no external dependencies) and encodes one frame at a time so the browser tab stays responsive even on longer timelines — a GIF with many frames will still take a while to encode (color quantization is the slow part), the button label shows `Encode n/total` progress while it works. **MP4 export** generates the same WebM first, then sends it to a server-side `ffmpeg` endpoint for conversion to H.264 (browsers' `MediaRecorder` doesn't reliably support `video/mp4`) — this requires `ffmpeg` to be available (either on `PATH` or via the bundled `imageio-ffmpeg` dependency).
 
 ### VRMA Animation Playback (VRMA)
 
@@ -493,7 +493,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 - **Kサブタブ**:
   - **Model** — **Load MODEL**（ノード側のモデルロード機能の複製）
   - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwind)を参照）
-  - **Output** — **🎬 WebM**・**🎞️ GIF**（こちらも同様の理由でキーフレームパネルから移設）
+  - **Output** — **🎬 WebM**・**🎥 MP4**・**🎞️ GIF**（こちらも同様の理由でキーフレームパネルから移設）
 - **Cサブタブ**: リストで選択中のカメラの**Camera**プロパティ — Name、Color、OT/PR切替、**FOV**/**Near**スライダー。共有の`editor`状態のうち現在**アクティブ**なカメラの状態を直接読み書きするため（ノード自身のOT/RC/FOV/Nearコントロールと同じ）、モーダルを閉じた際やタブ・カメラの切替時にどちら側も再同期されます。（以前ここにあった**Look at Target**トグルは、カメラごとではなくモデル全体の設定であるため、下部のキーフレームパネルへ移設しました。）
 
 VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions`ブリッジ経由で処理されるため、ノード側のボタン表示も連動して更新されます。
@@ -517,7 +517,7 @@ Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現�
 
 ### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind）
 
-Light & Pose Editor下部（両タブ共通）に常設されたパネルで、フレームベースのタイムライン上にキーフレームを配置して短いアニメーションを作成し、プレビュー・保存・`.vrma`/WebM/GIFとして書き出せます。
+Light & Pose Editor下部（両タブ共通）に常設されたパネルで、フレームベースのタイムライン上にキーフレームを配置して短いアニメーションを作成し、プレビュー・保存・`.vrma`/WebM/MP4/GIFとして書き出せます。
 
 「🎬 Keyframes」見出し横のドロップダウンには、**🕺 Pose**、**シーン内のカメラの数だけ動的に増減するCameraトラック**（そのカメラ自身のアイコン・名前でラベル表示、例:「🎥 Camera 1」「📷 Camera 2」— [Cサブタブ](#カメラ管理)でカメラを追加/削除/リネームするたびにこのリストも連動します）、**🎬 Cam Switch**、**💡 Light**、**🌬 Wind**が並びます。タイムラインには選択中トラックのキーフレームだけが表示され（ポーズ＝黄、ライト＝橙、Wind＝水色、カメラごとのCameraトラックは**そのカメラ自身の色**、Cam Switchのマーカーも**そのキーフレームが指すカメラ自身の色**で描画されます — [カメラ管理](#カメラ管理)参照）、**✚ Add/Update**／**− Delete**ボタンは常に選択中トラックに対して動作します（色は連動して切り替わりますが、ドロップダウン側で既にどのトラックか分かるため、ラベル自体にはトラック名を含めていません）。マーカーを別フレームへドラッグ移動（🔀 Move）した際、移動先に**別トラック**のキーフレームが既にある場合は上書きせずマージされます。
 
@@ -544,11 +544,11 @@ Light & Pose Editor下部（両タブ共通）に常設されたパネルで、�
 | ▶ / ⏸ | タイムラインの再生/一時停止。現在フレームから最後のフレームまで再生し先頭へループ。ポーズキーフレームの有無に関わらず動作する |
 | 📸 Capture | ノード自身の📸 Captureボタンと同じ機能 — 現在フレームをノード出力へ送信 |
 
-> **💾 Save .vrma**・**🎬 WebM**・**🎞️ GIF**は以前このパネルにありましたが、ツールバーが手狭になってきたためPoseタブの**K**サブタブ Properties（Pose Data／Outputセクション）へ移設しました。詳細は前述の[Poseタブ](#poseタブ)を参照してください。
+> **💾 Save .vrma**・**🎬 WebM**・**🎥 MP4**・**🎞️ GIF**は以前このパネルにありましたが、ツールバーが手狭になってきたためPoseタブの**K**サブタブ Properties（Pose Data／Outputセクション）へ移設しました。詳細は前述の[Poseタブ](#poseタブ)を参照してください。
 
 #### Poseトラック — Look at TargetとShape Keys
 
-Look at Targetの ON/OFF・マーカー座標と、Shape Keysスライダーの現在値は、ポーズKFを追加/更新するたびに自動で束ねて保存されます（別トラックにはせず、キャラクターの姿勢の一部として扱う設計）。どちらもプレビュー/再生時には補間されますが、カメラ・ライト・Windの各KFと同様に**プレビュー専用**です。エクスポートされる`.vrma`にはボーン回転のみが書き出されます（glTFベースの`.vrma`形式にはカメラ/ライト/Wind/LookAt/シェイプキーのアニメーションが存在せず、これらの書き出しは現時点では意図的にスコープ外としています）。これらまで含めて共有可能な形にしたい場合は、見たままをそのまま録画する**🎬 WebM**や**🎞️ GIF**を使ってください。
+Look at Targetの ON/OFF・マーカー座標と、Shape Keysスライダーの現在値は、ポーズKFを追加/更新するたびに自動で束ねて保存されます（別トラックにはせず、キャラクターの姿勢の一部として扱う設計）。どちらもプレビュー/再生時には補間されますが、カメラ・ライト・Windの各KFと同様に**プレビュー専用**です。エクスポートされる`.vrma`にはボーン回転のみが書き出されます（glTFベースの`.vrma`形式にはカメラ/ライト/Wind/LookAt/シェイプキーのアニメーションが存在せず、これらの書き出しは現時点では意図的にスコープ外としています）。これらまで含めて共有可能な形にしたい場合は、見たままをそのまま録画する**🎬 WebM**・**🎥 MP4**・**🎞️ GIF**を使ってください。
 
 #### Cameraトラック
 
@@ -575,7 +575,7 @@ Look at Targetの ON/OFF・マーカー座標と、Shape Keysスライダーの�
 - Poseトラックに既にKFがある場合は確認ダイアログが表示されます（カメラ・ライト・WindのKFはこの操作では変更されません）。
 - **VRMA (KEY)**はLight & Pose Editorが未オープンでも動作します — 自動的にPoseタブで開いてからインポートされます。
 
-WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出しは外部依存の無い自作エンコーダ（`js/gif_encoder.js`、NeuQuant色量子化＋LZW）を使用し、1フレームずつ非同期でエンコードすることでフレーム数が多いタイムラインでもブラウザタブが固まらないようにしています（それでも色量子化自体は重い処理のため、フレーム数が多いGIFはエンコードに時間がかかります。ボタンには`Encode n/total`の進捗が表示されます）。
+WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出しは外部依存の無い自作エンコーダ（`js/gif_encoder.js`、NeuQuant色量子化＋LZW）を使用し、1フレームずつ非同期でエンコードすることでフレーム数が多いタイムラインでもブラウザタブが固まらないようにしています（それでも色量子化自体は重い処理のため、フレーム数が多いGIFはエンコードに時間がかかります。ボタンには`Encode n/total`の進捗が表示されます）。**MP4書き出し**は、まず同じ方式でWebMを生成し、それをサーバー側の`ffmpeg`エンドポイントへ送ってH.264へ変換します（ブラウザの`MediaRecorder`は`video/mp4`に確実に対応していないため）。動作には`ffmpeg`が利用可能である必要があります（システム`PATH`上、または同梱の`imageio-ffmpeg`依存経由のいずれか）。
 
 #### VRMAアニメーション再生（VRMA）
 
@@ -796,6 +796,7 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 - **Node ↔ Editor sync bridge (`nodeActions`)**: `pose_editor_3d.js` builds `nodeActions = { doCapture, loadVrmFile, loadVrmaFile, unloadVrma }` and threads it through `openLightPoseEditor()` → `buildKeyframePanel()` / the Pose tab's Properties panel, so duplicated buttons inside the modal (Capture, VRM/VRMA load, VRMA unload) call the *exact same* node-side functions instead of reimplementing their side effects (node model-buffer cache updates, node widget/label sync, `updateNodeSize()`). Controls with no such side effects (camera OT/PR, LookAt, FOV/Near, Mirror, Reset Pose/Camera) instead read/write the shared `editor` object directly from both sides; the node re-syncs its own button labels from `editor`'s getters when the modal closes.
 - **WebM export**: renders each timeline frame with `editor.renderClean()` (a `capture()` variant that hides bone/light/LookAt/wind-marker helpers and renders synchronously without the PNG-encode round trip), draws the canvas onto an offscreen `<canvas>` capped to 768px on the long edge, and pushes it into a `MediaRecorder` via `offscreenCanvas.captureStream(0)` + manual `track.requestFrame()` per frame (`video/webm;codecs=vp9` where supported).
 - **GIF export**: same per-frame render pipeline as WebM, capped to 480px on the long edge, encoded with a bundled dependency-free encoder (`js/gif_encoder.js`) implementing NeuQuant 256-color quantization and GIF LZW compression from scratch. `encode()` is async and yields to the event loop after each frame's quantization (the most expensive part, an O(colors²) 64³ nearest-color LUT build) so a many-frame GIF doesn't freeze the tab while encoding.
+- **MP4 export**: generates a WebM via the same pipeline, then `POST`s it to `pose_library_server.py`'s `/pose_library/webm_to_mp4?fps=<fps>` endpoint. Server-side, `ffmpeg` is located via `shutil.which("ffmpeg")` then a fallback to the `imageio-ffmpeg`-bundled binary (same probing order as ComfyUI-VideoHelperSuite), and the H.264 encoder is chosen dynamically from `ffmpeg -encoders` output (`libx264` if present, else `libopenh264` — some redistributed ffmpeg builds, e.g. StabilityMatrix's, disable `libx264` for GPL-avoidance reasons). `-r <fps>` is applied on the *input* side (not the output) because the WebM's container timestamps come from wall-clock capture timing rather than the timeline's intended frame rate — reinterpreting the same frame count at the intended fps on read gives the correct duration.
 - **Pose Library preview**: when opened with a canvas reference, `pose_library.js` temporarily reparents the shared WebGL canvas into its own 280px-wide preview column using the same DOM-move + CSS-`transform: scale()` technique the Light & Pose Editor uses for its own preview panel, and restores the canvas's original position/style (plus, via an `onClose` callback, re-triggers the caller's own scale recalculation) when the library closes.
 
 ---

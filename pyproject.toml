@@ -1,8 +1,9 @@
 [project]
 name = "comfyui-vrm-pose-editor"
 description = "ComfyUI custom node for interactive 3D pose editing with VRM / GLB / GLTF support"
-version = "0.17.1"
+version = "0.18.0"
 license = {file = "LICENSE"}
+dependencies = ["imageio-ffmpeg"]
 
 [project.urls]
 Repository = "https://github.com/ketle-man/comfyui-vrm-pose-editor"
