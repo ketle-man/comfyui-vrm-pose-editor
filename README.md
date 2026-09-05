@@ -157,7 +157,7 @@ The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one *
 | ✚ Add/Update | Add a keyframe on the selected track at the current frame from whatever is currently set (or overwrite the one already there) |
 | − Delete | Delete the selected track's keyframe at the current frame |
 | 📚 + From Library | Pose track only. Pick a saved pose from the Pose Library and add it as a pose keyframe at the current frame |
-| 🔀 Move | While ON, drag a marker on the timeline to move it to a different frame (dropping it on a frame that already has a keyframe on the same track overwrites that track's data there; data on other tracks at that frame is preserved) |
+| 🔀 Move | While ON, drag a marker on the timeline to move it to a different frame (if that frame already has a keyframe on the same track, the drag stops there instead of overwriting it) |
 | 🗑 Delete Mode | While ON, click or drag across markers on the selected track to erase them like an eraser; mutually exclusive with 🔀 Move |
 | ⏮ ❮ *frame* / *total* ❯ | Jump to frame 0 / step back one frame / current frame and total length / step forward one frame |
 | Active-camera label | Read-only — shows the icon and name of whichever camera is currently active, or "🖥 Monitor" while the free view is on. Selecting a camera is done from the [C sub-tab](#camera-management-) list; this label just reflects it |
@@ -529,7 +529,7 @@ Light & Pose Editor下部（両タブ共通）に常設されたパネルで、�
 | ✚ Add/Update | 選択中トラックの現在フレームに、今の設定をキーフレームとして追加（既にあれば上書き） |
 | − Delete | 選択中トラックの現在フレームのキーフレームを削除 |
 | 📚 + From Library | Poseトラック専用。ポーズライブラリから選んで現在フレームにポーズKFとして追加 |
-| 🔀 Move | ONの間はタイムライン上のマーカーをドラッグして別フレームへ移動（移動先に同じトラックのKFが既にあればそのトラックのデータのみ上書き。他トラックのデータは保持される） |
+| 🔀 Move | ONの間はタイムライン上のマーカーをドラッグして別フレームへ移動（移動先に同じトラックのKFが既にある場合は上書きせず、そこで止まる） |
 | 🗑 Delete Mode | ONの間は選択中トラックのマーカーをクリック／ドラッグして消しゴムのように削除できる。🔀 Moveとは排他 |
 | ⏮ ❮ *フレーム* / *合計* ❯ | フレーム0へ／1フレーム戻る／現在フレームと総フレーム数／1フレーム進む |
 | アクティブカメラ表示 | 読み取り専用 — 現在アクティブなカメラのアイコン・名前、または自由視点中は「🖥 Monitor」を表示するだけ。カメラの選択(切替)は[Cサブタブ](#カメラ管理)のリストで行う |

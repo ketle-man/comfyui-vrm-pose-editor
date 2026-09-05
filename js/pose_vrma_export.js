@@ -978,24 +978,32 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // 以前の実装は移動元エントリ全体を丸ごとコピーしてしまい、選択中トラック以外のデータも
     // 意図せず移動先へ持って行かれてしまうバグがあった(カメラトラックが複数になり影響が
     // 拡大するため、このタイミングで選択中トラックの値だけを移動する実装に修正した)。
+    // 移動先に選択中トラックのデータを持つKFが既にある場合は、それを上書き・削除してしまわない
+    // よう移動自体をキャンセルする(戻り値falseで呼び出し元に「その位置には動けなかった」ことを
+    // 伝え、ドラッグはその手前の位置で止まって見えるようにする)。
     function moveKeyframeFrame(fromFrame, toFrame) {
-        if (fromFrame === toFrame) return;
+        if (fromFrame === toFrame) return false;
         const idx = keyframes.findIndex(k => k.frame === fromFrame);
-        if (idx === -1) return;
+        if (idx === -1) return false;
         const srcKf = keyframes[idx];
         const track = TRACKS[selectedTrack];
-        if (!track.hasData(srcKf)) return;
+        if (!track.hasData(srcKf)) return false;
+
+        const destExisting = keyframes.find(k => k.frame === toFrame);
+        if (destExisting && track.hasData(destExisting)) return false;
+
         const val = track.getValue(srcKf);
         track.clearValue(srcKf);
         if (isEntryEmpty(srcKf)) keyframes.splice(idx, 1);
 
-        let destKf = keyframes.find(k => k.frame === toFrame);
+        let destKf = destExisting;
         if (!destKf) { destKf = { frame: toFrame }; keyframes.push(destKf); }
         track.setValue(destKf, val);
 
         keyframes.sort((a, b) => a.frame - b.frame);
         ensureTotalFrames();
         updateStatus();
+        return true;
     }
 
     // Deleteモード: クリックまたはドラッグでなぞった位置の(選択中トラックの)キーフレームを
@@ -1044,10 +1052,14 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         } else if (moveMode && draggingFrame !== null) {
             const newFrame = frameFromClientX(e.clientX);
             if (newFrame !== draggingFrame) {
-                moveKeyframeFrame(draggingFrame, newFrame);
-                draggingFrame = newFrame;
-                seekToFrame(newFrame, { silent: true });
-                drawTimeline();
+                // 移動先に既存KFがあり移動できなかった場合はdraggingFrameを更新しない
+                // (ドラッグ中のマウスがそのフレーム上にある限り、キーフレームは既存KFの
+                // 手前で止まったまま動かない)
+                if (moveKeyframeFrame(draggingFrame, newFrame)) {
+                    draggingFrame = newFrame;
+                    seekToFrame(newFrame, { silent: true });
+                    drawTimeline();
+                }
             }
         } else if (isScrubbing) {
             seekToFrame(frameFromClientX(e.clientX));
