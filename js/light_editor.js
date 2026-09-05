@@ -818,7 +818,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             //   ノード側のVRMA読み込み処理(nodeActions.loadVrmaFile)へ渡すための橋渡し
             openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale(),
                 (buf, name) => keyframePanel.importVrmaAsKeyframes(buf, name),
-                nodeActions ? (buf) => nodeActions.loadVrmaFile(new Blob([buf])) : undefined);
+                nodeActions?.loadVrmaFile ? (buf) => nodeActions.loadVrmaFile(new Blob([buf])) : undefined);
             return;
         }
         const visible = libPanel.style.display !== "none";
