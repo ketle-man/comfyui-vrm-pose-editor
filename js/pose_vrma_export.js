@@ -158,7 +158,29 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         lookAtBtn.title = `LookAt Target: ${on ? "ON (drag the cyan marker)" : "OFF"}`;
     }
     syncLookAtBtn();
-    lookAtBtn.onclick = () => { editor.toggleLookAt?.(); syncLookAtBtn(); };
+    // ON/OFF切替はプレビュークリップの再構築(schedulePreviewRefresh)も伴う。ONにした瞬間、
+    // 既にロード済みのプレビュークリップにleftEye/rightEyeボーンのトラックが残っていると、
+    // 毎フレームそちらでLookAtの結果が上書きされてしまう(refreshPreview内のコメント参照)ため、
+    // トグルのたびにOFF/ON双方向で作り直す。
+    lookAtBtn.onclick = () => { editor.toggleLookAt?.(); syncLookAtBtn(); schedulePreviewRefresh(); };
+
+    // Look at Targetの対象(マーカー/アクティブカメラ)切替。lookAtBtn(ON/OFF)の右隣に配置する。
+    const lookAtTargetBtn = mkBtn("🎯 Marker", "#444", "");
+    function syncLookAtTargetBtn() {
+        const mode = editor.getLookAtTargetMode?.() ?? "marker";
+        const isCam = mode === "camera";
+        lookAtTargetBtn.textContent = isCam ? "🎥 Camera" : "🎯 Marker";
+        lookAtTargetBtn.style.background = isCam ? "#7a5a1a" : "#444";
+        lookAtTargetBtn.title = isCam
+            ? "LookAt Target: Active Camera (VRM looks at whichever camera is currently active)"
+            : "LookAt Target: Marker (drag the cyan marker)";
+    }
+    syncLookAtTargetBtn();
+    lookAtTargetBtn.onclick = () => {
+        const next = (editor.getLookAtTargetMode?.() ?? "marker") === "camera" ? "marker" : "camera";
+        editor.setLookAtTargetMode?.(next);
+        syncLookAtTargetBtn();
+    };
 
     // ノード側にある「↔ Mirror Pose」の複製ボタン(pose_editor_3d.js)。左右反転したポーズをその場で
     // editor.mirrorPose()するだけなので、ノードコンテキストは不要でeditorから直接呼べる
@@ -187,7 +209,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // downloadBtn(Save .vrma)/webmBtn/gifBtnはPoseタブ Kサブタブ Properties(Model/Pose Data・
     // Outputセクション)へ移設したため、ここには配置しない(呼び出し元がbtnそのものをDOM移動する)
     previewPanel.append(
-        fpsLbl, fpsInput, newBtn, projBtn, rpBtn, rcBtn, statusMsg, lookAtBtn, mirrorBtn,
+        fpsLbl, fpsInput, newBtn, projBtn, rpBtn, rcBtn, statusMsg, lookAtBtn, lookAtTargetBtn, mirrorBtn,
         playBtn, captureBtn,
     );
 
@@ -243,7 +265,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const camSwitchCount = keyframes.filter(k => k.cameraId !== undefined).length;
         const lightCount = keyframes.filter(k => k.light).length;
         const windCount = keyframes.filter(k => k.wind).length;
-        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${camSwitchCount} cam-switch · ${lightCount} light · ${windCount} wind`;
+        const eyesCount = keyframes.filter(k => k.lookAt).length;
+        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${camSwitchCount} cam-switch · ${lightCount} light · ${windCount} wind · ${eyesCount} eyes`;
     }
 
     // ----------------------------------------------------------------
@@ -263,8 +286,13 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLookAtForFrame(currentFrame);
         applyLightForFrame(currentFrame);
         applyWindForFrame(currentFrame);
-        // 再生中(rAFループ)からの毎フレーム呼び出しではスライダー全再構築コストを避けるため呼ばない
+        // 再生中(rAFループ)からの毎フレーム呼び出しではスライダー全再構築・DOM更新コストを
+        // 避けるため呼ばない。ON/OFF・対象(Marker/Camera)ボタンはapplyLookAtForFrameが変更した
+        // ライブ状態を反映するため、シーク/スクラブ時はここで表示を同期する(呼ばないと、KF間の
+        // 移動でtargetModeが切り替わってもボタン表示が古いままになってしまう)。
         if (!opts.silent) onShapeKeysApplied?.();
+        if (!opts.silent) syncLookAtBtn();
+        if (!opts.silent) syncLookAtTargetBtn();
         if (!opts.silent) drawTimeline();
     }
 
@@ -283,9 +311,17 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // Look at Target(視線ターゲット)のON/OFF・座標のスナップショット。shapeKeysと同様、
     // ポーズKFに束ねて保存する(視線もキャラクターの姿勢の一部として扱う)。
     function captureLookAtSnapshot() {
-        return { enabled: editor.getLookAtEnabled?.() ?? false, position: editor.getLookAtPosition?.() };
+        return {
+            enabled: editor.getLookAtEnabled?.() ?? false,
+            targetMode: editor.getLookAtTargetMode?.() ?? "marker",
+            position: editor.getLookAtPosition?.(),
+        };
     }
 
+    // Look at Target(視線)はEyesトラック専用のフィールドとして扱う。以前はここでもcaptureLookAtSnapshot()を
+    // 束ねて記録していたが、ポーズを打つたびにその時点の視線をkf.lookAtへ上書きしてしまい、Eyesトラックで
+    // 打った視線キーフレームの間に「変化していない視線」のデータ点が割り込んで補間を壊す(結果的に最初の
+    // フレームの視線に固定されて見える)不具合があったため、Pose側では一切lookAtに触れないようにした。
     function captureAtCurrentFrame(label, bonesOverride) {
         let bones = bonesOverride;
         if (!bones) {
@@ -294,18 +330,15 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             bones = JSON.parse(json).bones;
         }
         const shapeKeys = captureShapeKeysSnapshot();
-        const lookAt = captureLookAtSnapshot();
         const existing = keyframes.find(k => k.frame === currentFrame);
         if (existing) {
             existing.bones = bones;
             if (shapeKeys) existing.shapeKeys = shapeKeys;
-            existing.lookAt = lookAt;
             if (label) existing.label = label;
         } else {
             keyframes.push({
                 frame: currentFrame, label: label ?? `Pose ${poseCounter++}`, bones,
                 ...(shapeKeys ? { shapeKeys } : {}),
-                lookAt,
             });
             keyframes.sort((a, b) => a.frame - b.frame);
         }
@@ -315,8 +348,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         schedulePreviewRefresh();
     }
 
-    // ポーズ(bones/shapeKeys/lookAt)のフィールドだけを削除する(camera/lightが残っていればエントリ自体は維持)。
-    // PSD-Figure-Creatorのdeleteキーフレーム実装(pose/camera独立管理)を踏襲。
+    // ポーズ(bones/shapeKeys)のフィールドだけを削除する(camera/light/lookAtが残っていればエントリ自体は維持)。
+    // PSD-Figure-Creatorのdeleteキーフレーム実装(pose/camera独立管理)を踏襲。lookAtはEyesトラック専用の
+    // データのため、Pose削除では触れない(上のcaptureAtCurrentFrameのコメント参照)。
     function deleteAtCurrentFrame() {
         const idx = keyframes.findIndex(k => k.frame === currentFrame);
         if (idx === -1) return;
@@ -325,7 +359,6 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         delete kf.bones;
         delete kf.label;
         delete kf.shapeKeys;
-        delete kf.lookAt;
         if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
         drawTimeline();
         updateStatus();
@@ -534,7 +567,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             pose: {
                 ...fieldAccessors("bones"), color: "#ffdd44", optionLabel: "🕺 Pose",
                 addLabel: "✚ Add/Update", addColor: "#4a7a4a",
-                addTitle: "現在フレームに、今のポーズ(シェイプキー・Look at Target含む)をキーフレームとして追加/上書き",
+                addTitle: "現在フレームに、今のポーズ(シェイプキー含む)をキーフレームとして追加/上書き",
                 delLabel: "− Delete",
                 delTitle: "現在フレームのポーズキーフレームを削除",
                 capture: () => captureAtCurrentFrame(), delete: () => deleteAtCurrentFrame(),
@@ -574,6 +607,15 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             delLabel: "🌬 −",
             delTitle: "現在フレームのWindキーフレームを削除",
             capture: () => captureWindAtCurrentFrame(), delete: () => deleteWindAtCurrentFrame(),
+        };
+        tracks.eyes = {
+            // マーカー本体と同じシアン系の色に揃える(pose_editor_core.jsのlookAtHelperMesh参照)
+            ...fieldAccessors("lookAt"), color: "#00d0d0", optionLabel: "👀 Eyes",
+            addLabel: "👀 +", addColor: "#1a7a7a",
+            addTitle: "現在フレームに、今のLook at Target(ON/OFF・対象・マーカー座標)をキーフレームとして追加/上書き",
+            delLabel: "👀 −",
+            delTitle: "現在フレームのLook at Targetキーフレームを削除",
+            capture: () => captureLookAtAtCurrentFrame(), delete: () => deleteLookAtAtCurrentFrame(),
         };
         return tracks;
     }
@@ -751,6 +793,11 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return result;
     }
 
+    // VRM1標準のlookAt用プリセット表情名。モデルのLookAtが表情ベース(BoneApplierではなく
+    // ExpressionApplier)の場合、これらがcollectVrmExpressionKeys()経由で通常のシェイプキーと
+    // 同列に列挙されてしまうため、Look at Target ON中はポーズ側のキャプチャ値で上書きしない。
+    const LOOK_AT_EXPRESSION_NAMES = new Set(["lookUp", "lookDown", "lookLeft", "lookRight"]);
+
     function applyShapeKeysForFrame(frame) {
         const keys = getShapeKeys?.() ?? [];
         if (keys.length === 0) return;
@@ -769,19 +816,23 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         } else {
             state = (before ?? after).shapeKeys;
         }
+        const lookAtOn = editor.getLookAtEnabled?.() ?? false;
         keys.forEach(k => {
+            if (lookAtOn && LOOK_AT_EXPRESSION_NAMES.has(k.name)) return;
             if (state[k.name] !== undefined) k.setValue?.(state[k.name]);
         });
     }
 
     // ----------------------------------------------------------------
     // Look at Target(視線ターゲット)補間 — プレビュー内シーク/再生専用。座標は前後のlookAt KFから
-    // 線形補間するが、ON/OFFは連続値ではないため前方のKFの値をそのまま引き継ぐ(補間区間の終端t=1で
-    // 後方KFの値に切り替わる)。
+    // 線形補間するが、ON/OFFと対象(マーカー/アクティブカメラ)は連続値ではないため前方のKFの値を
+    // そのまま引き継ぐ(補間区間の終端t=1で後方KFの値に切り替わる)。targetModeは旧バージョンの
+    // 保存データ(このフィールド追加前)に存在しないため "marker" にフォールバックする。
     // ----------------------------------------------------------------
     function lerpLookAtState(a, b, t) {
         return {
             enabled: t < 1 ? a.enabled : b.enabled,
+            targetMode: t < 1 ? (a.targetMode ?? "marker") : (b.targetMode ?? "marker"),
             position: lerpVec3(a.position, b.position, t),
         };
     }
@@ -803,7 +854,37 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             state = (before ?? after).lookAt;
         }
         editor.setLookAtEnabled?.(state.enabled);
+        editor.setLookAtTargetMode?.(state.targetMode ?? "marker");
         editor.setLookAtPosition?.(state.position);
+    }
+
+    // Look at Target(視線ターゲット)をEyesトラックとして単独でキーフレーム化する。kf.lookAtは
+    // このトラックだけが読み書きする(Poseトラックはbones/shapeKeysのみを扱い、lookAtには一切
+    // 触れない。詳細はcaptureAtCurrentFrame内のコメント参照)。
+    function captureLookAtAtCurrentFrame() {
+        const lookAt = captureLookAtSnapshot();
+        const existing = keyframes.find(k => k.frame === currentFrame);
+        if (existing) {
+            existing.lookAt = lookAt;
+        } else {
+            keyframes.push({ frame: currentFrame, lookAt });
+            keyframes.sort((a, b) => a.frame - b.frame);
+        }
+        ensureTotalFrames();
+        drawTimeline();
+        updateStatus();
+    }
+
+    function deleteLookAtAtCurrentFrame() {
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.lookAt) return;
+        delete kf.lookAt;
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        applyLookAtForFrame(currentFrame);
     }
 
     // ----------------------------------------------------------------
@@ -1173,8 +1254,23 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             stopPlayback();
             return;
         }
+        // Look at Target ON中は、ポーズキーフレームに焼き込まれたleftEye/rightEyeボーンの回転を
+        // プレビュークリップから除外する。含めたままだと、シーク時にmixerが一度だけ書き込む
+        // 「その時点の目の向き」がLookAtの毎フレーム計算より優先されて見え(結果的にLookAtが
+        // 効いていないように見える)、EyesトラックでMarker/Cameraのキーを打っても反映されない
+        // という不具合になっていた。除外は「プレビュー限定」の措置で、Save .vrma(ダウンロード)側の
+        // 出力データはこの影響を受けない(そちらは本関数を経由しないため)。
+        const lookAtOn = editor.getLookAtEnabled?.() ?? false;
+        const clipKfs = lookAtOn
+            ? poseKfs.map(k => {
+                const bones = { ...k.bones };
+                delete bones.leftEye;
+                delete bones.rightEye;
+                return { time: k.frame / fps, bones };
+            })
+            : poseKfs.map(k => ({ time: k.frame / fps, bones: k.bones }));
         try {
-            const buf = await editor.exportVrma(poseKfs.map(k => ({ time: k.frame / fps, bones: k.bones })));
+            const buf = await editor.exportVrma(clipKfs);
             await new Promise((resolve, reject) => {
                 editor.loadVRMAFromBuffer(buf, resolve, (msg) => reject(new Error(msg)));
             });
@@ -1581,10 +1677,11 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             editor.loadVRMAFromBuffer(buffer, resolve, (msg) => reject(new Error(msg)));
         });
 
-        // 既存エントリからポーズ関連フィールドだけを取り除く(camera/cameraId/light/windは維持)
+        // 既存エントリからポーズ関連フィールドだけを取り除く(camera/cameraId/light/wind/lookAtは維持。
+        // lookAtはEyesトラック専用のデータになったため、ポーズの入れ替えでは触れない)
         for (let i = keyframes.length - 1; i >= 0; i--) {
             const kf = keyframes[i];
-            if (kf.bones) { delete kf.bones; delete kf.label; delete kf.shapeKeys; delete kf.lookAt; }
+            if (kf.bones) { delete kf.bones; delete kf.label; delete kf.shapeKeys; }
             if (isEntryEmpty(kf)) keyframes.splice(i, 1);
         }
 
@@ -1636,7 +1733,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     });
 
     return {
-        el: panel, destroy, getState, importVrmaAsKeyframes, refreshActiveCameraLabel, syncLookAtBtn,
+        el: panel, destroy, getState, importVrmaAsKeyframes, refreshActiveCameraLabel, syncLookAtBtn, syncLookAtTargetBtn,
         refreshTimeline: drawTimeline, refreshTracks,
         // light_editor.js側のCサブタブ カメラ一覧をモニターのON/OFFに合わせて再同期するためのフック
         setOnCameraStateChanged(fn) { onCameraStateChanged = fn; },

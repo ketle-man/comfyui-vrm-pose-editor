@@ -779,6 +779,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     function syncPosePropPanel() {
         syncPoseCamModeBtn();
         keyframePanel.syncLookAtBtn?.();
+        keyframePanel.syncLookAtTargetBtn?.();
         const activeCam = editor.getCameras().find(c => c.isActive);
         if (activeCam) {
             cameraNameIn.value = activeCam.name;

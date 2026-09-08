@@ -403,14 +403,35 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     scene.add(lookAtHelperMesh);
     let _lookAtEnabled = false;
 
-    function _setLookAtEnabled(v) {
-        _lookAtEnabled = v;
-        lookAtHelperMesh.visible = v;
+    // 対象(targetMode)が"camera"の場合、vrm.lookAt.targetにはこのダミーObject3Dを割り当て、
+    // 毎フレームanimate()内で現在のアクティブカメラ(camera変数、persp/ortho問わず)の位置を
+    // コピーする。マーカー(lookAtHelperMesh)と同じ「targetオブジェクトの位置を動かすだけ」
+    // という設計を踏襲することで、VRMLookAt側の実装には一切手を入れずに済む。
+    const lookAtCameraProxy = new THREE.Object3D();
+    scene.add(lookAtCameraProxy);
+    let _lookAtTargetMode = "marker"; // "marker" | "camera"
+
+    // ON/OFF・対象(マーカー/アクティブカメラ)の両方の現在値から、vrm.lookAt.targetと
+    // マーカーの可視性(=ドラッグ可否、hitTest側もvisibleを見て判定している)を再計算する。
+    function _applyLookAtTarget() {
+        lookAtHelperMesh.visible = _lookAtEnabled && _lookAtTargetMode === "marker";
         if (currentVRM?.lookAt) {
             if (_vrmaMixer) return; // VRMA再生中はlookAt.targetをnullのまま維持（_clearVRMA()が復元を担当）
-            currentVRM.lookAt.target = v ? lookAtHelperMesh : null;
-            if (!v) currentVRM.lookAt.reset();
+            currentVRM.lookAt.target = _lookAtEnabled
+                ? (_lookAtTargetMode === "camera" ? lookAtCameraProxy : lookAtHelperMesh)
+                : null;
+            if (!_lookAtEnabled) currentVRM.lookAt.reset();
         }
+    }
+
+    function _setLookAtEnabled(v) {
+        _lookAtEnabled = v;
+        _applyLookAtTarget();
+    }
+
+    function _setLookAtTargetMode(mode) {
+        _lookAtTargetMode = mode === "camera" ? "camera" : "marker";
+        _applyLookAtTarget();
     }
 
     // ================================================================
@@ -1258,7 +1279,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             // 新しいモデルの正面側にLookAtターゲットの初期位置を合わせ、
             // 有効化されていれば新モデルのvrm.lookAtに再割り当てする
             lookAtHelperMesh.position.set(0, 1.5, isVrm0 ? -2 : 2);
-            if (vrm.lookAt) vrm.lookAt.target = _lookAtEnabled ? lookAtHelperMesh : null;
+            _applyLookAtTarget();
 
             const humanoid = vrm.humanoid;
             if (humanoid) {
@@ -1333,9 +1354,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         _vrmaClip = null;
         _vrmaPlaying = false;
         // VRMAロード中はnullにしていたlookAtターゲットを、トグルボタンの状態に合わせて復元する
-        if (currentVRM?.lookAt) {
-            currentVRM.lookAt.target = _lookAtEnabled ? lookAtHelperMesh : null;
-        }
+        _applyLookAtTarget();
     }
 
     function loadVRMAFromBuffer(buffer, onComplete, onError) {
@@ -1569,6 +1588,25 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         }
         if (currentVRM) {
             _applyWindToSpringBones();
+            // LookAt対象が"camera"の場合、毎フレーム対象カメラの位置をプロキシへ反映する
+            // (getWorldPosition()はupdateWorldMatrix()を内部で呼ぶため、直後のcurrentVRM.update()
+            // には遅延なく最新位置が反映される)。モニターモード(activeCameraId===null、第三者の
+            // 自由視点)中はモニター自体を対象から除外する — モニターは「役に立つカメラの1つ」
+            // ではなく単なる観察用の自由視点であり、そこへ視線を向けるのは意味的に誤りのため。
+            // 代わりに、モニターに入る直前にアクティブだったカメラ(_lastActiveBeforeMonitor)の
+            // config位置を見続ける。このconfigはモニター中もヘルパードラッグで更新され続ける
+            // (_updateCameraConfig参照)ため、マーカーと同じ感覚でヘルパーを動かせば視線も追従する。
+            if (_lookAtEnabled && _lookAtTargetMode === "camera") {
+                if (activeCameraId !== null) {
+                    lookAtCameraProxy.position.copy(camera.position);
+                } else if (_lastActiveBeforeMonitor !== null) {
+                    const lastCam = managedCameras.find(c => c.id === _lastActiveBeforeMonitor);
+                    if (lastCam) {
+                        const p = lastCam.config.position;
+                        lookAtCameraProxy.position.set(p.x, p.y, p.z);
+                    }
+                }
+            }
             currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
         }
         orbit.update();
@@ -1681,6 +1719,9 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         getLookAtEnabled()   { return _lookAtEnabled; },
         toggleLookAt()       { _setLookAtEnabled(!_lookAtEnabled); return _lookAtEnabled; },
         setLookAtEnabled(v)  { _setLookAtEnabled(!!v); },
+        // 対象(マーカー/アクティブカメラ)の切替。"marker"以外を渡すと常に"camera"扱いにする
+        getLookAtTargetMode()   { return _lookAtTargetMode; },
+        setLookAtTargetMode(m)  { _setLookAtTargetMode(m); },
         // タイムライン(キーフレーム)からの位置補間適用向け。マーカーのドラッグ操作(_onDragMove等)とは
         // 別経路で、ON/OFF状態には関知せず座標だけを読み書きする
         getLookAtPosition()  {
