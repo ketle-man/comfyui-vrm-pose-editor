@@ -416,7 +416,13 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
     function _applyLookAtTarget() {
         lookAtHelperMesh.visible = _lookAtEnabled && _lookAtTargetMode === "marker";
         if (currentVRM?.lookAt) {
-            if (_vrmaMixer) return; // VRMA再生中はlookAt.targetをnullのまま維持（_clearVRMA()が復元を担当）
+            // 以前はVRMAクリップ(_vrmaMixer)が存在する間はここで何もせずtargetをnullのまま
+            // 維持していた(「VRMA再生とLookAtは共存しない」という旧設計)。しかしPose/Camera/
+            // Eyesキーフレームが共存する現在の設計では、ポーズキーを1つ打っただけでLookAtが
+            // 永久に無効化されてしまう不具合の原因になっていたため、このガードは撤廃した。
+            // animate()内でcurrentVRM.update()(LookAt)は_vrmaMixer.update()より必ず後に
+            // 実行される(同一フレーム内)ため、VRMAクリップ側に目のボーンのトラックが
+            // 含まれていてもLookAtが最終的に上書きする形で問題なく共存できる。
             currentVRM.lookAt.target = _lookAtEnabled
                 ? (_lookAtTargetMode === "camera" ? lookAtCameraProxy : lookAtHelperMesh)
                 : null;
@@ -1383,8 +1389,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             _vrmaAction.play(); // enabled=trueにするためだけに呼ぶ。時間進行はplay/pause状態(_vrmaPlaying)で制御
             _vrmaPlaying = false; // ロード直後は先頭フレームで一時停止
 
-            // LookAtマーカーとの競合回避: VRMAロード中は常にtargetをnullにする
-            if (currentVRM.lookAt) currentVRM.lookAt.target = null;
+            // VRMAロード直後もLookAtの現在の設定(ON/OFF・対象)をそのまま維持する
+            // (以前はここで強制的にtargetをnullにしていたが、_applyLookAtTargetの
+            // コメント参照の通りPose/LookAt共存の妨げになっていたため撤廃した)
+            _applyLookAtTarget();
 
             _vrmaMixer.update(0); // 先頭フレームのポーズを即時反映
             onComplete?.();
