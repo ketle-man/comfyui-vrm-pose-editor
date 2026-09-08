@@ -38,7 +38,7 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 | ⏱ | Timer capture toggle — auto-captures every `timer_interval` seconds |
 | VRM | Load VRM / GLB / GLTF file from local disk |
 | VRMA | Load a `.vrma` animation and play it back on the current VRM (see [VRMA Animation Playback](#vrma-animation-playback-vrma) below) |
-| VRMA (KEY) | Load a `.vrma` file and sample it into pose keyframes on the Light & Pose Editor's timeline instead of playing it back as a clip (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind) below). Opens the editor on its Pose tab automatically if it isn't already open |
+| VRMA (KEY) | Load a `.vrma` file and sample it into pose keyframes on the Light & Pose Editor's timeline instead of playing it back as a clip (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below). Opens the editor on its Pose tab automatically if it isn't already open |
 | CC | Color correction ON/OFF (sRGB + ACES Filmic) |
 
 **Row 2** (Light & Pose Editor / background / pose file)
@@ -58,7 +58,7 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 | Button | Function |
 |--------|----------|
-| 👁 | Toggle LookAt target — when ON, drag the cyan marker in the 3D view to steer the eyes/head (no effect if the model has no LookAt data) |
+| 👁 | Toggle LookAt target — when ON, drag the cyan marker in the 3D view to steer the eyes/head (no effect if the model has no LookAt data). The target can also be switched to the active camera instead of the marker, and LookAt keyframes can be recorded on the **👀 Eyes** track — see [LookAt Target](#lookat-target-) below |
 | 🎐 | Toggle spring bone physics (hair, skirts, etc.) — turning OFF freezes the current sway state |
 | 🌬 | Toggle a breeze wind effect on the spring bones (hair, skirts, etc.) — strength / direction / gustiness are adjusted in the Light & Pose Editor; has no effect while 🎐 is OFF |
 | 🧭 | Toggle the wind source marker — when ON, drag the orange cone in the 3D view to set the wind direction (same operation as the LookAt marker); while ON, the "direction" slider in the Light & Pose Editor is disabled |
@@ -73,7 +73,7 @@ Displays the name of the currently loaded VRM / GLB / GLTF file.
 
 #### LookAt Target (👁)
 
-When enabled, a cyan marker appears in the 3D view and the model's eyes/head automatically track its position. Drag the marker to steer the gaze. Resetting/loading a pose or mirroring re-anchors spring bones so nothing jumps unexpectedly. The marker itself is never captured in the output image.
+When enabled, the model's eyes/head automatically track a target — either a draggable cyan marker in the 3D view, or the currently active camera, switched with the **🎯 Marker / 🎥 Camera** toggle at the bottom of the Light & Pose Editor (next to 👁). In Marker mode, drag the marker to steer the gaze; the marker itself is never captured in the output image. In Camera mode, the gaze follows whichever camera is currently active every frame — while **🖥 Monitor** is on, it keeps looking at whichever camera was active right before Monitor was turned on instead of the free-roaming Monitor view itself (dragging that camera's helper icon moves the gaze too, just like dragging the marker). ON/OFF, target mode, and marker position can all be recorded as keyframes on their own **👀 Eyes** track — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below. Resetting/loading a pose or mirroring re-anchors spring bones so nothing jumps unexpectedly.
 
 #### Spring Bone Physics (🎐)
 
@@ -93,7 +93,7 @@ A single modal that combines what used to be three separate windows (Light Edito
 - Click **💡 Light** or **🕺 Pose** on the node to open it directly on the corresponding tab.
 - The header holds the **💡 Light / 🕺 pose** tab switcher, a **Point Size** slider (same control as the node's own Point Size slider below the canvas — moving either one updates the bone-handle marker size; the node's slider is re-synced when the modal closes), and a **📚 Library** button whose role depends on the active tab (see below).
 - The center pane embeds the **actual WebGL canvas** (not a copy), scaled to fit — bone dragging, camera orbit, and light-helper dragging all work natively inside the modal exactly as on the node.
-- A **keyframe timeline panel** is docked at the bottom and shared by both tabs — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind) below.
+- A **keyframe timeline panel** is docked at the bottom and shared by both tabs — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below.
 
 #### Light tab
 
@@ -120,7 +120,7 @@ The right pane (kept at the same width as the Light tab's Properties panel so th
 
 - **K sub-tab**:
   - **Model** — **Load MODEL**, a duplicate of the node's own model loader.
-  - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind)).
+  - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes)).
   - **Output** — **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF**, also moved here from the keyframe panel for the same reason.
 - **C sub-tab**: **Camera** properties for whichever camera is selected in the list — Name, Color, an OT/PR toggle, and **FOV**/**Near** sliders. These read/write the shared `editor` state for the currently *active* camera (same as the node's own OT/RC/FOV/Near controls), so either side stays in sync once the modal is closed or you switch tabs/cameras. (The Look at Target toggle used to live here too — it's been moved to the keyframe panel below, since it's a model-wide setting rather than a per-camera one.)
 
@@ -135,7 +135,7 @@ The **C** sub-tab manages multiple cameras, the same way the Light tab's **L** s
 - The scene starts with one camera (named **Camera 1**) plus any number of extra cameras added with **+ Add** (named **Camera 2**, **Camera 3**, ... in the order they were created — the number never gets reused, even if you delete an earlier camera and add a new one). Every camera is equal — none of them is special or protected, and any camera (including Camera 1) can be deleted with its **✕** button. Deleting the last remaining camera drops you into **🖥 Monitor** mode automatically (see below).
 - Clicking a camera in the list makes it the **active** camera immediately: the preview jumps to that camera's saved viewpoint, and from then on normal mouse-drag camera controls (orbit / pan / zoom / Alt+Right-drag roll — see [Camera Controls](#camera-controls)) move *that* camera. Switching away and back preserves its position, orientation, FOV, near-clip, and Orthographic/Perspective state exactly as you left them.
 - Cameras you aren't currently controlling are drawn in the 3D view as small camera-shaped helper icons, scaled so they read as roughly the same size on screen regardless of distance. You can also **drag** any of these helpers to reposition that camera directly in 3D — it doesn't need to be the active camera; this is the easiest way to place a camera and immediately record a **Camera track** keyframe for it (see below) without switching your own view away from what you're currently framing.
-- Each camera has a **color** (auto-assigned from a fixed palette when added, changeable from the **Color** field in its Properties) — this is the color its keyframes are drawn in on the timeline's **🎬 Cam Switch** track, so you can tell at a glance which cut belongs to which camera (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind) below).
+- Each camera has a **color** (auto-assigned from a fixed palette when added, changeable from the **Color** field in its Properties) — this is the color its keyframes are drawn in on the timeline's **🎬 Cam Switch** track, so you can tell at a glance which cut belongs to which camera (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below).
 
 #### Monitor (🖥)
 
@@ -143,17 +143,19 @@ The **🖥 Monitor** toggle sits at the right end of the Keyframe Timeline toolb
 
 Turning Monitor **OFF** hands control back to a real camera: if the current frame has a **Cam Switch** keyframe, its camera becomes active (matching what playback would show at that frame); otherwise it falls back to whichever camera was active right before you turned Monitor on, or the first camera in the list if that one's gone.
 
-### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind)
+If [LookAt Target](#lookat-target-) is enabled with its target set to **🎥 Camera**, the Monitor's free viewpoint is deliberately excluded from being that target — looking at a scouting viewpoint that isn't really "in the shot" wouldn't make sense. While Monitor is on, the gaze instead keeps following whichever camera was active right before Monitor was turned on; dragging that camera's helper icon moves the gaze in real time, exactly like dragging the LookAt marker.
+
+### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind · Eyes)
 
 Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / MP4 / GIF.
 
-The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one **Camera** track *per camera currently in the scene* (labelled with that camera's own icon and name, e.g. "🎥 Camera 1" / "📷 Camera 2" — the list grows/shrinks live as you add, delete, or rename cameras in the [C sub-tab](#camera-management-)), **🎬 Cam Switch**, **💡 Light**, and **🌬 Wind**. Only the selected track's keyframes are drawn on the timeline (pose = yellow, light = orange, wind = cyan, each per-camera Camera track = that camera's own color; Cam Switch markers are drawn in *each keyframe's own camera's color* too — see [Camera Management](#camera-management-)), and the **✚ Add/Update** / **− Delete** buttons always act on whichever track is selected (their color changes to match; the label itself no longer spells out the track name, since the dropdown already shows which one is selected). Dragging a marker (🔀 Move) onto a frame that already has a keyframe on a *different* track merges the two instead of overwriting the hidden track's data.
+The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one **Camera** track *per camera currently in the scene* (labelled with that camera's own icon and name, e.g. "🎥 Camera 1" / "📷 Camera 2" — the list grows/shrinks live as you add, delete, or rename cameras in the [C sub-tab](#camera-management-)), **🎬 Cam Switch**, **💡 Light**, **🌬 Wind**, and **👀 Eyes** (LookAt Target ON/OFF, target mode, and marker position — see [LookAt Target](#lookat-target-) above). Only the selected track's keyframes are drawn on the timeline (pose = yellow, light = orange, wind = cyan, eyes = cyan (matching the LookAt marker's own color), each per-camera Camera track = that camera's own color; Cam Switch markers are drawn in *each keyframe's own camera's color* too — see [Camera Management](#camera-management-)), and the **✚ Add/Update** / **− Delete** buttons always act on whichever track is selected (their color changes to match; the label itself no longer spells out the track name, since the dropdown already shows which one is selected). Dragging a marker (🔀 Move) onto a frame that already has a keyframe on a *different* track merges the two instead of overwriting the hidden track's data.
 
 **🗑 Delete Mode** is a second way to remove keyframes: turn it on, then click a marker on the selected track to delete it, or drag across several markers to erase them one after another like an eraser. It's mutually exclusive with 🔀 Move — turning one on switches the other off.
 
 | Control | Function |
 |---------|----------|
-| Track dropdown | Switches which track the Add/Delete buttons, the visible timeline markers, and 🔀 Move / 🗑 Delete Mode operate on: 🕺 Pose / one 📷 Camera track per camera / 🎬 Cam Switch / 💡 Light / 🌬 Wind |
+| Track dropdown | Switches which track the Add/Delete buttons, the visible timeline markers, and 🔀 Move / 🗑 Delete Mode operate on: 🕺 Pose / one 📷 Camera track per camera / 🎬 Cam Switch / 💡 Light / 🌬 Wind / 👀 Eyes |
 | ✚ Add/Update | Add a keyframe on the selected track at the current frame from whatever is currently set (or overwrite the one already there) |
 | − Delete | Delete the selected track's keyframe at the current frame |
 | 📚 + From Library | Pose track only. Pick a saved pose from the Pose Library and add it as a pose keyframe at the current frame |
@@ -166,17 +168,22 @@ The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one *
 | 🆕 New | Clear the entire timeline (all tracks) and start over |
 | 💾 Proj | Save/load the whole timeline as a named project on the server (`.kf_projects/`) |
 | RP / RC | Reset pose / reset camera — same as the node's own RP/RC buttons |
-| *pose · camera · cam-switch · light · wind* status | Keyframe count on each of the five tracks |
-| 👁 LookAt | Toggle the LookAt Target marker ON/OFF — moved here from the Pose tab's Properties panel, since it's a model-wide setting rather than a per-camera one |
+| *pose · camera · cam-switch · light · wind · eyes* status | Keyframe count on each of the six tracks |
+| 👁 LookAt | Toggle LookAt Target ON/OFF — moved here from the Pose tab's Properties panel, since it's a model-wide setting rather than a per-camera one |
+| 🎯 Marker / 🎥 Camera | Switches the LookAt Target between the draggable marker and the active camera — see [LookAt Target](#lookat-target-) above |
 | ↔ Mirror | Mirror the current pose left ↔ right — same as the node's own ↔ button |
 | ▶ / ⏸ | Play/pause the timeline. Plays from the current frame through the last frame and loops back to 0, regardless of whether any pose keyframes exist |
 | 📸 Capture | Same as the node's own 📸 Capture button — sends the current frame to the node's output |
 
 > **💾 Save .vrma**, **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF** used to live in this panel too — they've moved to the Pose tab's **K** sub-tab Properties (Pose Data / Output sections) to keep this toolbar from getting overcrowded. See [Pose tab](#pose-tab) above.
 
-#### Pose track — LookAt Target and Shape Keys
+#### Pose track — Shape Keys
 
-The LookAt Target's ON/OFF state and marker position, and the Shape Keys sliders' current values, are bundled onto pose keyframes automatically whenever you add/update one — they're treated as part of the character's pose rather than separate tracks. Both are interpolated during preview/playback, but — like camera/light/wind keyframes — they are **preview-only**; only bone rotations are written into the exported `.vrma` (the glTF-based `.vrma` format has no camera/light/wind/LookAt/shape-key animation, and that export was intentionally left out of scope for now). If you need any of that baked into a shareable file, use **🎬 WebM** or **🎞️ GIF** instead, which render exactly what you see.
+The Shape Keys sliders' current values are bundled onto pose keyframes automatically whenever you add/update one — they're treated as part of the character's pose rather than a separate track. They're interpolated during preview/playback, but — like camera/light/wind/eyes keyframes — this is **preview-only**; only bone rotations are written into the exported `.vrma` (the glTF-based `.vrma` format has no camera/light/wind/LookAt/shape-key animation, and that export was intentionally left out of scope for now). If you need any of that baked into a shareable file, use **🎬 WebM**, **🎥 MP4**, or **🎞️ GIF** instead, which render exactly what you see.
+
+#### Eyes track
+
+Records the [LookAt Target](#lookat-target-)'s ON/OFF state, target mode (Marker/Camera), and marker position as its own independent track — unlike Shape Keys, it's *not* bundled onto Pose keyframes, so you can key the gaze on its own timing without needing a pose change at the same frame (and, conversely, adding/updating a Pose keyframe never touches the Eyes track). Marker position is linearly interpolated between surrounding Eyes keyframes; ON/OFF and target mode are discrete and switch over at the end of the interval, the same way Cam Switch cuts to a camera. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
 
 #### Camera track
 
@@ -223,7 +230,7 @@ Usage:
 Notes:
 
 - Loading a new VRM/GLB/GLTF model clears the currently loaded VRMA.
-- While a VRMA is loaded, the 👁 LookAt marker is temporarily disabled (its target is cleared) to avoid fighting with the animation's own look-at track, if any. It's restored automatically once the VRMA is unloaded.
+- If [LookAt Target](#lookat-target-) is enabled, it keeps working on top of a loaded/playing `.vrma` — the eyes/head follow the live target every frame regardless of whatever the clip itself does with the head/eyes.
 
 #### Timer Capture (⏱)
 
@@ -410,7 +417,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 | ⏱ | タイマーキャプチャのトグル（`timer_interval` 秒ごとに自動キャプチャ） |
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
 | VRMA | `.vrma` アニメーションを読み込み、現在の VRM 上で再生（後述の[VRMAアニメーション再生](#vrmaアニメーション再生vrma)を参照） |
-| VRMA (KEY) | `.vrma` ファイルを読み込み、再生クリップとしてではなくLight & Pose Editorのタイムラインへポーズキーフレーム列としてサンプリング読み込みする（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwind)を参照）。モーダルが未オープンなら自動的にPoseタブで開く |
+| VRMA (KEY) | `.vrma` ファイルを読み込み、再生クリップとしてではなくLight & Pose Editorのタイムラインへポーズキーフレーム列としてサンプリング読み込みする（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）。モーダルが未オープンなら自動的にPoseタブで開く |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
 
 **2行目**（Light & Pose Editor・背景・ポーズファイル）
@@ -430,7 +437,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 
 | ボタン | 機能 |
 |--------|------|
-| 👁 | 視線ターゲットの ON/OFF。ON にすると 3D ビュー内のシアン色マーカーをドラッグして目・頭の向きを誘導できる（モデルに LookAt 情報が無い場合は効果なし） |
+| 👁 | 視線ターゲットの ON/OFF。ON にすると 3D ビュー内のシアン色マーカーをドラッグして目・頭の向きを誘導できる（モデルに LookAt 情報が無い場合は効果なし）。対象はマーカーの代わりにアクティブカメラへ切り替えることもでき、**👀 Eyes**トラックでキーフレーム化もできる — 詳細は後述の[視線ターゲット](#視線ターゲット-)を参照 |
 | 🎐 | 揺れ物理（髪・スカート等）の ON/OFF。OFF にすると現在の揺れ具合のまま固定される |
 | 🌬 | 揺れボーン（髪・スカート等）にそよ風エフェクトを加える ON/OFF。強さ・向き・そよぎはLight & Pose Editorで調整。🎐 が OFF の間は効果なし |
 | 🧭 | 風の発生源マーカーの ON/OFF。ON にすると 3D ビュー内のオレンジ色のコーンをドラッグして風向きを指定できる（視線マーカーと同じ操作方法）。ON の間、Light & Pose Editorの「向き」スライダーは無効化される |
@@ -445,7 +452,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 
 #### 視線ターゲット（👁）
 
-ON にすると 3D ビュー内にシアン色のマーカーが表示され、モデルの目・頭がマーカーの方向を自動的に追従します。マーカーをドラッグして視線の向きを調整できます。ポーズリセット・ポーズ読込・ミラー実行時は揺れボーンの内部状態を新しいポーズに合わせて再アンカーするため、切替直後に不自然に跳ねることはありません。マーカー自体は出力画像には写り込みません。
+ON にすると、モデルの目・頭が対象を自動的に追従します。対象は3Dビュー内のドラッグ可能なシアン色マーカー、またはその時点でアクティブなカメラのどちらかで、Light & Pose Editor下部（👁の右隣）の**🎯 Marker / 🎥 Camera**トグルで切り替えられます。Markerモードではマーカーをドラッグして視線の向きを調整でき、マーカー自体は出力画像には写り込みません。Cameraモードでは毎フレーム、その時点でアクティブなカメラの方を視線が追従します — **🖥 Monitor**がONの間は、自由に動き回れるMonitor自体ではなく、Monitorに入る直前にアクティブだったカメラを見続けます（そのカメラのヘルパーアイコンをドラッグすると、マーカーをドラッグしたときと同じように視線も追従します）。ON/OFF・対象モード・マーカー座標は、専用の**👀 Eyes**トラックでキーフレーム化できます — 詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照してください。ポーズリセット・ポーズ読込・ミラー実行時は揺れボーンの内部状態を新しいポーズに合わせて再アンカーするため、切替直後に不自然に跳ねることはありません。
 
 #### 揺れ物理（🎐）
 
@@ -465,7 +472,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 - ノードの **💡 Light** または **🕺 Pose** をクリックすると、対応するタブが直接開いた状態でモーダルが表示されます。
 - ヘッダーには **💡 Light / 🕺 pose** タブ切り替え、**Point Size** スライダー（ノード自身のPoint Sizeスライダーと同じ機能。どちらを動かしてもボーンハンドルの球サイズが変わり、モーダルを閉じるとノード側の表示値も再同期されます）、そしてタブに応じて役割が変わる **📚 Library** ボタンがあります（後述）。
 - 中央ペインには**実際のWebGLキャンバス**（コピーではない）が枠に合わせて埋め込まれ、ボーンドラッグ・カメラ操作・ライトヘルパードラッグがすべてノード上と全く同じようにモーダル内でネイティブに動作します。
-- 下部には両タブ共通の**キーフレームタイムラインパネル**が常設されています（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwind)を参照）。
+- 下部には両タブ共通の**キーフレームタイムラインパネル**が常設されています（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）。
 
 #### Lightタブ
 
@@ -492,7 +499,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 - **Kサブタブ**:
   - **Model** — **Load MODEL**（ノード側のモデルロード機能の複製）
-  - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwind)を参照）
+  - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）
   - **Output** — **🎬 WebM**・**🎥 MP4**・**🎞️ GIF**（こちらも同様の理由でキーフレームパネルから移設）
 - **Cサブタブ**: リストで選択中のカメラの**Camera**プロパティ — Name、Color、OT/PR切替、**FOV**/**Near**スライダー。共有の`editor`状態のうち現在**アクティブ**なカメラの状態を直接読み書きするため（ノード自身のOT/RC/FOV/Nearコントロールと同じ）、モーダルを閉じた際やタブ・カメラの切替時にどちら側も再同期されます。（以前ここにあった**Look at Target**トグルは、カメラごとではなくモデル全体の設定であるため、下部のキーフレームパネルへ移設しました。）
 
@@ -507,7 +514,7 @@ VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions
 - シーンには最初から1台のカメラ（**Camera 1**）が存在し、**+ Add**で好きなだけ追加できます（**Camera 2**、**Camera 3**...と作成順に命名され、途中のカメラを削除しても番号が使い回されることはありません）。すべてのカメラは対等で、特別扱いされ削除できないカメラはありません — Camera 1を含むどのカメラも**✕**ボタンで削除できます。最後の1台を削除すると自動的に**🖥 Monitor**モードへ切り替わります（後述）。
 - リストでカメラをクリックすると、そのカメラが即座に**アクティブ**になります: プレビューがそのカメラの保存済み視点へ切り替わり、以降は通常のマウスドラッグ操作（回転／パン／ズーム／Alt+右ドラッグでロール — [カメラ操作](#カメラ操作)参照）がそのカメラを動かすようになります。他のカメラへ切り替えて戻ってきても、位置・向き・FOV・ニアクリップ・Ortho/Perspective状態はそのまま保持されています。
 - 現在操作していないカメラは、3Dビュー内に小さなカメラ形状のヘルパーアイコンとして表示されます（距離に応じて画面上でほぼ一定のサイズに見えるようスケール調整されます）。このヘルパーは**ドラッグして直接位置を動かす**こともできます — アクティブにする必要はありません。狙った位置にカメラを置いて、そのまま**Cameraトラック**のキーフレームとして記録する（後述）のに使えます。
-- 各カメラは**色**を持ちます（追加時に固定パレットから自動割り当て、Propertiesの**Color**欄で変更可能）。この色は、タイムラインの**🎬 Cam Switch**トラック上でそのカメラのキーフレームを描画する色になり、どのカットがどのカメラのものか一目で分かるようになります（詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwind)を参照）。
+- 各カメラは**色**を持ちます（追加時に固定パレットから自動割り当て、Propertiesの**Color**欄で変更可能）。この色は、タイムラインの**🎬 Cam Switch**トラック上でそのカメラのキーフレームを描画する色になり、どのカットがどのカメラのものか一目で分かるようになります（詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）。
 
 #### Monitor（🖥）
 
@@ -515,17 +522,19 @@ VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions
 
 Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現在フレームに**Cam Switch**のキーフレームがあればそのカメラへ（再生時と同じ挙動）、無ければMonitorをONにする直前にアクティブだったカメラへ、それも既に削除されていればリスト先頭のカメラへフォールバックします。
 
-### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind）
+[視線ターゲット](#視線ターゲット-)がONで対象が**🎥 Camera**の場合、Monitorの自由視点はあえて対象から除外されています — 「撮影に写り込まない見回し用の視点」に視線を向けるのは意味が通らないためです。Monitor中は、Monitorに入る直前にアクティブだったカメラを見続け、そのカメラのヘルパーアイコンをドラッグすると視線もリアルタイムに追従します。
+
+### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind・Eyes）
 
 Light & Pose Editor下部（両タブ共通）に常設されたパネルで、フレームベースのタイムライン上にキーフレームを配置して短いアニメーションを作成し、プレビュー・保存・`.vrma`/WebM/MP4/GIFとして書き出せます。
 
-「🎬 Keyframes」見出し横のドロップダウンには、**🕺 Pose**、**シーン内のカメラの数だけ動的に増減するCameraトラック**（そのカメラ自身のアイコン・名前でラベル表示、例:「🎥 Camera 1」「📷 Camera 2」— [Cサブタブ](#カメラ管理)でカメラを追加/削除/リネームするたびにこのリストも連動します）、**🎬 Cam Switch**、**💡 Light**、**🌬 Wind**が並びます。タイムラインには選択中トラックのキーフレームだけが表示され（ポーズ＝黄、ライト＝橙、Wind＝水色、カメラごとのCameraトラックは**そのカメラ自身の色**、Cam Switchのマーカーも**そのキーフレームが指すカメラ自身の色**で描画されます — [カメラ管理](#カメラ管理)参照）、**✚ Add/Update**／**− Delete**ボタンは常に選択中トラックに対して動作します（色は連動して切り替わりますが、ドロップダウン側で既にどのトラックか分かるため、ラベル自体にはトラック名を含めていません）。マーカーを別フレームへドラッグ移動（🔀 Move）した際、移動先に**別トラック**のキーフレームが既にある場合は上書きせずマージされます。
+「🎬 Keyframes」見出し横のドロップダウンには、**🕺 Pose**、**シーン内のカメラの数だけ動的に増減するCameraトラック**（そのカメラ自身のアイコン・名前でラベル表示、例:「🎥 Camera 1」「📷 Camera 2」— [Cサブタブ](#カメラ管理)でカメラを追加/削除/リネームするたびにこのリストも連動します）、**🎬 Cam Switch**、**💡 Light**、**🌬 Wind**、**👀 Eyes**（Look at TargetのON/OFF・対象モード・マーカー座標 — 前述の[視線ターゲット](#視線ターゲット-)参照）が並びます。タイムラインには選択中トラックのキーフレームだけが表示され（ポーズ＝黄、ライト＝橙、Wind＝水色、カメラごとのCameraトラックは**そのカメラ自身の色**、Cam Switchのマーカーも**そのキーフレームが指すカメラ自身の色**で描画されます — [カメラ管理](#カメラ管理)参照）、**✚ Add/Update**／**− Delete**ボタンは常に選択中トラックに対して動作します（色は連動して切り替わりますが、ドロップダウン側で既にどのトラックか分かるため、ラベル自体にはトラック名を含めていません）。マーカーを別フレームへドラッグ移動（🔀 Move）した際、移動先に**別トラック**のキーフレームが既にある場合は上書きせずマージされます。
 
 **🗑 Delete Mode**は、キーフレームを削除するもう一つの方法です。ONにした状態で選択中トラックのマーカーをクリックすると削除、複数のマーカーをまたいでドラッグすると消しゴムのように連続削除できます。🔀 Moveとは排他（片方をONにするともう片方は自動でOFFになります）。
 
 | コントロール | 機能 |
 |-------------|------|
-| トラックのドロップダウン | Add/Deleteボタン・タイムライン上のマーカー・🔀 Move／🗑 Delete Modeの対象トラックを切り替える: 🕺 Pose / カメラごとの📷 Cameraトラック / 🎬 Cam Switch / 💡 Light / 🌬 Wind |
+| トラックのドロップダウン | Add/Deleteボタン・タイムライン上のマーカー・🔀 Move／🗑 Delete Modeの対象トラックを切り替える: 🕺 Pose / カメラごとの📷 Cameraトラック / 🎬 Cam Switch / 💡 Light / 🌬 Wind / 👀 Eyes |
 | ✚ Add/Update | 選択中トラックの現在フレームに、今の設定をキーフレームとして追加（既にあれば上書き） |
 | − Delete | 選択中トラックの現在フレームのキーフレームを削除 |
 | 📚 + From Library | Poseトラック専用。ポーズライブラリから選んで現在フレームにポーズKFとして追加 |
@@ -538,17 +547,22 @@ Light & Pose Editor下部（両タブ共通）に常設されたパネルで、�
 | 🆕 New | タイムライン（全トラック）を全クリアして新規作成 |
 | 💾 Proj | タイムライン全体をサーバー上（`.kf_projects/`）に名前を付けて保存/読込 |
 | RP / RC | ポーズ／カメラをリセット — ノード自身のRP/RCボタンと同じ機能 |
-| *pose · camera · cam-switch · light · wind* ステータス | 5トラックそれぞれのキーフレーム数 |
-| 👁 LookAt | Look at Targetマーカーの ON/OFF切替 — カメラごとの設定ではなくモデル全体の設定であるため、Poseタブ Propertiesパネルからこちらへ移設しました |
+| *pose · camera · cam-switch · light · wind · eyes* ステータス | 6トラックそれぞれのキーフレーム数 |
+| 👁 LookAt | Look at Targetの ON/OFF切替 — カメラごとの設定ではなくモデル全体の設定であるため、Poseタブ Propertiesパネルからこちらへ移設しました |
+| 🎯 Marker / 🎥 Camera | Look at Targetの対象を、ドラッグ可能なマーカーとアクティブカメラの間で切り替える — 前述の[視線ターゲット](#視線ターゲット-)を参照 |
 | ↔ Mirror | 現在のポーズを左右反転 — ノード自身の↔ボタンと同じ機能 |
 | ▶ / ⏸ | タイムラインの再生/一時停止。現在フレームから最後のフレームまで再生し先頭へループ。ポーズキーフレームの有無に関わらず動作する |
 | 📸 Capture | ノード自身の📸 Captureボタンと同じ機能 — 現在フレームをノード出力へ送信 |
 
 > **💾 Save .vrma**・**🎬 WebM**・**🎥 MP4**・**🎞️ GIF**は以前このパネルにありましたが、ツールバーが手狭になってきたためPoseタブの**K**サブタブ Properties（Pose Data／Outputセクション）へ移設しました。詳細は前述の[Poseタブ](#poseタブ)を参照してください。
 
-#### Poseトラック — Look at TargetとShape Keys
+#### Poseトラック — Shape Keys
 
-Look at Targetの ON/OFF・マーカー座標と、Shape Keysスライダーの現在値は、ポーズKFを追加/更新するたびに自動で束ねて保存されます（別トラックにはせず、キャラクターの姿勢の一部として扱う設計）。どちらもプレビュー/再生時には補間されますが、カメラ・ライト・Windの各KFと同様に**プレビュー専用**です。エクスポートされる`.vrma`にはボーン回転のみが書き出されます（glTFベースの`.vrma`形式にはカメラ/ライト/Wind/LookAt/シェイプキーのアニメーションが存在せず、これらの書き出しは現時点では意図的にスコープ外としています）。これらまで含めて共有可能な形にしたい場合は、見たままをそのまま録画する**🎬 WebM**・**🎥 MP4**・**🎞️ GIF**を使ってください。
+Shape Keysスライダーの現在値は、ポーズKFを追加/更新するたびに自動で束ねて保存されます（別トラックにはせず、キャラクターの姿勢の一部として扱う設計）。プレビュー/再生時には補間されますが、カメラ・ライト・Wind・Eyesの各KFと同様に**プレビュー専用**です。エクスポートされる`.vrma`にはボーン回転のみが書き出されます（glTFベースの`.vrma`形式にはカメラ/ライト/Wind/LookAt/シェイプキーのアニメーションが存在せず、これらの書き出しは現時点では意図的にスコープ外としています）。これらまで含めて共有可能な形にしたい場合は、見たままをそのまま録画する**🎬 WebM**・**🎥 MP4**・**🎞️ GIF**を使ってください。
+
+#### Eyesトラック
+
+[視線ターゲット](#視線ターゲット-)のON/OFF・対象モード（Marker/Camera）・マーカー座標を、独立したトラックとして記録します。Shape Keysと違い、ポーズKFには束ねられません — ポーズを変えずに視線だけを別のタイミングでキー打ちでき、逆にポーズKFを追加/更新してもEyesトラックには一切影響しません。マーカー座標は前後のEyes KF間で線形補間され、ON/OFFと対象モードは離散値としてCam Switchのカット切替と同じように区間終端で切り替わります。他の非Poseトラックと同様、**プレビュー専用**であり、エクスポートされる`.vrma`には含まれません。
 
 #### Cameraトラック
 
@@ -595,7 +609,7 @@ WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出し�
 注意点:
 
 - 新しいVRM/GLB/GLTFモデルを読み込むと、読み込み中のVRMAはクリアされます。
-- VRMAが読み込まれている間、👁視線ターゲットマーカーは一時的に無効化されます（targetがクリアされます）。これはアニメーション自身が持つ視線トラックとの競合を避けるためです。VRMAをアンロードすると自動的に復元されます。
+- [視線ターゲット](#視線ターゲット-)がONの場合、読み込み中/再生中の`.vrma`の上からでも引き続き機能します — クリップ自身が頭・目に対して何をしていても、毎フレーム実際のターゲットの方を目・頭が追従します。
 
 #### タイマーキャプチャ（⏱）
 
@@ -785,9 +799,12 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 - **Core module**: `js/pose_editor_core.js` exports `initPoseEditor3D()` with zero ComfyUI dependency, so it can be imported directly from external pages (e.g. `/extensions/comfyui-vrm-pose-editor/pose_editor_core.js`) alongside `light_editor.js` / `pose_library.js` / `pose_vrma_export.js`
 - **Wind effect**: implemented entirely in `pose_editor_core.js` by overwriting each `VRMSpringBoneJoint`'s `settings.gravityDir`/`gravityPower` every frame (`_applyWindToSpringBones()`), computed as "the joint's original gravity vector (captured on model load) + a wind vector"; the vendor `three-vrm` module is unmodified. The wind vector is a sum of sine waves at several periods so strength and direction gust gently over time (`_computeWindVector()` for the angle-slider mode, `_computeWindVectorFromSource()` for the marker mode — the latter builds a pseudo-up axis orthogonal to the marker→reference-point direction and rotates the gust around it, so it generalizes cleanly to any 3D direction). Has no effect while spring bone physics is OFF, since `VRMSpringBoneJoint.update()` returns immediately when `delta <= 0`.
 - **Wind source marker**: a cone mesh (`windSourceHelperMesh`) added to the scene and hidden by default, reusing the exact same pointerdown/move/up drag-on-a-camera-facing-plane logic as the 👁 LookAt marker. It is excluded from `capture()` output the same way the LookAt marker is.
-- **VRMA playback**: [@pixiv/three-vrm-animation 2.1.0](https://github.com/pixiv/three-vrm/tree/release/packages/three-vrm-animation) (bundled locally in `js/vendor/`, matching the existing three-vrm 2.1.0). `.vrma` files are loaded through a dedicated `GLTFLoader` instance with `VRMAnimationLoaderPlugin` registered, retargeted onto the current VRM's normalized humanoid bones via `createVRMAnimationClip()`, and played with a `THREE.AnimationMixer(vrm.scene)`. Playback of a single loaded `.vrma` clip (the node's own VRMA button) is driven by an explicit `_vrmaPlaying` flag rather than `AnimationAction.paused` (the latter also zeroes out `deltaTime` during a `mixer.update()`-based seek, which would break scrubbing); pausing simply stops calling `mixer.update()` each frame, so `exportPose()`/`capture()` see the frozen bone quaternions with no changes needed on their end. Because a VRMA's own LookAt track (if present) drives `vrm.lookAt` directly via `VRMLookAtQuaternionProxy`, the 👁 LookAt marker's `target` is cleared for the duration a VRMA is loaded to avoid the two fighting over the same output.
+- **VRMA playback**: [@pixiv/three-vrm-animation 2.1.0](https://github.com/pixiv/three-vrm/tree/release/packages/three-vrm-animation) (bundled locally in `js/vendor/`, matching the existing three-vrm 2.1.0). `.vrma` files are loaded through a dedicated `GLTFLoader` instance with `VRMAnimationLoaderPlugin` registered, retargeted onto the current VRM's normalized humanoid bones via `createVRMAnimationClip()`, and played with a `THREE.AnimationMixer(vrm.scene)`. Playback of a single loaded `.vrma` clip (the node's own VRMA button) is driven by an explicit `_vrmaPlaying` flag rather than `AnimationAction.paused` (the latter also zeroes out `deltaTime` during a `mixer.update()`-based seek, which would break scrubbing); pausing simply stops calling `mixer.update()` each frame, so `exportPose()`/`capture()` see the frozen bone quaternions with no changes needed on their end. An earlier version cleared `vrm.lookAt.target` for the duration any VRMA clip was loaded, on the theory that a VRMA's own LookAt track (if present) would fight with the marker/camera-driven LookAt over the same bones — this was removed once the LookAt target-mode work below made permanent coexistence the intended design (see the `_applyLookAtTarget` note there for why the fight never actually needed avoiding).
+- **LookAt target modes**: `_lookAtTargetMode` (`"marker"` | `"camera"`) picks what `vrm.lookAt.target` points at. Camera mode assigns a plain `THREE.Object3D` proxy (`lookAtCameraProxy`) rather than the live camera object directly, and copies the active camera's `.position` onto it every `animate()` frame before `currentVRM.update()` runs — `Object3D.getWorldPosition()` calls `updateWorldMatrix()` internally, so `vrm.lookAt` always reads the current-frame position with no extra lag. While **🖥 Monitor** is active (`activeCameraId === null`), that per-frame copy switches to reading `managedCameras.find(c => c.id === _lastActiveBeforeMonitor).config.position` instead of the live (Monitor) camera — the same `config` object that helper-dragging a non-active camera already keeps live (see Multi-camera management below), so dragging that camera's helper while in Monitor mode moves the gaze with no additional wiring.
+- **Eyes track and the Pose/LookAt split**: `kf.lookAt` (`{enabled, targetMode, position}`) is read/written *only* by the Eyes track's own capture/delete functions. It used to also be captured and cleared by the Pose track (bundled the same way Shape Keys still are), which caused two bugs once cameras/keyframes were layered on top of the original marker-only LookAt: adding a Pose keyframe would silently overwrite whatever gaze was already keyed on a given frame with "whatever the eyes happened to be doing at pose-capture time," breaking Eyes-track interpolation between real keyframes; and — independently — `editor.exportPose()` bakes *every* humanoid bone including `leftEye`/`rightEye` into pose keyframes, so the self-loadback preview clip (`refreshPreview()`) would carry eye-bone tracks that fought with LookAt's own per-frame bone writes. `refreshPreview()` now strips `leftEye`/`rightEye` from each keyframe's bones before building the preview clip whenever LookAt is enabled (does not affect the bones written into a downloaded `.vrma`), and `applyShapeKeysForFrame()` similarly skips the VRM1 lookAt-preset expression names (`lookUp`/`lookDown`/`lookLeft`/`lookRight`) while LookAt is on, in case a given model's LookAt is expression-based rather than bone-based.
+- **Pose/LookAt coexistence fix**: even after the split above, adding a single Pose keyframe still left LookAt permanently disabled. `loadVRMAFromBuffer()` — the function every preview-clip rebuild and every real `.vrma` load goes through — used to unconditionally set `currentVRM.lookAt.target = null` "to avoid fighting with the VRMA's own look-at track," and `_applyLookAtTarget()` had an early `if (_vrmaMixer) return` guard that made every subsequent ON/OFF toggle, target-mode switch, and Eyes-keyframe application a no-op for as long as any VRMA clip (including the self-preview one) stayed loaded — which, once any Pose keyframe exists, is permanently. Both were removed: `loadVRMAFromBuffer()` now calls `_applyLookAtTarget()` instead of forcing `null`, and `_applyLookAtTarget()` always sets `lookAt.target` from the current enabled/mode state. This is safe because `animate()` always calls `currentVRM.update()` (which runs `vrm.lookAt.update()`) *after* any `_vrmaMixer.update()` call in the same frame, so LookAt's own bone writes are guaranteed to be the last ones each frame regardless of whether a VRMA clip is loaded or playing.
 - **VRMA export**: [three.js `GLTFExporter`](https://github.com/mrdoob/three.js/blob/r160/examples/jsm/exporters/GLTFExporter.js) (bundled locally as `js/vendor/GLTFExporter.js`, matching the existing three.js r160; its `TextureUtils.js` dependency lives in `js/utils/`). Keyframe poses (`{boneName:{qx,qy,qz,qw}}`, the same shape `exportPose()` produces) are converted into a `THREE.AnimationClip` of per-bone `QuaternionKeyframeTrack`s named `` `${normalizedBoneNode.name}.quaternion` ``, matching the naming `GLTFExporter` resolves against the exported scene automatically. The export target is `humanoid.normalizedHumanBonesRoot` (bones only, no mesh/material data), temporarily reset to its T-pose via `resetNormalizedPose()`/`setNormalizedPose()` for the duration of the export (VRMA's reference skeleton must be a rest pose) and restored immediately after. A custom exporter plugin (`VRMCVrmAnimationExporterPlugin`, registered via `GLTFExporter.register()`) adds the `VRMC_vrm_animation` extension in its `afterParse` hook, resolving each bone's node index from `writer.nodeMap` (populated by the time `afterParse` runs). Source poses from a VRM0 model have their quaternion x/z components flipped before being written, since the VRMA spec's reference space is VRM1-canonical (mirroring the flip `createVRMAnimationHumanoidTracks` applies at load time when the *playback* target is VRM0) — this path is implemented but not yet verified against a real VRM0 model.
-- **Keyframe timeline**: a single flat array of frame-indexed entries, `{frame, bones?, label?, shapeKeys?, lookAt?, cameras?, cameraId?, light?, wind?}` — one entry per frame can carry data for more than one track simultaneously (`cameras` is an object keyed by camera id, e.g. `{0: {position,target,up,fov}, 2: {...}}`, one entry per camera that has a keyframe at that frame). Tracks are declared as a `TRACKS` table rebuilt on every camera add/remove/rename (`buildTracks()`/`refreshTracks()`), keyed `pose` / `camera:<id>` (one per camera currently in the scene) / `cameraSwitch` / `light` / `wind`. Every track exposes the same four-function accessor interface — `hasData(kf)` / `getValue(kf)` / `setValue(kf, v)` / `clearValue(kf)` — so the simple single-field tracks (built by a small `fieldAccessors(field)` factory) and the nested per-camera tracks (`cameraTrackAccessors(cameraId)`, reading/writing `kf.cameras[cameraId]`) are indistinguishable to everything else that drives the timeline: the track-select dropdown, the Add/Delete buttons, the marker-drawing filter, hit-testing for 🔀 Move / 🗑 Delete Mode, and the empty-entry check (`isEntryEmpty()`, replacing an earlier hand-written `!kf.bones && !kf.camera && ...` chain that had to be edited by hand every time a track was added). Camera keyframes (`{position, target, up, fov}`) are linearly interpolated per-camera (`up` is normalized after interpolation so camera roll blends smoothly) and applied via `editor.updateCameraConfig(cameraId, state)`, which writes straight into that camera's stored config regardless of whether it's the one currently on screen. Cam Switch keyframes store only `cameraId` (a plain number, deliberately checked with `!== undefined` everywhere rather than a truthy check, since a camera's id can be `0`); playback walks the sorted list of Cam Switch keyframes and snaps `editor.setActiveCameraId()` to whichever one's frame is `<= currentFrame` — no interpolation, matching the same "switches at the interval's end" pattern LookAt's ON/OFF uses. Light keyframes store `{lights: [...editor.getLights()]}`, matched between keyframes by light `id`; Wind keyframes store `{enabled, strength, direction, turbulence, sourceEnabled, sourcePosition}`. Both are interpolated by a shared generic `lerpLightConfig(a, b, t)` that inspects each field's shape at runtime (number → lerp, `{x,y,z}` → vector-lerp, anything else → switches over at `t=1`), reused as-is for Wind since its fields happen to fit the same three shapes. LookAt (`{enabled, position}`) and Shape Keys (`{name: value}`) are bundled onto pose keyframes rather than living on their own track. 🔀-Move onto an occupied frame now moves only the *selected track's* value (`track.getValue`/`clearValue`/`setValue`) rather than the whole entry — an earlier version copied the entire source entry with `Object.assign(dest, moved)`, which silently dragged along whatever other tracks happened to share that frame. Playback is driven by the panel's own `requestAnimationFrame` timer advancing one frame every `1000/fps` ms and looping at `totalFrames` — deliberately *not* tied to `AnimationMixer`/`isVRMAPlaying()`, since those only exist once at least one pose keyframe has produced a loaded `.vrma` clip, and their `duration` would otherwise cap playback at the last pose keyframe instead of the full timeline. Projects (the full `{fps, totalFrames, keyframes}` state) are saved/loaded server-side (`.kf_projects/`, same pattern as light presets); a `migrateLegacyCameraField()` pass on load rewrites the pre-multi-camera `kf.camera` single field into `kf.cameras = {0: kf.camera}` for backward compatibility.
+- **Keyframe timeline**: a single flat array of frame-indexed entries, `{frame, bones?, label?, shapeKeys?, lookAt?, cameras?, cameraId?, light?, wind?}` — one entry per frame can carry data for more than one track simultaneously (`cameras` is an object keyed by camera id, e.g. `{0: {position,target,up,fov}, 2: {...}}`, one entry per camera that has a keyframe at that frame). Tracks are declared as a `TRACKS` table rebuilt on every camera add/remove/rename (`buildTracks()`/`refreshTracks()`), keyed `pose` / `camera:<id>` (one per camera currently in the scene) / `cameraSwitch` / `light` / `wind` / `eyes`. Every track exposes the same four-function accessor interface — `hasData(kf)` / `getValue(kf)` / `setValue(kf, v)` / `clearValue(kf)` — so the simple single-field tracks (built by a small `fieldAccessors(field)` factory) and the nested per-camera tracks (`cameraTrackAccessors(cameraId)`, reading/writing `kf.cameras[cameraId]`) are indistinguishable to everything else that drives the timeline: the track-select dropdown, the Add/Delete buttons, the marker-drawing filter, hit-testing for 🔀 Move / 🗑 Delete Mode, and the empty-entry check (`isEntryEmpty()`, replacing an earlier hand-written `!kf.bones && !kf.camera && ...` chain that had to be edited by hand every time a track was added). Camera keyframes (`{position, target, up, fov}`) are linearly interpolated per-camera (`up` is normalized after interpolation so camera roll blends smoothly) and applied via `editor.updateCameraConfig(cameraId, state)`, which writes straight into that camera's stored config regardless of whether it's the one currently on screen. Cam Switch keyframes store only `cameraId` (a plain number, deliberately checked with `!== undefined` everywhere rather than a truthy check, since a camera's id can be `0`); playback walks the sorted list of Cam Switch keyframes and snaps `editor.setActiveCameraId()` to whichever one's frame is `<= currentFrame` — no interpolation, matching the same "switches at the interval's end" pattern LookAt's ON/OFF uses. Light keyframes store `{lights: [...editor.getLights()]}`, matched between keyframes by light `id`; Wind keyframes store `{enabled, strength, direction, turbulence, sourceEnabled, sourcePosition}`. Both are interpolated by a shared generic `lerpLightConfig(a, b, t)` that inspects each field's shape at runtime (number → lerp, `{x,y,z}` → vector-lerp, anything else → switches over at `t=1`), reused as-is for Wind since its fields happen to fit the same three shapes. Shape Keys (`{name: value}`) are bundled onto pose keyframes rather than living on their own track; LookAt (`{enabled, targetMode, position}`, stored under `kf.lookAt`) used to be bundled the same way but now lives on its own `eyes` track — see the LookAt bullets below for why that split was necessary. 🔀-Move onto an occupied frame now moves only the *selected track's* value (`track.getValue`/`clearValue`/`setValue`) rather than the whole entry — an earlier version copied the entire source entry with `Object.assign(dest, moved)`, which silently dragged along whatever other tracks happened to share that frame. Playback is driven by the panel's own `requestAnimationFrame` timer advancing one frame every `1000/fps` ms and looping at `totalFrames` — deliberately *not* tied to `AnimationMixer`/`isVRMAPlaying()`, since those only exist once at least one pose keyframe has produced a loaded `.vrma` clip, and their `duration` would otherwise cap playback at the last pose keyframe instead of the full timeline. Projects (the full `{fps, totalFrames, keyframes}` state) are saved/loaded server-side (`.kf_projects/`, same pattern as light presets); a `migrateLegacyCameraField()` pass on load rewrites the pre-multi-camera `kf.camera` single field into `kf.cameras = {0: kf.camera}` for backward compatibility.
 - **🗑 Delete Mode**: reuses the exact click/drag detection `nearestKeyframe()` already provides for 🔀 Move, but instead of moving the hit keyframe it calls the selected track's `delete()` — which is hard-coded to act on `currentFrame` — after temporarily setting `currentFrame` to the hit keyframe's frame and restoring it (plus a forced `drawTimeline()`) immediately after, so the playhead doesn't visibly jump to the deleted frame. Mutually exclusive with 🔀 Move (toggling one clears the other's flag and cursor style).
 - **Multi-camera management**: `managedCameras` is an array of `{id, name, color, config, helperMesh}` — every camera is equal, none is protected from deletion. Only the *active* camera ever has a live Three.js presence — it's whichever camera currently owns `perspCamera`/`orthoCamera`/`orbit` (the same objects every other camera-related feature already reads from, so `raycaster.setFromCamera()`, `renderer.render()`, roll/pan/zoom, etc. needed no changes) — but `getCameraConfig(id)`/`updateCameraConfig(id, changes)` can read/write *any* camera's config transparently regardless of whether it's active, which is what lets the Camera track record/scrub a non-active camera and what lets a helper-drag move one directly. Switching cameras snapshots the outgoing camera's live state into its `config` (`_captureLiveCameraConfig()`: position/quaternion/up/target/fov/near/isOrtho) and loads the incoming camera's `config` back onto the live objects (`_applyCameraConfigToLive()`). Non-active cameras are drawn as a small box+cone helper mesh (`THREE.Group`, `userData.isCameraHelper`/`cameraId`) tinted to the camera's own color and rescaled every frame to a roughly constant on-screen size (`scale = distance-to-active-camera × constant`); the same pointerdown/move/up handler used for light-helper dragging raycasts these helpers' child meshes, resolves the hit back to its parent `Group`'s `userData.cameraId`, and drags it across a camera-facing plane exactly like a light. **🖥 Monitor** (free third-person view) is modelled as `activeCameraId === null`: `_setActiveCamera(null)` snapshots whichever camera was live into its `config` and detaches the live Three.js objects from every managed camera without moving them, so the view stays exactly where you were; `_setMonitorMode(on)` remembers the previously-active camera (`_lastActiveBeforeMonitor`) as the OFF fallback, and the keyframe panel additionally re-runs `applyCameraSwitchForFrame()`/`applyAllCameraTracksForFrame()` right after turning Monitor off so the current frame's Cam Switch state (if any) takes priority over that fallback. Helper visibility (`_updateCameraHelperVisibility()`) is `(_cameraHelpersShown || activeCameraId === null) && c.id !== activeCameraId` — so every camera shows up as a draggable helper while Monitor is on, independent of which tab/sub-tab is open, on top of the existing "C sub-tab is open" condition. `getCameraConfig`/`updateCameraConfig` also let `applyCameraSwitchForFrame()`/`applyCameraTrackForFrame()` early-return while Monitor is active, so timeline playback never fights the free view.
 - **Alt+Right-drag roll fix**: fixed as part of the multi-camera work — the roll handler previously always rotated `perspCamera.up` even while Orthographic was active (`camera === orthoCamera`), so the visible roll and the value captured into a camera's `config` could silently disagree. It now rotates whichever object `camera` currently points at and re-syncs `perspCamera.up` afterward when Orthographic is active.
