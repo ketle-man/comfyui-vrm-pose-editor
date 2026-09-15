@@ -775,13 +775,15 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 | `custom_width` / `custom_height` | INT | Output size in Custom mode |
 | `timer_interval` | INT | Timer capture interval in seconds (1 – 3600, default 5) |
 | **output: image** | IMAGE | Captured pose image (Torch tensor) |
+| **output: mask** | MASK | Alpha channel of the composited 3D capture layer (all-zero if no pose image) |
+| **output: inverted_mask** | MASK | `1 - mask` |
 
 ---
 
 ## Technical Specs
 
 - **Frontend**: JavaScript + [Three.js r160](https://threejs.org/) + [@pixiv/three-vrm 2.1.0](https://github.com/pixiv/three-vrm) (bundled locally)
-- **Backend**: Python — Base64 PNG → PIL → Torch Tensor
+- **Backend**: Python — Base64 PNG → PIL → Torch Tensor; `mask`/`inverted_mask` are derived from the composited pose layer's alpha channel
 - **Pose Library API**: aiohttp routes registered via `@PromptServer.instance.routes`; also serves `.vrma` binaries (`GET /pose_library/vrma_content`) and accepts server-side `.vrma` saves (`POST /pose_library/save_vrma`)
 - **Keyframe Project Library API**: `GET/POST /kf_project/*` — timeline projects stored in `.kf_projects/`, same route pattern as the Light Library API
 - **Light Library API**: `GET/POST /light_library/*` — presets stored in `.light_library/` as `l_HHMMSS.json`

@@ -28,8 +28,8 @@ class PoseEditor3DNode:
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK")
+    RETURN_NAMES = ("image", "mask", "inverted_mask")
     FUNCTION = "export_pose"
     CATEGORY = "3D Pose"
     OUTPUT_NODE = False
@@ -89,6 +89,7 @@ class PoseEditor3DNode:
             result.paste(bg_resized, (0, 0))
 
         # 3Dキャプチャ画像を重ねる（JSでクロップ済み・アスペクト比保証済み）
+        pose_resized = None
         if pose_pil is not None:
             pose_resized = pose_pil.resize((out_w, out_h), Image.LANCZOS) if pose_pil.size != (out_w, out_h) else pose_pil
             result.paste(pose_resized, (0, 0), pose_resized)
@@ -97,7 +98,16 @@ class PoseEditor3DNode:
         result_rgb = result.convert("RGB")
         img_array = np.array(result_rgb).astype(np.float32) / 255.0
         img_tensor = torch.from_numpy(img_array).unsqueeze(0)  # (1, H, W, C)
-        return (img_tensor,)
+
+        # ---- マスク生成（3Dキャプチャ画像のアルファチャンネル基準） ----
+        if pose_resized is not None:
+            mask_array = np.array(pose_resized.split()[-1]).astype(np.float32) / 255.0
+        else:
+            mask_array = np.zeros((out_h, out_w), dtype=np.float32)
+        mask_tensor = torch.from_numpy(mask_array).unsqueeze(0)  # (1, H, W)
+        inverted_mask_tensor = 1.0 - mask_tensor
+
+        return (img_tensor, mask_tensor, inverted_mask_tensor)
 
     @classmethod
     def IS_CHANGED(cls, image_data, output_size_mode="Standard",
