@@ -633,8 +633,11 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
             title: pose.name,
             style: "font-size:10px;color:#ccc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:bold;",
         }, pose.name);
+        // 拡張子ごとに文字色を分ける(.json = グリーン / .vrma = ピンク / .vroidpose = 水色 / その他は従来色)
+        const EXT_COLORS = { ".json": "#6fd68a", ".vrma": "#ff8ac8", ".vroidpose": "#6ccff6" };
         const extBadge = el("span", {
-            style: "font-size:9px;background:#2a2a44;color:#7a8aaa;padding:1px 4px;border-radius:3px;",
+            style: "font-size:9px;background:#2a2a44;padding:1px 4px;border-radius:3px;" +
+                   `color:${EXT_COLORS[pose.ext] ?? "#7a8aaa"};`,
         }, pose.ext);
         const memoEl = el("div", {
             title: pose.memo || "",
