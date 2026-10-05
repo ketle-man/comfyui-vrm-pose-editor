@@ -6,7 +6,7 @@
 // ・設定値 defaultModel: "" = 自動(model/ の先頭のファイル) / NONE_MODEL = 読み込まない / それ以外 = ファイル名
 // ・モデルは同梱しない。model/ が空ならモデル無しで起動する
 
-import { api } from "../../scripts/api.js";
+import { fetchApi, apiURL } from "./comfy_api.js";
 
 export const NONE_MODEL = "__none__";
 const SETTINGS_FILE = "vrm_pose_editor_settings.json";
@@ -16,7 +16,7 @@ let _settingsCache = null;
 export async function loadEditorSettings() {
     if (_settingsCache) return _settingsCache;
     try {
-        const res = await api.fetchApi(`/userdata/${encodeURIComponent(SETTINGS_FILE)}`);
+        const res = await fetchApi(`/userdata/${encodeURIComponent(SETTINGS_FILE)}`);
         _settingsCache = res.ok ? await res.json() : {};
     } catch {
         _settingsCache = {};
@@ -26,7 +26,7 @@ export async function loadEditorSettings() {
 
 export async function saveEditorSettings(patch) {
     const next = { ...(await loadEditorSettings()), ...patch };
-    const res = await api.fetchApi(`/userdata/${encodeURIComponent(SETTINGS_FILE)}?overwrite=true`, {
+    const res = await fetchApi(`/userdata/${encodeURIComponent(SETTINGS_FILE)}?overwrite=true`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next, null, 2),
@@ -38,13 +38,13 @@ export async function saveEditorSettings(patch) {
 
 // { models: [{ name, ext, size }], dir }
 export async function listModels() {
-    const res = await api.fetchApi("/pose_editor/models");
+    const res = await fetchApi("/pose_editor/models");
     if (!res.ok) throw new Error(`モデル一覧を取得できませんでした (HTTP ${res.status})`);
     return res.json();
 }
 
 export function modelUrl(name) {
-    return api.apiURL(`/pose_editor/models/${encodeURIComponent(name)}`);
+    return apiURL(`/pose_editor/models/${encodeURIComponent(name)}`);
 }
 
 // 既定モデルを決める。戻り値: { name, url } / null(読み込まない・model/ が空・取得失敗)

@@ -451,7 +451,6 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             defModelInfo.textContent = `読み込みに失敗しました: ${e.message ?? e}`;
         }
     };
-    void refreshDefaultModelList();
     const defModelRow = el("div", { style: "display:flex;gap:4px;align-items:center;" });
     defModelRow.append(defModelSel, defModelRefresh);
 
@@ -460,13 +459,20 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         zoomModeBtn,
         sectionTitle("Rendering"),
         aaBtn,
-        sectionTitle("Default Model"),
-        defModelRow,
-        defModelLoadBtn,
-        defModelInfo,
-        el("div", { style: "font-size:10px;color:#556;line-height:1.5;" },
-            "model/ フォルダに .vrm / .glb / .gltf を置くと選べます。選択は保存され、ノード作成時・ページ読み込み時に自動で読み込まれます。"),
     );
+    // Default Model は ComfyUI ノード(pose_editor_3d.js)の既定モデルの設定なので、ノードから開いたとき
+    // (nodeActions.loadVrmFile がある)だけ表示する。Comic Creator 等の単独ページから開いた場合は出さない
+    if (nodeActions?.loadVrmFile) {
+        void refreshDefaultModelList();
+        sBody.append(
+            sectionTitle("Default Model"),
+            defModelRow,
+            defModelLoadBtn,
+            defModelInfo,
+            el("div", { style: "font-size:10px;color:#556;line-height:1.5;" },
+                "model/ フォルダに .vrm / .glb / .gltf を置くと選べます。選択は保存され、ノード作成時・ページ読み込み時に自動で読み込まれます。"),
+        );
+    }
 
     subTabContent.append(lBody, eBody, sBody);
     lightLeftWrap.append(subTabStrip, subTabContent);

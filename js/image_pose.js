@@ -5,7 +5,7 @@
 // ComfyUI の HTTP API(/upload/image → /prompt → /history → /view)でワークフローとして実行し、
 // 出力された GLB をバイト列として受け取って解析するだけにしている。モデルはユーザーが各自のライセンスに同意して導入する。
 
-import { api } from "../../scripts/api.js";
+import { fetchApi, clientId } from "./comfy_api.js";
 import {
     classifyGlb, parseOpenposeGlb, parseMeshHands, samToPose,
     solvePose, defaultSolveOptions, captureRig, applySolvedPose,
@@ -19,7 +19,7 @@ const PREFERRED_MODEL = "sam_3d_body_dinov3_bf16.safetensors";
 // ================================================================
 
 async function getJson(path) {
-    const res = await api.fetchApi(path);
+    const res = await fetchApi(path);
     if (!res.ok) throw new Error(`ComfyUI ${path}: HTTP ${res.status}`);
     return res.json();
 }
@@ -79,7 +79,7 @@ function buildWorkflow(imageName, modelFile, prefix) {
 
 async function downloadOutput(o) {
     const q = new URLSearchParams({ filename: o.filename, subfolder: o.subfolder ?? "", type: o.type ?? "output" });
-    const res = await api.fetchApi(`/view?${q}`);
+    const res = await fetchApi(`/view?${q}`);
     if (!res.ok) throw new Error(`ComfyUI の出力を取得できません: ${o.filename} (HTTP ${res.status})`);
     return res.arrayBuffer();
 }
@@ -90,16 +90,16 @@ export async function runSam3d(imageBlob, imageExt, modelFile, onStatus, signal)
     const form = new FormData();
     form.append("image", imageBlob, `vrmpose_sam_input.${imageExt || "png"}`);
     form.append("overwrite", "true");
-    const up = await api.fetchApi("/upload/image", { method: "POST", body: form, signal });
+    const up = await fetchApi("/upload/image", { method: "POST", body: form, signal });
     if (!up.ok) throw new Error(`ComfyUI への画像送信に失敗しました (HTTP ${up.status})`);
     const uploaded = await up.json();
     const imageName = uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name;
 
     const prefix = `3d/vrmpose_sam_${Date.now()}`;
-    const res = await api.fetchApi("/prompt", {
+    const res = await fetchApi("/prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: buildWorkflow(imageName, modelFile, prefix), client_id: api.clientId }),
+        body: JSON.stringify({ prompt: buildWorkflow(imageName, modelFile, prefix), client_id: clientId() }),
         signal,
     });
     const submitted = await res.json().catch(() => ({}));
