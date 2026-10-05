@@ -9,6 +9,7 @@ Pose Library Server
 """
 
 import os
+import re
 import json
 import hashlib
 import base64
@@ -167,9 +168,18 @@ async def list_subdirs(request):
 # API: サムネイル
 # ----------------------------------------------------------------
 
+# サムネイルの file_id は _file_id() が作る md5 の16進32文字だけを受け付ける。
+# そのままファイル名に使うため、Windows で `..%5C..%5Cfoo` のように `\` を含む値を通すと
+# thumbnails/ の外を読み書きできてしまう(aiohttp のパス変数は `/` は弾くが `\` は通す)
+_FILE_ID_RE = re.compile(r"[0-9a-f]{32}")
+_PNG_SIGNATURE = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])  # PNG のファイル先頭8バイト
+
+
 @server.PromptServer.instance.routes.get("/pose_library/thumbnail/{file_id}")
 async def get_thumbnail(request):
     fid        = request.match_info["file_id"]
+    if not _FILE_ID_RE.fullmatch(fid):
+        return web.json_response({"error": "invalid file_id"}, status=400)
     thumb_file = _THUMB_DIR / f"{fid}.png"
     if not thumb_file.exists():
         return web.Response(status=404)
@@ -179,6 +189,8 @@ async def get_thumbnail(request):
 @server.PromptServer.instance.routes.post("/pose_library/thumbnail/{file_id}")
 async def save_thumbnail(request):
     fid = request.match_info["file_id"]
+    if not _FILE_ID_RE.fullmatch(fid):
+        return web.json_response({"error": "invalid file_id"}, status=400)
     try:
         body     = await request.json()
         img_data = body.get("image", "")
@@ -187,6 +199,9 @@ async def save_thumbnail(request):
         png_bytes = base64.b64decode(img_data)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+    # サムネイルとして PNG 以外のデータを保存させない
+    if not png_bytes.startswith(_PNG_SIGNATURE):
+        return web.json_response({"error": "image must be PNG"}, status=400)
     (_THUMB_DIR / f"{fid}.png").write_bytes(png_bytes)
     return web.json_response({"ok": True, "url": f"/pose_library/thumbnail/{fid}"})
 
