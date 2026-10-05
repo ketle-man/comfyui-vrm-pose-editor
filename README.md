@@ -24,6 +24,10 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 ![Keyframe Timeline panel](docs/6_keyframe.png)
 
+![Light & Pose Editor — Image tab (Image → Pose with SAM 3D Body)](docs/7_image_tab.png)
+
+![Light & Pose Editor — Light tab, Settings sub-tab (Default Model)](docs/8_default_model.png)
+
 ---
 
 ## English
@@ -148,6 +152,8 @@ If [LookAt Target](#lookat-target-) is enabled with its target set to **🎥 Cam
 #### Image tab (🖼) — Image → Pose (SAM 3D Body)
 
 Estimates the pose of a person in an image and applies it to the loaded VRM.
+
+![Image tab](docs/7_image_tab.png)
 
 1. Load a VRM (Pose tab → **Load MODEL**). GLB/GLTF models without humanoid bones are not supported.
 2. In the **Image** tab, load an image (**Load Image** or drag & drop).
@@ -331,6 +337,8 @@ The model is automatically scaled and centred.
 ### Default Model
 
 Place model files (`.vrm` / `.glb` / `.gltf`, any file name) in the `model/` folder, then choose which one loads automatically in **Light & Pose Editor → Light tab → S (Settings) → Default Model**.
+
+![Default Model setting](docs/8_default_model.png)
 
 | Choice | Behavior |
 |----------|--------|
@@ -555,6 +563,8 @@ Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現�
 #### Imageタブ（🖼）— 画像 → ポーズ（SAM 3D Body）
 
 画像の人物のポーズを推定し、読み込み中の VRM に適用します。
+
+![Imageタブ](docs/7_image_tab.png)
 
 1. VRM を読み込む（Poseタブ → **Load MODEL**）。humanoid ボーンを持たない GLB/GLTF には適用できません。
 2. **Image** タブで画像を読み込む（**Load Image** またはドラッグ＆ドロップ）。
@@ -809,6 +819,8 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 ### デフォルトモデルの設定
 
 `model/` フォルダにモデル（`.vrm` / `.glb` / `.gltf`、ファイル名は自由）を置き、**Light & Pose Editor → Lightタブ → S（Settings）→ Default Model** で自動で読み込むものを選びます。
+
+![Default Model 設定](docs/8_default_model.png)
 
 | 選択 | 動作 |
 |-----------|------|
