@@ -506,6 +506,8 @@ app.registerExtension({
             const cachedModel = _nodeModelCache[node.id];
             if (cachedModel) {
                 if (!cachedModel.isDefault && cachedModel.buffer) {
+                    // 再作成後もライブラリのサムネイル生成に使えるよう保持し直す
+                    _currentVrmBuffer = cachedModel.buffer;
                     const url = URL.createObjectURL(new Blob([cachedModel.buffer]));
                     editor.loadVRMFromBuffer(cachedModel.buffer, url, () => {
                         URL.revokeObjectURL(url);
@@ -614,7 +616,9 @@ app.registerExtension({
             // ノード側にしか無い機能(画像キャプチャ・VRM/VRMAロード)を呼び出すためのブリッジ。
             // モーダル側は複製ボタンを持つが、実処理はここに定義済みのノード側関数をそのまま再利用する
             // (キャッシュ更新・ノードサイズ再計算等の副作用を二重実装しないため)。
-            const nodeActions = { doCapture, loadVrmFile, loadVrmaFile, unloadVrma };
+            // getVrmBuffer: モーダルを開いた後に(モーダル内の Load MODEL 等で)VRM を差し替えても、
+            //   Pose Library のサムネイル生成が常に最新の VRM を使えるよう、値ではなく取得関数で渡す
+            const nodeActions = { doCapture, loadVrmFile, loadVrmaFile, unloadVrma, getVrmBuffer: () => _currentVrmBuffer };
 
             lightBtn.onclick = () => {
                 openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light", nodeActions);

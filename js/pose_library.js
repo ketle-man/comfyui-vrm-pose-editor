@@ -76,7 +76,14 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
         style: "background:none;border:none;color:#aaa;font-size:16px;cursor:pointer;padding:4px 8px;",
     }, "✕");
     closeBtn.onclick = () => closeModal();
-    header.append(titleEl, reloadBtn, closeBtn);
+    // サムネイルの自動生成は読み込み済みの VRM でポーズを描画して作る。VRM が無い(デフォルトの
+    // GLB モデルのまま等)と生成できないため、その旨をヘッダーに出す
+    const noVrmNote = el("span", {
+        style: "font-size:10px;color:#c9a560;white-space:nowrap;",
+        title: "Load a VRM model (Load MODEL / VRM button) to generate thumbnails",
+    }, "⚠ VRM 未読込のためサムネイルを生成できません");
+    if (vrmBuffer) noVrmNote.style.display = "none";
+    header.append(titleEl, noVrmNote, reloadBtn, closeBtn);
 
     // ---- ツールバー ----
     const toolbar = el("div", {

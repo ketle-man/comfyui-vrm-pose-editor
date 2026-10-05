@@ -74,7 +74,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // editor._kfPanelState: 前回このモーダルを閉じた際のタイムライン状態(keyframes/fps/totalFrames/currentFrame)。
     // editorはノードごとに1つ生きたまま保持されるオブジェクトなので、ここに保持しておくことで
     // モーダルを閉じてもキーフレームが消えないようにする。
-    const keyframePanel = buildKeyframePanel(editor, () => vrmBuffer, getShapeKeys, () => {
+    // モーダルを開いた後に VRM を差し替えた場合も最新のバッファを使う(nodeActions.getVrmBuffer があればそちらを優先)
+    const getVrmBuffer = () => nodeActions?.getVrmBuffer?.() ?? vrmBuffer;
+    const keyframePanel = buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, () => {
         // シーク/再生でシェイプキー値が変わった際、Poseタブ表示中ならスライダー表示も追従させる
         if (activeMainTab === "pose") rebuildShapeKeySliders();
     }, editor._kfPanelState, nodeActions);
@@ -824,7 +826,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             //   キーフレームタイムライン(Poseトラック)へサンプリング読み込みするための橋渡し。
             // onLoadVrmaRaw: 「Load」ボタンから、選択中の.vrmaをキーフレーム化せずそのまま
             //   ノード側のVRMA読み込み処理(nodeActions.loadVrmaFile)へ渡すための橋渡し
-            openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale(),
+            openPoseLibrary(editor, getVrmBuffer(), cvsWrapper, () => applyScale(),
                 (buf, name) => keyframePanel.importVrmaAsKeyframes(buf, name),
                 nodeActions?.loadVrmaFile ? (buf) => nodeActions.loadVrmaFile(new Blob([buf])) : undefined);
             return;

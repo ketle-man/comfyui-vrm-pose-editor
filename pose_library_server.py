@@ -55,7 +55,41 @@ def _save_meta(meta: dict):
 
 
 def _file_id(filepath: str) -> str:
+    """サムネイル・メタデータのキー。poses/ からの相対パスで作るため、ノードのフォルダを
+    移動・シンボリックリンク化しても変わらない(旧方式は絶対パスのハッシュで、移動すると
+    サムネイルが全て見えなくなっていた)。poses/ の外のパスは従来どおり絶対パスで作る"""
+    p = Path(filepath).resolve()
+    try:
+        key = p.relative_to(POSES_DIR).as_posix()
+    except ValueError:
+        key = str(p)
+    return hashlib.md5(key.encode("utf-8")).hexdigest()
+
+
+def _legacy_file_id(filepath: str) -> str:
+    """旧方式(絶対パスのハッシュ)のキー。移行用"""
     return hashlib.md5(filepath.encode("utf-8")).hexdigest()
+
+
+def _migrate_legacy_id(path: Path, fid: str, meta: dict) -> bool:
+    """旧方式のキーで保存されたサムネイル・メタデータを新方式のキーへ移す。meta を変更したら True"""
+    old = _legacy_file_id(str(path))
+    if old == fid:
+        return False
+    old_thumb = _THUMB_DIR / f"{old}.png"
+    new_thumb = _THUMB_DIR / f"{fid}.png"
+    if old_thumb.exists():
+        try:
+            if new_thumb.exists():
+                old_thumb.unlink()  # 新方式のキーで既にある → 旧ファイルは不要
+            else:
+                old_thumb.rename(new_thumb)
+        except OSError:
+            pass
+    if old in meta and fid not in meta:
+        meta[fid] = meta.pop(old)
+        return True
+    return False
 
 
 # ----------------------------------------------------------------
@@ -83,6 +117,7 @@ async def list_poses(request):
         return web.json_response({"error": f"Directory not found: {target}"}, status=404)
 
     meta  = _load_meta()
+    meta_changed = False
     poses = []
 
     # subdir 指定なし（すべて）は再帰スキャン、指定ありは1階層のみ
@@ -91,6 +126,7 @@ async def list_poses(request):
     for ext in ("*.json", "*.vroidpose", "*.vrma"):
         for p in sorted(scan(ext)):
             fid = _file_id(str(p))
+            meta_changed |= _migrate_legacy_id(p, fid, meta)
             m   = meta.get(fid, {})
             thumb_file = _THUMB_DIR / f"{fid}.png"
             thumb_url  = f"/pose_library/thumbnail/{fid}" if thumb_file.exists() else None
@@ -103,6 +139,9 @@ async def list_poses(request):
                 "memo":     m.get("memo", ""),
                 "thumb":    thumb_url,
             })
+
+    if meta_changed:
+        _save_meta(meta)
 
     return web.json_response({
         "poses":     poses,
