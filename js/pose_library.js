@@ -6,7 +6,7 @@
  * - Favorites / Memo / Name search
  * - Save pose to poses/ (p_HHMMSS.json)
  * - File rename
- * - Auto thumbnail generation via VRM (front / back camera)
+ * - Auto thumbnail generation via VRM (front / back camera, VRM0/VRM1 aware)
  */
 
 import * as THREE from './vendor/three.module.js';
@@ -1005,8 +1005,10 @@ function createThumbnailRenderer(vrmBuffer) {
         const size   = box.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
         const dist   = (maxDim / 2) / Math.tan((30 / 2) * Math.PI / 180) * 1.4;
-        // VRM front = +Z. Front: camera at Z+, Back: camera at Z-
-        const zOffset = fromBack ? -dist : dist;
+        // 正面の向き: VRM 1.0 は +Z、VRM 0.x は -Z(rotateVRM0 を使わないため。メインエディタの
+        // カメラ初期位置と同じ扱い)。正面から撮るときはその向きの側に、背面から撮るときは反対側にカメラを置く
+        const frontSign = vrm.meta?.metaVersion === "0" ? -1 : 1;
+        const zOffset = (fromBack ? -dist : dist) * frontSign;
         camera.position.set(center.x, center.y + size.y * 0.05, center.z + zOffset);
         camera.lookAt(center.x, center.y, center.z);
 
