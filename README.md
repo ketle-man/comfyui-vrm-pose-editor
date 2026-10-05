@@ -126,6 +126,7 @@ The right pane (kept at the same width as the Light tab's Properties panel so th
   - **Model** — **Load MODEL**, a duplicate of the node's own model loader.
   - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes)).
   - **Output** — **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF**, also moved here from the keyframe panel for the same reason.
+    - **Save to ComfyUI output** (checkbox): when on, the file is saved to ComfyUI's `output/vrm_pose_editor/` (as `pose_YYYYmmdd_HHMMSS.<ext>`) instead of being downloaded. The saved path is shown under the checkbox. The setting is remembered (ComfyUI user data).
 - **C sub-tab**: **Camera** properties for whichever camera is selected in the list — Name, Color, an OT/PR toggle, and **FOV**/**Near** sliders. These read/write the shared `editor` state for the currently *active* camera (same as the node's own OT/RC/FOV/Near controls), so either side stays in sync once the modal is closed or you switch tabs/cameras. (The Look at Target toggle used to live here too — it's been moved to the keyframe panel below, since it's a model-wide setting rather than a per-camera one.)
 
 VRM/VRMA loading and unloading are routed through the same `nodeActions` bridge the node uses internally, so the node's own buttons/labels stay in sync too.
@@ -216,6 +217,12 @@ The Shape Keys sliders' current values are bundled onto pose keyframes automatic
 #### Eyes track
 
 Records the [LookAt Target](#lookat-target-)'s ON/OFF state, target mode (Marker/Camera), and marker position as its own independent track — unlike Shape Keys, it's *not* bundled onto Pose keyframes, so you can key the gaze on its own timing without needing a pose change at the same frame (and, conversely, adding/updating a Pose keyframe never touches the Eyes track). Marker position is linearly interpolated between surrounding Eyes keyframes; ON/OFF and target mode are discrete and switch over at the end of the interval, the same way Cam Switch cuts to a camera. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
+
+#### Blink track (Auto Blink)
+
+**😑 Auto Blink** (top of the Pose tab's Shape Keys list) makes a VRM blink automatically — a toggle plus an **interval** slider (average seconds between blinks, with a little natural variation). The blink timing is a pure function of time, so timeline playback and WebM / MP4 / GIF export blink at exactly the same frames; the normal preview blinks in real time. While Auto Blink is on, the `blink` shape-key slider keeps your own value (e.g. half-closed eyes) and Pose keyframes record that value rather than a mid-blink one.
+
+The **😑 Blink** track records Auto Blink's ON/OFF and interval as keyframes. Values are discrete: the last key at or before the current frame applies (no interpolation). Requires a VRM with the `blink` expression. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
 
 #### Camera track
 
@@ -537,6 +544,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
   - **Model** — **Load MODEL**（ノード側のモデルロード機能の複製）
   - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）
   - **Output** — **🎬 WebM**・**🎥 MP4**・**🎞️ GIF**（こちらも同様の理由でキーフレームパネルから移設）
+    - **Save to ComfyUI output**（チェックボックス）: オンにすると、ダウンロードせずに ComfyUI の `output/vrm_pose_editor/` へ `pose_年月日_時分秒.<拡張子>` として保存します。保存先はチェックボックスの下に表示されます。設定は ComfyUI のユーザーデータに保存され、次回以降も引き継がれます。
 - **Cサブタブ**: リストで選択中のカメラの**Camera**プロパティ — Name、Color、OT/PR切替、**FOV**/**Near**スライダー。共有の`editor`状態のうち現在**アクティブ**なカメラの状態を直接読み書きするため（ノード自身のOT/RC/FOV/Nearコントロールと同じ）、モーダルを閉じた際やタブ・カメラの切替時にどちら側も再同期されます。（以前ここにあった**Look at Target**トグルは、カメラごとではなくモデル全体の設定であるため、下部のキーフレームパネルへ移設しました。）
 
 VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions`ブリッジ経由で処理されるため、ノード側のボタン表示も連動して更新されます。
@@ -627,6 +635,12 @@ Shape Keysスライダーの現在値は、ポーズKFを追加/更新するた�
 #### Eyesトラック
 
 [視線ターゲット](#視線ターゲット-)のON/OFF・対象モード（Marker/Camera）・マーカー座標を、独立したトラックとして記録します。Shape Keysと違い、ポーズKFには束ねられません — ポーズを変えずに視線だけを別のタイミングでキー打ちでき、逆にポーズKFを追加/更新してもEyesトラックには一切影響しません。マーカー座標は前後のEyes KF間で線形補間され、ON/OFFと対象モードは離散値としてCam Switchのカット切替と同じように区間終端で切り替わります。他の非Poseトラックと同様、**プレビュー専用**であり、エクスポートされる`.vrma`には含まれません。
+
+#### Blinkトラック（自動瞬き）
+
+Poseタブの Shape Keys 一覧の先頭にある **😑 Auto Blink** で、VRM を自動で瞬きさせます。トグルと**間隔**スライダー（瞬きの平均間隔・秒。少し揺らぎを入れています）で操作します。瞬きのタイミングは時刻だけで決まるため、タイムライン再生と WebM / MP4 / GIF の書き出しでは同じフレームで瞬きます。通常のプレビューは実時間で瞬きます。Auto Blink が ON の間も、`blink` シェイプキーのスライダーは自分で設定した値（半目など）を保ち、ポーズKFにも瞬き途中ではなくその値が記録されます。
+
+**😑 Blink** トラックは、Auto Blink の ON/OFF と間隔をキーフレームとして記録します。値は補間されず、現在フレーム以前の最後のキーがそのまま使われます。`blink` 表情を持つ VRM が必要です。他の非Poseトラックと同様、**プレビュー専用**であり、エクスポートされる`.vrma`には含まれません。
 
 #### Cameraトラック
 

@@ -1182,6 +1182,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         interactableBones = [];
         initialPoses.clear();
         _origJointGravity.clear();
+        _blinkUserValue = 0; // 前のモデルの blink スライダー値を持ち越さない
     }
 
     function placeModel(model) {
@@ -1225,6 +1226,16 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         const em = vrm.expressionManager;
         if (!em) return keys;
         for (const name of Object.keys(em.expressionMap ?? {})) {
+            if (name === "blink") {
+                // 自動瞬きが ON の間は表示中の重みが毎フレーム上書きされるため、スライダー・ポーズKFの
+                // 読み書きは「ユーザーが設定した値」(_blinkUserValue)に対して行う(瞬き途中の値を記録しない)
+                keys.push({
+                    name,
+                    getValue: () => (_autoBlink.enabled ? _blinkUserValue : (em.getValue(name) ?? 0)),
+                    setValue: (v) => { if (_autoBlink.enabled) _blinkUserValue = v; else em.setValue(name, v); },
+                });
+                continue;
+            }
             keys.push({
                 name,
                 getValue: () => em.getValue(name) ?? 0,
@@ -1232,6 +1243,61 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             });
         }
         return keys;
+    }
+
+    // ================================================================
+    // 自動瞬き(Auto Blink)
+    // ================================================================
+    // VRM の表情 "blink" の重みを、描画の直前(animate / _hideHelpersAndRender)に時刻から計算して入れる。
+    // 瞬きのタイミングは時刻だけで決まる関数(_blinkWeightAt)なので、タイムライン再生と WebM/MP4/GIF
+    // 書き出しで同じフレームには同じ瞬きが出る。普段のプレビューは実時間、再生・書き出し中は
+    // キーフレームパネルが setBlinkTime(フレーム時刻) で時刻を指定する。
+    const _autoBlink = { enabled: false, interval: 4.0 };
+    let _blinkUserValue = 0;          // 自動瞬き ON 中に保持する blink スライダーの値(OFF で戻す)
+    let _blinkTimeOverride = null;    // null = 実時間 / 数値 = タイムラインの時刻(秒)
+    const _blinkClock = new THREE.Clock();
+    const BLINK_CLOSE = 0.06, BLINK_HOLD = 0.04, BLINK_OPEN = 0.10;
+
+    // k 番目の瞬きの開始時刻のずれ(間隔の ±25%)。k から決まる疑似乱数なので毎回同じになる
+    function _blinkJitter(k) {
+        const x = Math.sin(k * 12.9898 + 78.233) * 43758.5453;
+        return (x - Math.floor(x) - 0.5) * 0.5;
+    }
+    function _blinkWeightAt(t, interval) {
+        const iv = Math.max(0.5, interval);
+        const k0 = Math.floor(t / iv);
+        let w = 0;
+        for (let k = k0 - 1; k <= k0 + 1; k++) {
+            const start = (k + 0.5 + _blinkJitter(k)) * iv;
+            const d = t - start;
+            if (d < 0 || d > BLINK_CLOSE + BLINK_HOLD + BLINK_OPEN) continue;
+            if (d < BLINK_CLOSE) w = Math.max(w, d / BLINK_CLOSE);
+            else if (d < BLINK_CLOSE + BLINK_HOLD) w = 1;
+            else w = Math.max(w, 1 - (d - BLINK_CLOSE - BLINK_HOLD) / BLINK_OPEN);
+        }
+        return w;
+    }
+    function _hasBlinkExpression() {
+        return !!currentVRM?.expressionManager?.getExpression?.("blink");
+    }
+    function _applyAutoBlink() {
+        if (!_autoBlink.enabled || !_hasBlinkExpression()) return;
+        const t = _blinkTimeOverride ?? _blinkClock.getElapsedTime();
+        // 手動の blink 値より閉じた状態は優先し、開いている間はユーザー値(半目など)を保つ
+        currentVRM.expressionManager.setValue("blink", Math.max(_blinkUserValue, _blinkWeightAt(t, _autoBlink.interval)));
+    }
+    function _setAutoBlink(state) {
+        const em = currentVRM?.expressionManager;
+        const wasOn = _autoBlink.enabled;
+        if (typeof state.interval === "number" && isFinite(state.interval)) _autoBlink.interval = Math.max(0.5, state.interval);
+        if (typeof state.enabled === "boolean" && state.enabled !== wasOn) {
+            if (state.enabled) {
+                _blinkUserValue = em?.getValue("blink") ?? 0;
+            } else if (em && _hasBlinkExpression()) {
+                em.setValue("blink", _blinkUserValue);
+            }
+            _autoBlink.enabled = state.enabled;
+        }
     }
 
     function tryLoadDefaultModel(exts) {
@@ -1630,6 +1696,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                     }
                 }
             }
+            _applyAutoBlink();
             currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
         }
         orbit.update();
@@ -1719,7 +1786,10 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         const windSourceHelperVisBefore = windSourceHelperMesh.visible;
         windSourceHelperMesh.visible = false;
 
-        if (currentVRM) currentVRM.update(0);
+        if (currentVRM) {
+            _applyAutoBlink();
+            currentVRM.update(0);
+        }
         renderer.render(scene, camera);
 
         return () => {
@@ -2031,6 +2101,14 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             });
         },
         getPointSize() { return pointSize; },
+        // ---- 自動瞬き ----
+        // hasAutoBlink: 読み込み中のモデルに VRM の "blink" 表情があるか(無ければ UI を出さない)
+        hasAutoBlink() { return _hasBlinkExpression(); },
+        getAutoBlink() { return { enabled: _autoBlink.enabled, interval: _autoBlink.interval }; },
+        // state: { enabled?, interval?(秒) }。キーフレームパネルの Blink トラックからも呼ばれる
+        setAutoBlink(state) { _setAutoBlink(state ?? {}); },
+        // t: タイムラインの時刻(秒)。null で実時間に戻す(再生・書き出し中だけ時刻を指定する)
+        setBlinkTime(t) { _blinkTimeOverride = (typeof t === "number" && isFinite(t)) ? t : null; },
         // 読み込み中の VRM(three-vrm の VRM インスタンス)。GLB/GLTF モデルや未読込時は null。
         // Image タブ(image_pose.js)がレスト位置の取得・接地計算に使う
         getVRM() { return currentVRM; },

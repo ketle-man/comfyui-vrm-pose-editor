@@ -1,3 +1,6 @@
+import { loadEditorSettings, saveEditorSettings } from './default_model.js';
+import { fetchApi } from './comfy_api.js';
+
 /**
  * VRMA Keyframe Panel (フレームベース)
  * - フレーム番号ベースでキーフレームを管理する（PSD-Figure-Creator, feat/keyframe-video の
@@ -206,6 +209,25 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
     const mp4Btn = mkBtn("🎥 MP4", "#3a6a8a", "タイムライン全体をMP4動画としてダウンロード(サーバー側でffmpeg変換、要imageio-ffmpeg)");
     const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
+    // WebM/MP4/GIF をダウンロードせず ComfyUI の output フォルダ(output/vrm_pose_editor/)へ保存するオプション。
+    // 状態は ComfyUI のユーザーデータ(default_model.js の設定ファイル)に保存し、次回以降も引き継ぐ
+    const saveOutputChk = el("input", { type: "checkbox" });
+    const saveOutputStatus = el("div", {
+        style: "font-size:10px;color:#778;line-height:1.4;word-break:break-all;margin-top:2px;",
+    });
+    const saveOutputCtrl = el("div", { style: "display:flex;flex-direction:column;width:100%;" });
+    const saveOutputLabel = el("label", {
+        style: "display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;cursor:pointer;",
+        title: "ONにすると WebM / MP4 / GIF をダウンロードせず、ComfyUI の output/vrm_pose_editor/ に保存します",
+    });
+    saveOutputLabel.append(saveOutputChk, document.createTextNode("Save to ComfyUI output"));
+    saveOutputCtrl.append(saveOutputLabel, saveOutputStatus);
+    loadEditorSettings().then(s => { saveOutputChk.checked = !!s.saveExportsToOutput; }).catch(() => {});
+    saveOutputChk.addEventListener("change", () => {
+        saveOutputStatus.textContent = "";
+        saveEditorSettings({ saveExportsToOutput: saveOutputChk.checked })
+            .catch(e => { saveOutputStatus.textContent = String(e.message ?? e); });
+    });
     // downloadBtn(Save .vrma)/webmBtn/gifBtnはPoseタブ Kサブタブ Properties(Model/Pose Data・
     // Outputセクション)へ移設したため、ここには配置しない(呼び出し元がbtnそのものをDOM移動する)
     previewPanel.append(
@@ -266,7 +288,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const lightCount = keyframes.filter(k => k.light).length;
         const windCount = keyframes.filter(k => k.wind).length;
         const eyesCount = keyframes.filter(k => k.lookAt).length;
-        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${camSwitchCount} cam-switch · ${lightCount} light · ${windCount} wind · ${eyesCount} eyes`;
+        const blinkCount = keyframes.filter(k => k.blink).length;
+        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${camSwitchCount} cam-switch · ${lightCount} light · ${windCount} wind · ${eyesCount} eyes · ${blinkCount} blink`;
     }
 
     // ----------------------------------------------------------------
@@ -286,6 +309,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLookAtForFrame(currentFrame);
         applyLightForFrame(currentFrame);
         applyWindForFrame(currentFrame);
+        applyBlinkForFrame(currentFrame);
         // 再生中(rAFループ)からの毎フレーム呼び出しではスライダー全再構築・DOM更新コストを
         // 避けるため呼ばない。ON/OFF・対象(Marker/Camera)ボタンはapplyLookAtForFrameが変更した
         // ライブ状態を反映するため、シーク/スクラブ時はここで表示を同期する(呼ばないと、KF間の
@@ -617,6 +641,14 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             delTitle: "現在フレームのLook at Targetキーフレームを削除",
             capture: () => captureLookAtAtCurrentFrame(), delete: () => deleteLookAtAtCurrentFrame(),
         };
+        tracks.blink = {
+            ...fieldAccessors("blink"), color: "#c58cff", optionLabel: "😑 Blink",
+            addLabel: "😑 +", addColor: "#5a3a8a",
+            addTitle: "現在フレームに、今の自動瞬き(ON/OFF・間隔)をキーフレームとして追加/上書き",
+            delLabel: "😑 −",
+            delTitle: "現在フレームの自動瞬きキーフレームを削除",
+            capture: () => captureBlinkAtCurrentFrame(), delete: () => deleteBlinkAtCurrentFrame(),
+        };
         return tracks;
     }
     let TRACKS = buildTracks();
@@ -885,6 +917,47 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         drawTimeline();
         updateStatus();
         applyLookAtForFrame(currentFrame);
+    }
+
+    // 自動瞬き(Auto Blink)を Blink トラックとしてキーフレーム化する。kf.blink = { enabled, interval }。
+    // ON/OFF は補間できないため、そのフレーム以前で最後のキーの状態をそのまま使う(ステップ)。
+    // 瞬きのタイミング自体は editor 側で時刻から決まるので、再生・書き出しでも同じ位置に瞬きが出る
+    function captureBlinkAtCurrentFrame() {
+        const blink = editor.getAutoBlink?.();
+        if (!blink) return;
+        const existing = keyframes.find(k => k.frame === currentFrame);
+        if (existing) {
+            existing.blink = { ...blink };
+        } else {
+            keyframes.push({ frame: currentFrame, blink: { ...blink } });
+            keyframes.sort((a, b) => a.frame - b.frame);
+        }
+        ensureTotalFrames();
+        drawTimeline();
+        updateStatus();
+    }
+
+    function deleteBlinkAtCurrentFrame() {
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.blink) return;
+        delete kf.blink;
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        applyBlinkForFrame(currentFrame);
+    }
+
+    function applyBlinkForFrame(frame) {
+        const bKfs = keyframes.filter(k => k.blink).sort((a, b) => a.frame - b.frame);
+        if (bKfs.length === 0) return;
+        let state = bKfs[0].blink;
+        for (const k of bKfs) {
+            if (k.frame <= frame) state = k.blink;
+            else break;
+        }
+        editor.setAutoBlink?.(state);
     }
 
     // ----------------------------------------------------------------
@@ -1233,6 +1306,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                 // 呼ぶとコストが大きいため、再生中は毎フレーム呼ばない(Poseタブ表示中の
                 // スライダー値自体はapplyShapeKeysForFrameで更新されるが、UI再描画はスキップされる)
                 seekToFrame((currentFrame + 1) % (totalFrames + 1), { silent: true });
+                editor.setBlinkTime?.(currentFrame / fps);
                 drawTimeline();
             }
             _playRafId = requestAnimationFrame(tick);
@@ -1241,6 +1315,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     }
     function stopPlayback() {
         _playing = false;
+        editor.setBlinkTime?.(null);
         if (_playRafId !== null) { cancelAnimationFrame(_playRafId); _playRafId = null; }
         playBtn.textContent = "▶";
     }
@@ -1368,6 +1443,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         recorder.start();
         for (let f = 0; f <= totalFrames; f++) {
             seekToFrame(f, { silent: true });
+            editor.setBlinkTime?.(f / fps); // 書き出しはタイムラインの時刻で瞬かせる(再生と同じ位置)
             renderFrameToOffscreen(offCanvas, outW, outH);
             track.requestFrame();
             onProgress?.(`⏳ ${f + 1}/${totalFrames + 1}`);
@@ -1410,6 +1486,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
         for (let f = 0; f <= totalFrames; f++) {
             seekToFrame(f, { silent: true });
+            editor.setBlinkTime?.(f / fps); // 書き出しはタイムラインの時刻で瞬かせる(再生と同じ位置)
             renderFrameToOffscreen(offCanvas, outW, outH);
             enc.addFrame(ctx.getImageData(0, 0, outW, outH));
             onProgress?.(`⏳ Capture ${f + 1}/${totalFrames + 1}`);
@@ -1421,6 +1498,18 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         return new Blob([bytes], { type: "image/gif" });
     }
 
+    // 書き出した Blob をサーバーへ送り、ComfyUI の output/vrm_pose_editor/ に保存する(ファイル名はサーバーが決める)
+    async function saveBlobToOutput(blob, ext) {
+        const res = await fetchApi(`/pose_editor/save_output?ext=${ext}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: blob,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Save to output failed (HTTP ${res.status})`);
+        return `output/${data.subfolder}/${data.filename}`;
+    }
+
     async function runExport(btn, otherBtns, exportFn, filename) {
         stopPlayback();
         const savedFrame = currentFrame;
@@ -1428,12 +1517,20 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         btn.disabled = true; otherBtns.forEach(b => b.disabled = true);
         try {
             const blob = await exportFn(text => { btn.textContent = text; });
-            downloadBlob(blob, filename);
+            if (saveOutputChk.checked) {
+                btn.textContent = "⏳ Saving...";
+                const saved = await saveBlobToOutput(blob, filename.split(".").pop());
+                saveOutputStatus.style.color = "#8c8";
+                saveOutputStatus.textContent = `✅ ${saved}`;
+            } else {
+                downloadBlob(blob, filename);
+            }
         } catch (e) {
             alert("Export failed: " + e.message);
         } finally {
             btn.textContent = origLabel;
             btn.disabled = false; otherBtns.forEach(b => b.disabled = false);
+            editor.setBlinkTime?.(null);
             seekToFrame(savedFrame);
         }
     }
@@ -1517,6 +1614,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLookAtForFrame(0);
         applyLightForFrame(0);
         applyWindForFrame(0);
+        applyBlinkForFrame(0);
         schedulePreviewRefresh();
     }
 
@@ -1644,6 +1742,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLookAtForFrame(currentFrame);
         applyLightForFrame(currentFrame);
         applyWindForFrame(currentFrame);
+        applyBlinkForFrame(currentFrame);
         schedulePreviewRefresh();
     }
 
@@ -1741,6 +1840,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         // ロジック(editor/keyframes/fps等のクロージャ変数への依存)はこのファイル内に残したまま、
         // DOM要素そのものを呼び出し元がappendChildで移動する
         downloadBtn, webmBtn, mp4Btn, gifBtn,
+        // 「Save to ComfyUI output」チェックボックス(+ 保存先の表示)
+        saveOutputCtrl,
     };
 }
 

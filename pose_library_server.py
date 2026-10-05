@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import server
+import folder_paths
 web = server.web
 
 # ----------------------------------------------------------------
@@ -516,6 +517,60 @@ async def webm_to_mp4(request):
             return web.json_response({"error": f"ffmpeg failed: {err}"}, status=500)
 
         return web.Response(body=dst.read_bytes(), content_type="video/mp4")
+
+
+# ----------------------------------------------------------------
+# API: 書き出した動画/GIFを ComfyUI の output フォルダへ保存
+# ----------------------------------------------------------------
+# Pose タブの WebM / MP4 / GIF 出力で「Save to ComfyUI output」をオンにしたときに使う。
+# ファイル名はサーバー側で決める(クライアントの名前は使わない)ので、パスの細工はできない。
+# 拡張子は3種類に限定し、中身の先頭バイトもその形式か確認する。
+
+_OUTPUT_SUBFOLDER = "vrm_pose_editor"
+_OUTPUT_MAX_BYTES = 1024 * 1024 * 1024  # 1GB
+
+
+def _output_signature_ok(ext: str, data: bytes) -> bool:
+    if ext == "webm":
+        return data[:4] == bytes([0x1A, 0x45, 0xDF, 0xA3])  # EBML
+    if ext == "mp4":
+        return data[4:8] == b"ftyp"
+    if ext == "gif":
+        return data[:6] in (b"GIF87a", b"GIF89a")
+    return False
+
+
+@server.PromptServer.instance.routes.post("/pose_editor/save_output")
+async def save_output(request):
+    """
+    POST /pose_editor/save_output?ext=webm|mp4|gif
+    body: 動画/GIFのバイナリ。<output>/vrm_pose_editor/pose_YYYYmmdd_HHMMSS[_n].<ext> に保存し、
+    { filename, subfolder, type: "output" } を返す(ComfyUI の /view でそのまま取得できる形)。
+    """
+    ext = request.rel_url.query.get("ext", "").lower()
+    if ext not in ("webm", "mp4", "gif"):
+        return web.json_response({"error": "ext must be webm, mp4 or gif"}, status=400)
+    if request.content_length and request.content_length > _OUTPUT_MAX_BYTES:
+        return web.json_response({"error": "file too large"}, status=413)
+
+    data = await request.read()
+    if not data:
+        return web.json_response({"error": "empty body"}, status=400)
+    if len(data) > _OUTPUT_MAX_BYTES:
+        return web.json_response({"error": "file too large"}, status=413)
+    if not _output_signature_ok(ext, data):
+        return web.json_response({"error": f"body is not a {ext} file"}, status=400)
+
+    out_dir = Path(folder_paths.get_output_directory()) / _OUTPUT_SUBFOLDER
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = "pose_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+    dst = out_dir / f"{stem}.{ext}"
+    n = 1
+    while dst.exists():
+        dst = out_dir / f"{stem}_{n}.{ext}"
+        n += 1
+    await asyncio.to_thread(dst.write_bytes, data)
+    return web.json_response({"filename": dst.name, "subfolder": _OUTPUT_SUBFOLDER, "type": "output"})
 
 
 # ================================================================

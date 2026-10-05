@@ -516,8 +516,41 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                "display:flex;flex-direction:column;gap:5px;box-sizing:border-box;",
     });
 
+    // 自動瞬き(Auto Blink): Shape Keys 一覧の先頭に、ON/OFF トグルと間隔(秒)スライダーを置く。
+    // キーフレームの Blink トラックがシーク時に状態を変えると onShapeKeysApplied 経由で
+    // rebuildShapeKeySliders() が呼ばれ、ここも作り直されて表示が追従する
+    function buildAutoBlinkRow() {
+        const blink = editor.getAutoBlink?.();
+        if (!blink || !editor.hasAutoBlink?.()) return null;
+        const wrap = el("div", {
+            style: "display:flex;flex-direction:column;gap:4px;padding:6px 0 8px;margin-bottom:4px;" +
+                   "border-bottom:1px solid #2a2a4a;",
+        });
+        const toggle = mkToggleBtn("😑 Auto Blink", blink.enabled);
+        toggle.title = "自動で瞬きさせます(キーフレームの 😑 Blink トラックで ON/OFF・間隔を記録できます)";
+        const [intSl, intVl] = mkSl(0.5, 10, 0.5, blink.interval,
+            v => editor.setAutoBlink?.({ interval: v }), v => v.toFixed(1) + "s");
+        intSl.title = "瞬きの平均間隔(秒)";
+        const syncDisabled = (on) => {
+            intSl.disabled = !on;
+            intSl.style.opacity = on ? "1" : "0.4";
+            intVl.style.opacity = on ? "1" : "0.4";
+        };
+        toggle.onclick = () => {
+            const on = !(editor.getAutoBlink?.().enabled);
+            editor.setAutoBlink?.({ enabled: on });
+            applyToggle(toggle, "😑 Auto Blink", on);
+            syncDisabled(on);
+        };
+        syncDisabled(blink.enabled);
+        wrap.append(toggle, sliderRow("間隔:", intSl, intVl));
+        return wrap;
+    }
+
     function rebuildShapeKeySliders() {
         shapeKeyBody.innerHTML = "";
+        const blinkRow = buildAutoBlinkRow();
+        if (blinkRow) shapeKeyBody.appendChild(blinkRow);
         const keys = getShapeKeys?.() ?? [];
         if (keys.length === 0) {
             shapeKeyBody.appendChild(el("div", {
@@ -857,6 +890,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         fieldRow("", keyframePanel.downloadBtn),
         sectionTitle("Output"),
         fieldRow("", row2(keyframePanel.webmBtn, keyframePanel.mp4Btn, keyframePanel.gifBtn)),
+        fieldRow("", keyframePanel.saveOutputCtrl),
     );
     posePropBody.append(posePropCameraSection, posePropModelSection);
 
