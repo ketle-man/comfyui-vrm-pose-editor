@@ -13,6 +13,7 @@
 import { openPoseLibrary } from './pose_library.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
+import { listModels, loadEditorSettings, saveEditorSettings, modelUrl, NONE_MODEL } from './default_model.js';
 
 // initialTab: "light"(既定) | "pose" | "image" — モーダルを開いた直後に表示するメインタブ
 // (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
@@ -387,11 +388,84 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         applyToggle(aaBtn, AA_LABEL, next);
     };
 
+    // ---- Default Model: <node_dir>/model/ に置いたモデルから、起動時に読み込むものを選ぶ(設定はユーザーデータに保存) ----
+    const defModelSel = el("select", {
+        style: "flex:1;min-width:0;background:#111;border:1px solid #444;color:#ddd;padding:3px 6px;" +
+               "border-radius:4px;font-size:11px;cursor:pointer;",
+    });
+    defModelSel.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+    const defModelRefresh = mkBtn("↺", "#2a4a7a");
+    defModelRefresh.title = "model/ フォルダを再読み込み";
+    defModelRefresh.style.padding = "3px 8px";
+    const defModelLoadBtn = mkBtn("Load", "#7a5a9a");
+    defModelLoadBtn.title = "選択中のモデルを今このノードに読み込む";
+    const defModelInfo = el("div", { style: "font-size:10px;color:#667;line-height:1.5;word-break:break-all;" });
+
+    async function refreshDefaultModelList() {
+        defModelInfo.textContent = "読み込み中…";
+        try {
+            const [list, settings] = await Promise.all([listModels(), loadEditorSettings()]);
+            const opts = [
+                el("option", { value: "" }, list.models.length ? `Auto (${list.models[0].name})` : "Auto (model/ が空)"),
+                ...list.models.map(m => el("option", { value: m.name }, `${m.name}  (${(m.size / 1024 / 1024).toFixed(1)} MB)`)),
+                el("option", { value: NONE_MODEL }, "None (読み込まない)"),
+            ];
+            defModelSel.replaceChildren(...opts);
+            const cur = settings.defaultModel ?? "";
+            const missing = cur && cur !== NONE_MODEL && !list.models.some(m => m.name === cur);
+            if (missing) defModelSel.prepend(el("option", { value: cur }, `${cur} (見つかりません)`));
+            defModelSel.value = cur;
+            defModelInfo.textContent = `${list.models.length} 件 · ${list.dir}`;
+            defModelInfo.title = list.dir;
+        } catch (e) {
+            defModelInfo.textContent = String(e.message ?? e);
+        }
+    }
+    defModelSel.addEventListener("change", async () => {
+        try {
+            await saveEditorSettings({ defaultModel: defModelSel.value });
+            defModelInfo.textContent = "保存しました(次にノードを作成・ページを読み込んだときに使われます)";
+        } catch (e) {
+            defModelInfo.textContent = String(e.message ?? e);
+        }
+    });
+    defModelRefresh.onclick = () => refreshDefaultModelList();
+    defModelLoadBtn.onclick = async () => {
+        const name = defModelSel.value;
+        if (!name || name === NONE_MODEL) {
+            defModelInfo.textContent = "読み込むファイルを選んでください";
+            return;
+        }
+        if (/\.gltf$/i.test(name)) {
+            // .gltf は外部の .bin / テクスチャを相対パスで参照するため File 経由では読めない
+            defModelInfo.textContent = ".gltf は Load できません(既定モデルとしての自動読み込みは可能です)";
+            return;
+        }
+        try {
+            const res = await fetch(modelUrl(name));
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            nodeActions?.loadVrmFile?.(new File([blob], name));
+            defModelInfo.textContent = `${name} を読み込みました`;
+        } catch (e) {
+            defModelInfo.textContent = `読み込みに失敗しました: ${e.message ?? e}`;
+        }
+    };
+    void refreshDefaultModelList();
+    const defModelRow = el("div", { style: "display:flex;gap:4px;align-items:center;" });
+    defModelRow.append(defModelSel, defModelRefresh);
+
     sBody.append(
         sectionTitle("Mouse"),
         zoomModeBtn,
         sectionTitle("Rendering"),
         aaBtn,
+        sectionTitle("Default Model"),
+        defModelRow,
+        defModelLoadBtn,
+        defModelInfo,
+        el("div", { style: "font-size:10px;color:#556;line-height:1.5;" },
+            "model/ フォルダに .vrm / .glb / .gltf を置くと選べます。選択は保存され、ノード作成時・ページ読み込み時に自動で読み込まれます。"),
     );
 
     subTabContent.append(lBody, eBody, sBody);

@@ -9,7 +9,9 @@ import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from './vendor/three
 import { GLTFExporter } from './vendor/GLTFExporter.js';
 
 // ---- Three.js エディタ本体 ----
-export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isModern, onModelReady) {
+// defaultModelProvider(省略可): 既定モデルの URL を返す async 関数。戻り値が文字列ならそれを読み込み、
+//   null なら既定モデルを読み込まない。省略時(ComfyUI 以外のページから使う場合)は baseUrl の model.{glb,vrm,gltf} を探す
+export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isModern, onModelReady, defaultModelProvider) {
 
     // -- メインレンダラー --
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -1232,7 +1234,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         return keys;
     }
 
-    (function tryLoadDefaultModel(exts) {
+    function tryLoadDefaultModel(exts) {
         if (exts.length === 0) return;
         const [ext, ...rest] = exts;
         const url = baseUrl + "model." + ext;
@@ -1242,7 +1244,20 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             lastLoadedIsDefault = true;
             loadVRM(url, undefined);
         }).catch(() => tryLoadDefaultModel(rest));
-    })(["glb", "vrm", "gltf"]);
+    }
+    (async () => {
+        let url;
+        try { url = await defaultModelProvider?.(); } catch (e) { console.warn("[PoseEditor3D] defaultModelProvider failed:", e); }
+        if (typeof url === "string") {
+            // 待っている間にユーザーがモデルを読み込んでいたら上書きしない
+            if (!lastLoadedIsDefault) return;
+            lastLoadedUrl = url;
+            lastLoadedIsDefault = true;
+            loadVRM(url, undefined);
+        } else if (!defaultModelProvider) {
+            tryLoadDefaultModel(["glb", "vrm", "gltf"]);
+        }
+    })();
 
     function loadVRM(url, onComplete) {
         loader.load(url, (gltf) => {

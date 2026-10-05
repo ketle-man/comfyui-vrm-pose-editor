@@ -330,15 +330,17 @@ The model is automatically scaled and centred.
 
 ### Default Model
 
-Place one of the following files in the `js/` folder to auto-load on startup:
+Place model files (`.vrm` / `.glb` / `.gltf`, any file name) in the `model/` folder, then choose which one loads automatically in **Light & Pose Editor → Light tab → S (Settings) → Default Model**.
 
-| Filename | Format |
+| Choice | Behavior |
 |----------|--------|
-| `model.glb` | GLB |
-| `model.vrm` | VRM |
-| `model.gltf` | GLTF |
+| `Auto` | The first file in `model/` (by name) |
+| A file name | That file |
+| `None` | No model is loaded on startup |
 
-Priority: `model.glb` → `model.vrm` → `model.gltf`. If none exist, the editor starts without a model.
+- The choice is saved to ComfyUI's user data (`user/<user>/vrm_pose_editor_settings.json`), so it survives node updates and reinstalls. It applies when a node is created or the page is loaded; **Load** loads the selected model into the current node right away (`.vrm` / `.glb` only).
+- No model is bundled. If `model/` is empty, the editor starts without a model (load one with the **VRM** button).
+- If the default model is a VRM, Pose Library can also generate thumbnails with it.
 
 ### Pose Library (📚)
 
@@ -806,15 +808,17 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 
 ### デフォルトモデルの設定
 
-`js/` フォルダに以下のいずれかを配置すると起動時に自動ロードされます。
+`model/` フォルダにモデル（`.vrm` / `.glb` / `.gltf`、ファイル名は自由）を置き、**Light & Pose Editor → Lightタブ → S（Settings）→ Default Model** で自動で読み込むものを選びます。
 
-| ファイル名 | 形式 |
+| 選択 | 動作 |
 |-----------|------|
-| `model.glb` | GLB |
-| `model.vrm` | VRM |
-| `model.gltf` | GLTF |
+| `Auto` | `model/` の先頭（名前順）のファイル |
+| ファイル名 | そのファイル |
+| `None` | 起動時にモデルを読み込まない |
 
-優先順位: `model.glb` → `model.vrm` → `model.gltf`
+- 選択は ComfyUI のユーザーデータ（`user/<user>/vrm_pose_editor_settings.json`）に保存されるため、ノードの更新・再インストールでも消えません。ノード作成時・ページ読み込み時に反映されます。**Load** で選択中のモデルを今のノードにすぐ読み込めます（`.vrm` / `.glb` のみ）。
+- モデルは同梱していません。`model/` が空のときはモデル無しで起動します（**VRM** ボタンで読み込めます）。
+- 既定モデルが VRM なら、Pose Library のサムネイル生成にも使われます。
 
 ---
 

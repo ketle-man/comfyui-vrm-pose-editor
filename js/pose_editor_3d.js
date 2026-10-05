@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { initPoseEditor3D } from './pose_editor_core.js';
 import { openLightPoseEditor, importVrmaAsKeyframesFromNode } from './light_editor.js';
+import { resolveDefaultModel } from './default_model.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -500,7 +501,23 @@ app.registerExtension({
             // ---- 3Dエディタ初期化 ----
             const baseUrl = new URL(".", import.meta.url).href;
             const isModern = app.ui?.settings?.getSettingValue?.("Comfy.VueNodes.Enabled", false);
-            const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, onMorphKeysReady, isModern);
+            // 既定モデル: model/ フォルダ + Light & Pose Editor の Settings で選んだもの(default_model.js)。
+            // VRM なら Pose Library のサムネイル生成にも使えるよう、ユーザーがまだ読み込んでいなければバッファを保持する
+            // .vrm / .glb は1回だけ取得し、そのバッファを表示とサムネイル生成の両方に使う(二重ダウンロード防止)。
+            // .gltf は外部の .bin / テクスチャを相対パスで読むため、サーバーの URL のまま渡す
+            const defaultModelProvider = async () => {
+                // モデルはユーザーが model/ に置いたものだけを使う(js/model.* の従来フォールバックは使わない)
+                const pick = await resolveDefaultModel();
+                if (!pick) return null;
+                if (/\.gltf$/i.test(pick.name)) return pick.url;
+                const res = await fetch(pick.url);
+                if (!res.ok) throw new Error(`default model: HTTP ${res.status}`);
+                const buf = await res.arrayBuffer();
+                if (/\.vrm$/i.test(pick.name) && !_currentVrmBuffer) _currentVrmBuffer = buf;
+                // WebGL コンテキスト復帰時の再読み込み(reloadLastModel)でも使うため revoke しない
+                return URL.createObjectURL(new Blob([buf]));
+            };
+            const editor = initPoseEditor3D(cvs, gizmoCvs, baseUrl, onMorphKeysReady, isModern, undefined, defaultModelProvider);
 
             // タブ切り替えによるノード再作成時にキャッシュから復元
             const cachedModel = _nodeModelCache[node.id];

@@ -11,7 +11,7 @@
 
 import * as THREE from './vendor/three.module.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { VRMLoaderPlugin } from './vendor/three-vrm.module.js';
+import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 
 // ----------------------------------------------------------------
 // エントリポイント
@@ -353,6 +353,8 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
         if (_vrmaUISyncId !== null) { cancelAnimationFrame(_vrmaUISyncId); _vrmaUISyncId = null; }
         if (vrmaLoaded) editor.clearVRMA();
         previewResizeObserver?.disconnect();
+        thumbObserver.disconnect();
+        thumbRenderer?.dispose();
 
         // cvsWrapperを元のDOM位置(呼び出し元、多くはLight & Pose Editorのpreview枠)へ復元する。
         // 元の親が既にDOMから失われているケースでも、閉じるボタンが機能しなくなる不具合を防ぐため
@@ -387,6 +389,36 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
     // ----------------------------------------------------------------
     let allPoses    = [];
     let currentSubdir = "";
+
+    // ---- サムネイル自動生成 ----
+    // VRM の読み込みと WebGL コンテキストの作成は、最初にサムネイルが必要になった時に1回だけ行い、
+    // 各ポーズは「ポーズを当てて描画」だけを1件ずつ順番に行う(createThumbnailRenderer)。
+    // 生成はカードが画面に入った時に始め(IntersectionObserver)、同じポーズの生成は1回にまとめる。
+    // 既に生成済み(サーバーに PNG がある)のポーズは <img> で表示するだけなので VRM は読み込まない。
+    const thumbRenderer = vrmBuffer ? createThumbnailRenderer(vrmBuffer) : null;
+    const thumbPending  = new Map(); // pose.id → Promise<boolean>
+    function ensureThumbnail(pose) {
+        if (!thumbRenderer || pose.thumb || pose.ext === ".vrma") return Promise.resolve(!!pose.thumb);
+        if (thumbPending.has(pose.id)) return thumbPending.get(pose.id);
+        const job = thumbRenderer.render(pose, false)
+            .then(async dataUrl => {
+                if (!dataUrl) return false;
+                await saveThumbnail(pose.id, dataUrl);
+                return true;
+            })
+            .catch(e => { console.warn("[PoseLibrary] thumbnail failed:", e); return false; })
+            .finally(() => thumbPending.delete(pose.id));
+        thumbPending.set(pose.id, job);
+        return job;
+    }
+    // サムネイル未生成のカードが画面に入ったら生成を始める(カードごとの処理は _onThumbVisible に持たせる)
+    const thumbObserver = new IntersectionObserver(entries => {
+        for (const ent of entries) {
+            if (!ent.isIntersecting) continue;
+            thumbObserver.unobserve(ent.target);
+            ent.target._onThumbVisible?.();
+        }
+    }, { rootMargin: "200px" });
 
     function getCardPx(s) { return { s: 100, m: 140, l: 190 }[s] ?? 140; }
     function setGridCss(g, s) {
@@ -508,15 +540,7 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
             });
             statusMsg.textContent = `Saved: ${data.name}`;
             await loadPoses();
-            // Generate thumbnail for the newly saved pose
-            if (vrmBuffer) {
-                const newPose = allPoses.find(p => p.path === data.path);
-                if (newPose) {
-                    generateThumbnail(newPose, vrmBuffer).then(dataUrl => {
-                        if (dataUrl) saveThumbnail(newPose.id, dataUrl).then(renderGrid);
-                    }).catch(() => {});
-                }
-            }
+            // 新しいポーズのサムネイルは、グリッドのカードが画面に入った時点で生成される(ensureThumbnail)
         } catch (e) {
             alert("Failed to save: " + e.message);
         }
@@ -578,13 +602,13 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
             setThumbImg(pose.thumb + "?t=" + Date.now());
         } else {
             thumbArea.appendChild(placeholderEl(px));
-            if (vrmBuffer) {
-                generateThumbnail(pose, vrmBuffer).then(dataUrl => {
-                    if (!dataUrl) return;
-                    return saveThumbnail(pose.id, dataUrl).then(() => {
-                        setThumbImg(`/pose_library/thumbnail/${pose.id}?t=` + Date.now());
+            if (thumbRenderer) {
+                card._onThumbVisible = () => {
+                    ensureThumbnail(pose).then(ok => {
+                        if (ok && card.isConnected) setThumbImg(`/pose_library/thumbnail/${pose.id}?t=` + Date.now());
                     });
-                }).catch(() => {});
+                };
+                thumbObserver.observe(card);
             }
         }
 
@@ -705,13 +729,13 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
 
         if (vrmBuffer && pose.ext !== ".vrma") {
             menu.appendChild(menuItem("🖼 Regenerate Thumbnail (Front)", async () => {
-                const dataUrl = await generateThumbnail(pose, vrmBuffer, false);
+                const dataUrl = await thumbRenderer.render(pose, false);
                 if (!dataUrl) { alert("Thumbnail generation failed."); return; }
                 await saveThumbnail(pose.id, dataUrl);
                 setThumbImg(`/pose_library/thumbnail/${pose.id}?t=` + Date.now());
             }));
             menu.appendChild(menuItem("🖼 Regenerate Thumbnail (Back)", async () => {
-                const dataUrl = await generateThumbnail(pose, vrmBuffer, true);
+                const dataUrl = await thumbRenderer.render(pose, true);
                 if (!dataUrl) { alert("Thumbnail generation failed."); return; }
                 await saveThumbnail(pose.id, dataUrl);
                 setThumbImg(`/pose_library/thumbnail/${pose.id}?t=` + Date.now());
@@ -854,25 +878,30 @@ function miniDlg(titleText, onClose) {
 
 // ----------------------------------------------------------------
 // Thumbnail generation (offscreen Three.js + VRM)
-// fromBack=true: camera placed at Z- (behind model)
-// fromBack=false (default): camera placed at Z+ (front of model)
+// VRM の読み込み・WebGL コンテキストの作成は初回の render() で1回だけ行い、以降は使い回す。
+// render() は内部のキューで1件ずつ順番に処理する(同時に何十個もコンテキストを作ると、ブラウザの
+// 上限(16前後)を超えてメインエディタのコンテキストまで失われるため)。dispose() で確実に解放する。
+// fromBack=true: カメラをモデルの後ろ(Z-)に置く / false: 正面(Z+)
 // ----------------------------------------------------------------
-async function generateThumbnail(pose, vrmBuffer, fromBack = false) {
-    const SIZE = 256;
-    try {
-        const offCanvas = document.createElement("canvas");
-        offCanvas.width = SIZE; offCanvas.height = SIZE;
+const THUMB_SIZE = 256;
 
+function createThumbnailRenderer(vrmBuffer) {
+    let ctxPromise = null; // Promise<{ renderer, scene, camera, vrm } | null>
+    let queue = Promise.resolve();
+    let disposed = false;
+
+    async function init() {
+        const offCanvas = document.createElement("canvas");
+        offCanvas.width = THUMB_SIZE; offCanvas.height = THUMB_SIZE;
         const renderer = new THREE.WebGLRenderer({
             canvas: offCanvas, antialias: true, alpha: false, preserveDrawingBuffer: true,
         });
-        renderer.setSize(SIZE, SIZE, false);
+        renderer.setSize(THUMB_SIZE, THUMB_SIZE, false);
         renderer.setClearColor(0x1a1a2e, 1);
         renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
         const scene  = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 50);
-
         scene.add(new THREE.AmbientLight(0xffffff, 1.2));
         const dir = new THREE.DirectionalLight(0xffffff, 1.5);
         dir.position.set(1, 2, 2);
@@ -880,27 +909,43 @@ async function generateThumbnail(pose, vrmBuffer, fromBack = false) {
 
         const loader = new GLTFLoader();
         loader.register(parser => new VRMLoaderPlugin(parser));
-
-        const blob = new Blob([vrmBuffer]);
-        const url  = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(new Blob([vrmBuffer]));
         let vrm;
         try {
             const gltf = await new Promise((res, rej) => loader.load(url, res, undefined, rej));
             vrm = gltf.userData.vrm;
+        } catch (e) {
+            console.warn("[PoseLibrary] thumbnail VRM load failed:", e);
         } finally {
             URL.revokeObjectURL(url);
         }
-        if (!vrm) return null;
-
+        if (!vrm?.humanoid) {
+            // VRM ではない(GLB 等)ならサムネイルは作れない
+            renderer.dispose();
+            renderer.forceContextLoss();
+            return null;
+        }
         scene.add(vrm.scene);
+        return { renderer, scene, camera, vrm };
+    }
 
-        // ポーズ適用
+    async function renderOne(pose, fromBack) {
+        if (disposed) return null;
+        ctxPromise ??= init();
+        const ctx = await ctxPromise;
+        if (!ctx || disposed) return null;
+        const { renderer, scene, camera, vrm } = ctx;
+
+        // 前のポーズが残らないよう、毎回レストポーズに戻してから当てる
+        vrm.humanoid.resetNormalizedPose();
         try {
             const res     = await fetch(`/pose_library/content?path=${encodeURIComponent(pose.path)}`);
             const poseStr = await res.text();
             applyPoseToVRM(vrm, poseStr);
         } catch (_) {}
-
+        if (disposed) return null;
+        vrm.humanoid.update();
+        vrm.springBoneManager?.reset();
         vrm.update(0);
         vrm.scene.updateMatrixWorld(true);
 
@@ -910,20 +955,37 @@ async function generateThumbnail(pose, vrmBuffer, fromBack = false) {
         const size   = box.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
         const dist   = (maxDim / 2) / Math.tan((30 / 2) * Math.PI / 180) * 1.4;
-
         // VRM front = +Z. Front: camera at Z+, Back: camera at Z-
         const zOffset = fromBack ? -dist : dist;
         camera.position.set(center.x, center.y + size.y * 0.05, center.z + zOffset);
         camera.lookAt(center.x, center.y, center.z);
 
         renderer.render(scene, camera);
-        const dataUrl = offCanvas.toDataURL("image/png");
-        renderer.dispose();
-        return dataUrl;
-    } catch (e) {
-        console.warn("[PoseLibrary] thumbnail generation failed:", e);
-        return null;
+        return renderer.domElement.toDataURL("image/png");
     }
+
+    return {
+        render(pose, fromBack = false) {
+            const job = queue.then(() => renderOne(pose, fromBack)).catch(e => {
+                console.warn("[PoseLibrary] thumbnail generation failed:", e);
+                return null;
+            });
+            queue = job;
+            return job;
+        },
+        dispose() {
+            disposed = true;
+            // 描画中のジョブが終わってから解放する
+            queue.finally(async () => {
+                const ctx = await ctxPromise?.catch(() => null);
+                if (!ctx) return;
+                ctx.scene.remove(ctx.vrm.scene);
+                VRMUtils.deepDispose(ctx.vrm.scene);
+                ctx.renderer.dispose();
+                ctx.renderer.forceContextLoss();
+            });
+        },
+    };
 }
 
 // ----------------------------------------------------------------
