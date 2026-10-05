@@ -5,14 +5,17 @@
  * - "Light" タブ: 複数ライト管理(Directional/Point/Spot/RectArea/Ambient)。左ペインを
  *   L(ライト一覧)/E(環境: 地面・壁・風)/S(基本設定: アンチエイリアス・マウス)の3サブタブ化。
  * - "pose" タブ: シェイプキー一覧 + ポーズライブラリボタン(既存 pose_library.js を起動するだけ)。
+ * - "image" タブ: 画像 → SAM 3D Body(ComfyUI ネイティブノード) → VRM へポーズ適用(image_pose.js)。
  * - モーダル下部にキーフレームパネル(pose_vrma_export.js の buildKeyframePanel)を両タブ共通で常設。
  * - Light Library: save/load/rename/delete presets (server-side .light_library/) ※Lightタブ専用。
  */
 
 import { openPoseLibrary } from './pose_library.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
+import { buildImagePosePanel } from './image_pose.js';
+import { listModels, loadEditorSettings, saveEditorSettings, modelUrl, NONE_MODEL } from './default_model.js';
 
-// initialTab: "light"(既定) | "pose" — モーダルを開いた直後に表示するメインタブ
+// initialTab: "light"(既定) | "pose" | "image" — モーダルを開いた直後に表示するメインタブ
 // (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
 // nodeActions: { doCapture, loadVrmFile, loadVrmaFile } (省略可)。ノード側(pose_editor_3d.js)にしか
 //   無い機能(画像キャプチャ・VRM/VRMAロード時のキャッシュ更新等)を、Poseタブ Properties欄と
@@ -72,7 +75,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // editor._kfPanelState: 前回このモーダルを閉じた際のタイムライン状態(keyframes/fps/totalFrames/currentFrame)。
     // editorはノードごとに1つ生きたまま保持されるオブジェクトなので、ここに保持しておくことで
     // モーダルを閉じてもキーフレームが消えないようにする。
-    const keyframePanel = buildKeyframePanel(editor, () => vrmBuffer, getShapeKeys, () => {
+    // モーダルを開いた後に VRM を差し替えた場合も最新のバッファを使う(nodeActions.getVrmBuffer があればそちらを優先)
+    const getVrmBuffer = () => nodeActions?.getVrmBuffer?.() ?? vrmBuffer;
+    const keyframePanel = buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, () => {
         // シーク/再生でシェイプキー値が変わった際、Poseタブ表示中ならスライダー表示も追従させる
         if (activeMainTab === "pose") rebuildShapeKeySliders();
     }, editor._kfPanelState, nodeActions);
@@ -149,7 +154,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const mainTabBar = el("div", { style: "display:flex;gap:4px;flex:1;margin-left:6px;" });
     const lightTabBtn = mkMainTabBtn("💡 Light");
     const poseTabBtn  = mkMainTabBtn("🕺 pose");
-    mainTabBar.append(lightTabBtn, poseTabBtn);
+    const imageTabBtn = mkMainTabBtn("🖼 Image");
+    imageTabBtn.title = "画像からポーズを推定して VRM に適用 (SAM 3D Body / ComfyUI)";
+    mainTabBar.append(lightTabBtn, poseTabBtn, imageTabBtn);
 
     // ---- Point Size (ボーンハンドルの球サイズ倍率) ----
     // ノード側(pose_editor_3d.js)のコントロールポイントサイズパネルと同じeditor.setPointSize()を
@@ -381,12 +388,91 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         applyToggle(aaBtn, AA_LABEL, next);
     };
 
+    // ---- Default Model: <node_dir>/model/ に置いたモデルから、起動時に読み込むものを選ぶ(設定はユーザーデータに保存) ----
+    const defModelSel = el("select", {
+        style: "flex:1;min-width:0;background:#111;border:1px solid #444;color:#ddd;padding:3px 6px;" +
+               "border-radius:4px;font-size:11px;cursor:pointer;",
+    });
+    defModelSel.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
+    const defModelRefresh = mkBtn("↺", "#2a4a7a");
+    defModelRefresh.title = "model/ フォルダを再読み込み";
+    defModelRefresh.style.padding = "3px 8px";
+    const defModelLoadBtn = mkBtn("Load", "#7a5a9a");
+    defModelLoadBtn.title = "選択中のモデルを今このノードに読み込む";
+    const defModelInfo = el("div", { style: "font-size:10px;color:#667;line-height:1.5;word-break:break-all;" });
+
+    async function refreshDefaultModelList() {
+        defModelInfo.textContent = "読み込み中…";
+        try {
+            const [list, settings] = await Promise.all([listModels(), loadEditorSettings()]);
+            const opts = [
+                el("option", { value: "" }, list.models.length ? `Auto (${list.models[0].name})` : "Auto (model/ が空)"),
+                ...list.models.map(m => el("option", { value: m.name }, `${m.name}  (${(m.size / 1024 / 1024).toFixed(1)} MB)`)),
+                el("option", { value: NONE_MODEL }, "None (読み込まない)"),
+            ];
+            defModelSel.replaceChildren(...opts);
+            const cur = settings.defaultModel ?? "";
+            const missing = cur && cur !== NONE_MODEL && !list.models.some(m => m.name === cur);
+            if (missing) defModelSel.prepend(el("option", { value: cur }, `${cur} (見つかりません)`));
+            defModelSel.value = cur;
+            defModelInfo.textContent = `${list.models.length} 件 · ${list.dir}`;
+            defModelInfo.title = list.dir;
+        } catch (e) {
+            defModelInfo.textContent = String(e.message ?? e);
+        }
+    }
+    defModelSel.addEventListener("change", async () => {
+        try {
+            await saveEditorSettings({ defaultModel: defModelSel.value });
+            defModelInfo.textContent = "保存しました(次にノードを作成・ページを読み込んだときに使われます)";
+        } catch (e) {
+            defModelInfo.textContent = String(e.message ?? e);
+        }
+    });
+    defModelRefresh.onclick = () => refreshDefaultModelList();
+    defModelLoadBtn.onclick = async () => {
+        const name = defModelSel.value;
+        if (!name || name === NONE_MODEL) {
+            defModelInfo.textContent = "読み込むファイルを選んでください";
+            return;
+        }
+        if (/\.gltf$/i.test(name)) {
+            // .gltf は外部の .bin / テクスチャを相対パスで参照するため File 経由では読めない
+            defModelInfo.textContent = ".gltf は Load できません(既定モデルとしての自動読み込みは可能です)";
+            return;
+        }
+        try {
+            const res = await fetch(modelUrl(name));
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            nodeActions?.loadVrmFile?.(new File([blob], name));
+            defModelInfo.textContent = `${name} を読み込みました`;
+        } catch (e) {
+            defModelInfo.textContent = `読み込みに失敗しました: ${e.message ?? e}`;
+        }
+    };
+    const defModelRow = el("div", { style: "display:flex;gap:4px;align-items:center;" });
+    defModelRow.append(defModelSel, defModelRefresh);
+
     sBody.append(
         sectionTitle("Mouse"),
         zoomModeBtn,
         sectionTitle("Rendering"),
         aaBtn,
     );
+    // Default Model は ComfyUI ノード(pose_editor_3d.js)の既定モデルの設定なので、ノードから開いたとき
+    // (nodeActions.loadVrmFile がある)だけ表示する。Comic Creator 等の単独ページから開いた場合は出さない
+    if (nodeActions?.loadVrmFile) {
+        void refreshDefaultModelList();
+        sBody.append(
+            sectionTitle("Default Model"),
+            defModelRow,
+            defModelLoadBtn,
+            defModelInfo,
+            el("div", { style: "font-size:10px;color:#556;line-height:1.5;" },
+                "model/ フォルダに .vrm / .glb / .gltf を置くと選べます。選択は保存され、ノード作成時・ページ読み込み時に自動で読み込まれます。"),
+        );
+    }
 
     subTabContent.append(lBody, eBody, sBody);
     lightLeftWrap.append(subTabStrip, subTabContent);
@@ -430,8 +516,41 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                "display:flex;flex-direction:column;gap:5px;box-sizing:border-box;",
     });
 
+    // 自動瞬き(Auto Blink): Shape Keys 一覧の先頭に、ON/OFF トグルと間隔(秒)スライダーを置く。
+    // キーフレームの Blink トラックがシーク時に状態を変えると onShapeKeysApplied 経由で
+    // rebuildShapeKeySliders() が呼ばれ、ここも作り直されて表示が追従する
+    function buildAutoBlinkRow() {
+        const blink = editor.getAutoBlink?.();
+        if (!blink || !editor.hasAutoBlink?.()) return null;
+        const wrap = el("div", {
+            style: "display:flex;flex-direction:column;gap:4px;padding:6px 0 8px;margin-bottom:4px;" +
+                   "border-bottom:1px solid #2a2a4a;",
+        });
+        const toggle = mkToggleBtn("😑 Auto Blink", blink.enabled);
+        toggle.title = "自動で瞬きさせます(キーフレームの 😑 Blink トラックで ON/OFF・間隔を記録できます)";
+        const [intSl, intVl] = mkSl(0.5, 10, 0.5, blink.interval,
+            v => editor.setAutoBlink?.({ interval: v }), v => v.toFixed(1) + "s");
+        intSl.title = "瞬きの平均間隔(秒)";
+        const syncDisabled = (on) => {
+            intSl.disabled = !on;
+            intSl.style.opacity = on ? "1" : "0.4";
+            intVl.style.opacity = on ? "1" : "0.4";
+        };
+        toggle.onclick = () => {
+            const on = !(editor.getAutoBlink?.().enabled);
+            editor.setAutoBlink?.({ enabled: on });
+            applyToggle(toggle, "😑 Auto Blink", on);
+            syncDisabled(on);
+        };
+        syncDisabled(blink.enabled);
+        wrap.append(toggle, sliderRow("間隔:", intSl, intVl));
+        return wrap;
+    }
+
     function rebuildShapeKeySliders() {
         shapeKeyBody.innerHTML = "";
+        const blinkRow = buildAutoBlinkRow();
+        if (blinkRow) shapeKeyBody.appendChild(blinkRow);
         const keys = getShapeKeys?.() ?? [];
         if (keys.length === 0) {
             shapeKeyBody.appendChild(el("div", {
@@ -771,6 +890,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         fieldRow("", keyframePanel.downloadBtn),
         sectionTitle("Output"),
         fieldRow("", row2(keyframePanel.webmBtn, keyframePanel.mp4Btn, keyframePanel.gifBtn)),
+        fieldRow("", keyframePanel.saveOutputCtrl),
     );
     posePropBody.append(posePropCameraSection, posePropModelSection);
 
@@ -803,7 +923,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
     libPanel.style.display = "none";
 
-    body.append(lightLeftWrap, poseLeftWrap, previewPanel, propPanel, posePropPanel, libPanel);
+    // ---- Image タブ: 左ペイン(画像) / 右ペイン(SAM3D 実行・オプション)。幅は Light/Pose と同じ 270px / 280px ----
+    const imagePanel = buildImagePosePanel(editor);
+
+    body.append(lightLeftWrap, poseLeftWrap, imagePanel.leftEl, previewPanel, propPanel, posePropPanel, imagePanel.propEl, libPanel);
     dialog.append(header, body, keyframePanel.el);
     overlay.appendChild(dialog);
 
@@ -817,7 +940,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             //   キーフレームタイムライン(Poseトラック)へサンプリング読み込みするための橋渡し。
             // onLoadVrmaRaw: 「Load」ボタンから、選択中の.vrmaをキーフレーム化せずそのまま
             //   ノード側のVRMA読み込み処理(nodeActions.loadVrmaFile)へ渡すための橋渡し
-            openPoseLibrary(editor, vrmBuffer, cvsWrapper, () => applyScale(),
+            openPoseLibrary(editor, getVrmBuffer(), cvsWrapper, () => applyScale(),
                 (buf, name) => keyframePanel.importVrmaAsKeyframes(buf, name),
                 nodeActions?.loadVrmaFile ? (buf) => nodeActions.loadVrmaFile(new Blob([buf])) : undefined);
             return;
@@ -833,7 +956,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     };
 
     // ---- メインタブ / サブタブ切り替え ----
-    let activeMainTab = initialTab === "pose" ? "pose" : "light"; // "light" | "pose"
+    let activeMainTab = (initialTab === "pose" || initialTab === "image") ? initialTab : "light"; // "light" | "pose" | "image"
     let activeSubTab  = "L";     // "L" | "E" | "S"
 
     function applySubTab() {
@@ -871,12 +994,18 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
     function applyMainTab() {
         const isLight = activeMainTab === "light";
+        const isPose  = activeMainTab === "pose";
+        const isImage = activeMainTab === "image";
         lightLeftWrap.style.display = isLight ? "flex" : "none";
-        poseLeftWrap.style.display = isLight ? "none" : "flex";
-        posePropPanel.style.display = isLight ? "none" : "flex";
+        poseLeftWrap.style.display = isPose ? "flex" : "none";
+        posePropPanel.style.display = isPose ? "flex" : "none";
+        imagePanel.leftEl.style.display = isImage ? "flex" : "none";
+        imagePanel.propEl.style.display = isImage ? "flex" : "none";
         if (!isLight && libPanel.style.display !== "none") {
             libPanel.style.display = "none";
         }
+        // Imageタブでは Library ボタンは使わない(Poseタブ側の Pose Library を使う)
+        libBtn.style.display = isImage ? "none" : "";
         libBtn.textContent = isLight ? "📚 Library" : "📚 Pose Library";
         libBtn.title = isLight ? "Light Preset Library" : "Open Pose Library";
         const libActive = isLight && libPanel.style.display !== "none";
@@ -884,9 +1013,11 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         libBtn.style.color      = libActive ? "#fff"    : "#aac";
         propPanel.style.display = (isLight && activeSubTab === "L") ? "flex" : "none";
         setMainTabActive(lightTabBtn, isLight);
-        setMainTabActive(poseTabBtn, !isLight);
-        if (isLight) {
+        setMainTabActive(poseTabBtn, isPose);
+        setMainTabActive(imageTabBtn, isImage);
+        if (isLight || isImage) {
             editor.clearCameraHelpers();
+            if (isImage) imagePanel.onShow();
         } else {
             rebuildShapeKeySliders();
             syncPosePropPanel();
@@ -895,6 +1026,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     }
     lightTabBtn.onclick = () => { activeMainTab = "light"; applyMainTab(); };
     poseTabBtn.onclick  = () => { activeMainTab = "pose";  applyMainTab(); };
+    imageTabBtn.onclick = () => { activeMainTab = "image"; applyMainTab(); };
 
     applySubTab();
     applyMainTab();

@@ -6,9 +6,11 @@
 
 An interactive 3D pose editor node for ComfyUI.  
 Load VRM / GLB / GLTF models directly in the browser, drag bones to pose them, animate poses/camera/lights on a keyframe timeline, and output the result to your workflow.
+You can also copy a pose from an image onto a VRM (SAM 3D Body via ComfyUI's native nodes) and let VRM models blink automatically.
 
 ComfyUI 上で動作するインタラクティブな 3D ポーズエディタノードです。  
 VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンをドラッグ操作してポーズを付け、キーフレームタイムラインでポーズ・カメラ・ライトをアニメーションさせ、そのままワークフローに出力できます。
+画像の人物のポーズを VRM に写したり（ComfyUI ネイティブの SAM 3D Body を使用）、VRM を自動で瞬きさせたりすることもできます。
 
 ![screenshot](docs/1_screenshot_workflow.png)
 
@@ -24,6 +26,10 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 ![Keyframe Timeline panel](docs/6_keyframe.png)
 
+![Light & Pose Editor — Image tab (Image → Pose with SAM 3D Body)](docs/7_image_tab.png)
+
+![Light & Pose Editor — Light tab, Settings sub-tab (Default Model)](docs/8_default_model.png)
+
 ---
 
 ## English
@@ -38,7 +44,7 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 | ⏱ | Timer capture toggle — auto-captures every `timer_interval` seconds |
 | VRM | Load VRM / GLB / GLTF file from local disk |
 | VRMA | Load a `.vrma` animation and play it back on the current VRM (see [VRMA Animation Playback](#vrma-animation-playback-vrma) below) |
-| VRMA (KEY) | Load a `.vrma` file and sample it into pose keyframes on the Light & Pose Editor's timeline instead of playing it back as a clip (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below). Opens the editor on its Pose tab automatically if it isn't already open |
+| VRMA (KEY) | Load a `.vrma` file and sample it into pose keyframes on the Light & Pose Editor's timeline instead of playing it back as a clip (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink) below). Opens the editor on its Pose tab automatically if it isn't already open |
 | CC | Color correction ON/OFF (sRGB + ACES Filmic) |
 
 **Row 2** (Light & Pose Editor / background / pose file)
@@ -73,7 +79,7 @@ Displays the name of the currently loaded VRM / GLB / GLTF file.
 
 #### LookAt Target (👁)
 
-When enabled, the model's eyes/head automatically track a target — either a draggable cyan marker in the 3D view, or the currently active camera, switched with the **🎯 Marker / 🎥 Camera** toggle at the bottom of the Light & Pose Editor (next to 👁). In Marker mode, drag the marker to steer the gaze; the marker itself is never captured in the output image. In Camera mode, the gaze follows whichever camera is currently active every frame — while **🖥 Monitor** is on, it keeps looking at whichever camera was active right before Monitor was turned on instead of the free-roaming Monitor view itself (dragging that camera's helper icon moves the gaze too, just like dragging the marker). ON/OFF, target mode, and marker position can all be recorded as keyframes on their own **👀 Eyes** track — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below. Resetting/loading a pose or mirroring re-anchors spring bones so nothing jumps unexpectedly.
+When enabled, the model's eyes/head automatically track a target — either a draggable cyan marker in the 3D view, or the currently active camera, switched with the **🎯 Marker / 🎥 Camera** toggle at the bottom of the Light & Pose Editor (next to 👁). In Marker mode, drag the marker to steer the gaze; the marker itself is never captured in the output image. In Camera mode, the gaze follows whichever camera is currently active every frame — while **🖥 Monitor** is on, it keeps looking at whichever camera was active right before Monitor was turned on instead of the free-roaming Monitor view itself (dragging that camera's helper icon moves the gaze too, just like dragging the marker). ON/OFF, target mode, and marker position can all be recorded as keyframes on their own **👀 Eyes** track — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink) below. Resetting/loading a pose or mirroring re-anchors spring bones so nothing jumps unexpectedly.
 
 #### Spring Bone Physics (🎐)
 
@@ -91,9 +97,9 @@ Adds a gentle breeze to the spring bones (hair, skirts, etc.) on top of the mode
 A single modal that combines what used to be three separate windows (Light Editor, Pose Library launcher, VRMA Timeline Editor) into one, so switching between lighting work and pose/animation work no longer means jumping between differently-shaped dialogs.
 
 - Click **💡 Light** or **🕺 Pose** on the node to open it directly on the corresponding tab.
-- The header holds the **💡 Light / 🕺 pose** tab switcher, a **Point Size** slider (same control as the node's own Point Size slider below the canvas — moving either one updates the bone-handle marker size; the node's slider is re-synced when the modal closes), and a **📚 Library** button whose role depends on the active tab (see below).
+- The header holds the **💡 Light / 🕺 pose / 🖼 Image** tab switcher (the Image tab is described in [Image tab](#image-tab---image--pose-sam-3d-body) below), a **Point Size** slider (same control as the node's own Point Size slider below the canvas — moving either one updates the bone-handle marker size; the node's slider is re-synced when the modal closes), and a **📚 Library** button whose role depends on the active tab (see below).
 - The center pane embeds the **actual WebGL canvas** (not a copy), scaled to fit — bone dragging, camera orbit, and light-helper dragging all work natively inside the modal exactly as on the node.
-- A **keyframe timeline panel** is docked at the bottom and shared by both tabs — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below.
+- A **keyframe timeline panel** is docked at the bottom and shared by all tabs — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink) below.
 
 #### Light tab
 
@@ -103,7 +109,7 @@ The left pane has three sub-tabs:
 |---------|----------|
 | **L** — Lights | The light list (add/remove/rename lights) and, on the right, a **Properties** panel for the selected light: type (☀ Sun / 💡 Point / 🔦 Spot / ▭ Box RectArea / 🌐 Ambient), color, intensity, position XYZ, target XYZ (Directional/Spot), angle & penumbra (Spot), distance & decay (Point/Spot), shadow (Directional only) |
 | **E** — Environment | Ground plane, background wall, shadow quality, and the **🌬 Wind** controls described above |
-| **S** — Settings | 🖱 Ctrl+Right-drag zoom toggle (see [Camera Controls](#camera-controls)) and 🖼 anti-aliasing enhancement (supersampling) toggle |
+| **S** — Settings | 🖱 Ctrl+Right-drag zoom toggle (see [Camera Controls](#camera-controls)), 🖼 anti-aliasing enhancement (supersampling) toggle, and **Default Model** (which model in `model/` loads automatically — see [Default Model](#default-model)) |
 
 On the **L** sub-tab, **📚 Library** toggles a light-preset library panel — see [Light Library](#light-library-) below. Drag the yellow sphere in the preview to reposition a light in 3D.
 
@@ -113,15 +119,16 @@ The left pane has two sub-tabs:
 
 | Sub-tab | Contents |
 |---------|----------|
-| **K** — Shape Keys | Sliders (0.0 – 1.0) for every morph/expression on the model, updated in real time. This replaces the old collapsible "Shape Keys" panel that used to live at the bottom of the node. |
+| **K** — Shape Keys | Sliders (0.0 – 1.0) for every morph/expression on the model, updated in real time. This replaces the old collapsible "Shape Keys" panel that used to live at the bottom of the node. For VRMs with a `blink` expression, the list starts with **😑 Auto Blink** (ON/OFF + interval) — see [Blink track](#blink-track-auto-blink). |
 | **C** — Camera | The camera list (add / select / delete / rename / recolor) — see [Camera Management](#camera-management-) below |
 
 The right pane (kept at the same width as the Light tab's Properties panel so the dialog doesn't change size when you flip between tabs or sub-tabs; no "Properties" heading is shown, unlike the Light tab) shows different content depending on which left sub-tab is active:
 
 - **K sub-tab**:
   - **Model** — **Load MODEL**, a duplicate of the node's own model loader.
-  - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes)).
+  - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink)).
   - **Output** — **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF**, also moved here from the keyframe panel for the same reason.
+    - **Save to ComfyUI output** (checkbox): when on, the file is saved to ComfyUI's `output/vrm_pose_editor/` (as `pose_YYYYmmdd_HHMMSS.<ext>`) instead of being downloaded. The saved path is shown under the checkbox. The setting is remembered (ComfyUI user data).
 - **C sub-tab**: **Camera** properties for whichever camera is selected in the list — Name, Color, an OT/PR toggle, and **FOV**/**Near** sliders. These read/write the shared `editor` state for the currently *active* camera (same as the node's own OT/RC/FOV/Near controls), so either side stays in sync once the modal is closed or you switch tabs/cameras. (The Look at Target toggle used to live here too — it's been moved to the keyframe panel below, since it's a model-wide setting rather than a per-camera one.)
 
 VRM/VRMA loading and unloading are routed through the same `nodeActions` bridge the node uses internally, so the node's own buttons/labels stay in sync too.
@@ -135,7 +142,7 @@ The **C** sub-tab manages multiple cameras, the same way the Light tab's **L** s
 - The scene starts with one camera (named **Camera 1**) plus any number of extra cameras added with **+ Add** (named **Camera 2**, **Camera 3**, ... in the order they were created — the number never gets reused, even if you delete an earlier camera and add a new one). Every camera is equal — none of them is special or protected, and any camera (including Camera 1) can be deleted with its **✕** button. Deleting the last remaining camera drops you into **🖥 Monitor** mode automatically (see below).
 - Clicking a camera in the list makes it the **active** camera immediately: the preview jumps to that camera's saved viewpoint, and from then on normal mouse-drag camera controls (orbit / pan / zoom / Alt+Right-drag roll — see [Camera Controls](#camera-controls)) move *that* camera. Switching away and back preserves its position, orientation, FOV, near-clip, and Orthographic/Perspective state exactly as you left them.
 - Cameras you aren't currently controlling are drawn in the 3D view as small camera-shaped helper icons, scaled so they read as roughly the same size on screen regardless of distance. You can also **drag** any of these helpers to reposition that camera directly in 3D — it doesn't need to be the active camera; this is the easiest way to place a camera and immediately record a **Camera track** keyframe for it (see below) without switching your own view away from what you're currently framing.
-- Each camera has a **color** (auto-assigned from a fixed palette when added, changeable from the **Color** field in its Properties) — this is the color its keyframes are drawn in on the timeline's **🎬 Cam Switch** track, so you can tell at a glance which cut belongs to which camera (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes) below).
+- Each camera has a **color** (auto-assigned from a fixed palette when added, changeable from the **Color** field in its Properties) — this is the color its keyframes are drawn in on the timeline's **🎬 Cam Switch** track, so you can tell at a glance which cut belongs to which camera (see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink) below).
 
 #### Monitor (🖥)
 
@@ -145,7 +152,35 @@ Turning Monitor **OFF** hands control back to a real camera: if the current fram
 
 If [LookAt Target](#lookat-target-) is enabled with its target set to **🎥 Camera**, the Monitor's free viewpoint is deliberately excluded from being that target — looking at a scouting viewpoint that isn't really "in the shot" wouldn't make sense. While Monitor is on, the gaze instead keeps following whichever camera was active right before Monitor was turned on; dragging that camera's helper icon moves the gaze in real time, exactly like dragging the LookAt marker.
 
-### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind · Eyes)
+#### Image tab (🖼) — Image → Pose (SAM 3D Body)
+
+Estimates the pose of a person in an image and applies it to the loaded VRM.
+
+![Image tab](docs/7_image_tab.png)
+
+1. Load a VRM (Pose tab → **Load MODEL**). GLB/GLTF models without humanoid bones are not supported.
+2. In the **Image** tab, load an image (**Load Image** or drag & drop).
+3. Press **▶ Run SAM3D**. The image is sent to this ComfyUI server, the native SAM 3D Body nodes run as a small workflow (`SAM3DBody_Loader` → `SAM3DBody_Predict` → `BuildPoseFile` ×2 → `SaveGLB` ×2), and the two output GLBs are read back:
+   - `mesh_style=openpose` — 3D joint positions, used to solve the body
+   - `mesh_style=body_mesh` — MHR skeleton, used for wrist orientation and finger shapes
+4. The solved pose is applied immediately. Continue with the Pose tab / keyframes as usual.
+
+| Option | Description |
+|---|---|
+| Mirror | Treat the image as mirrored (selfies) |
+| Hands | Use SAM3D's hand skeleton for wrists and fingers |
+| Fingers | Solve finger bones |
+| Face front | Remove the body's yaw relative to the camera |
+| Ground | Lift/lower hips so the feet touch the floor |
+| Head pitch | Corrects the head tilting down (nose below ears) |
+| Wrist twist | Share of wrist twist moved to the forearm |
+
+- **Load GLB**: you can also load GLBs made elsewhere in ComfyUI with the same nodes (select both openpose and body_mesh files).
+- **Revert** returns to the pose before the first apply.
+- Requirements: ComfyUI **0.38+** (native SAM 3D Body nodes) and a SAM 3D Body model in `models/detection/` (e.g. `sam_3d_body_dinov3_bf16.safetensors`). Foot (ankle) rotation is not estimated.
+- **Licensing**: this node does **not** include any SAM 3D Body code or model weights. It only calls ComfyUI's own HTTP API and parses the resulting GLB files. The SAM 3D Body model is subject to its own license, which you accept when you download it.
+
+### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind · Eyes · Blink)
 
 Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / MP4 / GIF.
 
@@ -184,6 +219,12 @@ The Shape Keys sliders' current values are bundled onto pose keyframes automatic
 #### Eyes track
 
 Records the [LookAt Target](#lookat-target-)'s ON/OFF state, target mode (Marker/Camera), and marker position as its own independent track — unlike Shape Keys, it's *not* bundled onto Pose keyframes, so you can key the gaze on its own timing without needing a pose change at the same frame (and, conversely, adding/updating a Pose keyframe never touches the Eyes track). Marker position is linearly interpolated between surrounding Eyes keyframes; ON/OFF and target mode are discrete and switch over at the end of the interval, the same way Cam Switch cuts to a camera. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
+
+#### Blink track (Auto Blink)
+
+**😑 Auto Blink** (top of the Pose tab's Shape Keys list) makes a VRM blink automatically — a toggle plus an **interval** slider (average seconds between blinks, with a little natural variation). The blink timing is a pure function of time, so timeline playback and WebM / MP4 / GIF export blink at exactly the same frames; the normal preview blinks in real time. While Auto Blink is on, the `blink` shape-key slider keeps your own value (e.g. half-closed eyes) and Pose keyframes record that value rather than a mid-blink one.
+
+The **😑 Blink** track records Auto Blink's ON/OFF and interval as keyframes. Values are discrete: the last key at or before the current frame applies (no interpolation). Requires a VRM with the `blink` expression. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
 
 #### Camera track
 
@@ -255,9 +296,11 @@ While the timer is running, the **📸 Capture** button does **not** flash — o
 
 #### Option B: Manual
 
-1. Place the `3dpose_custom_cm` folder inside `ComfyUI/custom_nodes/`.
+1. Clone or copy this repository into `ComfyUI/custom_nodes/` **as a folder named `comfyui-vrm-pose-editor`** (e.g. `git clone https://github.com/ketle-man/comfyui-vrm-pose-editor`). The folder name matters: ComfyUI serves the node's scripts at `/extensions/<folder name>/`, and other tools such as ComfyUI Comic Creator load them from `/extensions/comfyui-vrm-pose-editor/`.
 2. Restart ComfyUI.
 3. Add the **"3D Pose Editor"** node (category: `3D Pose`) from the node menu.
+4. (Optional) Put your own `.vrm` / `.glb` / `.gltf` files in `model/` to have one load automatically — see [Default Model](#default-model). No model is bundled.
+5. (Optional) For the [Image tab](#image-tab---image--pose-sam-3d-body), use ComfyUI 0.38+ and place a SAM 3D Body model in `models/detection/`.
 
 ### Camera Controls
 
@@ -304,15 +347,19 @@ The model is automatically scaled and centred.
 
 ### Default Model
 
-Place one of the following files in the `js/` folder to auto-load on startup:
+Place model files (`.vrm` / `.glb` / `.gltf`, any file name) in the `model/` folder, then choose which one loads automatically in **Light & Pose Editor → Light tab → S (Settings) → Default Model**.
 
-| Filename | Format |
+![Default Model setting](docs/8_default_model.png)
+
+| Choice | Behavior |
 |----------|--------|
-| `model.glb` | GLB |
-| `model.vrm` | VRM |
-| `model.gltf` | GLTF |
+| `Auto` | The first file in `model/` (by name) |
+| A file name | That file |
+| `None` | No model is loaded on startup |
 
-Priority: `model.glb` → `model.vrm` → `model.gltf`. If none exist, the editor starts without a model.
+- The choice is saved to ComfyUI's user data (`user/<user>/vrm_pose_editor_settings.json`), so it survives node updates and reinstalls. It applies when a node is created or the page is loaded; **Load** loads the selected model into the current node right away (`.vrm` / `.glb` only).
+- No model is bundled. If `model/` is empty, the editor starts without a model (load one with the **VRM** button).
+- If the default model is a VRM, Pose Library can also generate thumbnails with it.
 
 ### Pose Library (📚)
 
@@ -324,14 +371,15 @@ Open it via **🕺 Pose → 📚 Library** on the node (or the same button from 
 - **Click** a `.json`/`.vroidpose` thumbnail to apply the pose immediately (shown in the preview pane). **Click** a `.vrma` thumbnail to load it into the mini player below the preview (name, ✕ eject, ▶/⏸, seek bar, time) — the animation plays right there in the preview, but clicking a card only previews it; it does **not** yet affect the node or the Light & Pose Editor's own timeline.
   - **⬇ Load** (below the mini player) commits the previewed `.vrma` to the node as-is (a regular clip, same as the node's own **VRMA** button) and closes the Pose Library.
   - **🔑 Load KEY** samples the previewed `.vrma` into pose keyframes on the Light & Pose Editor's timeline instead (see [Importing a `.vrma` as pose keyframes](#importing-a-vrma-as-pose-keyframes)) and closes the Pose Library.
-- **Right-click** for more options (still poses only):
-  - ↔️ Mirror & Apply
+- **Right-click** for more options:
+  - ↔️ Mirror & Apply (still poses only)
   - ⭐ Add / Remove Favorites
   - 📝 Edit Memo
   - ✏️ Rename File
   - 🖼 Regenerate Thumbnail (Front / Back)
 - **💾 Save**: saves the current editor pose to the `poses/` folder as `p_HHMMSS.json`.
-- Thumbnails are auto-generated using the loaded VRM model and cached server-side (`.vrma` entries use a fixed 🎬 placeholder instead, since animations aren't thumbnailed).
+- Thumbnails are auto-generated with the current VRM (the one you loaded, or the [default model](#default-model)) and cached server-side, so later visits only load the small PNGs. `.vrma` files are thumbnailed with their **first frame** and marked with a 🎬 badge. Generation starts when a card scrolls into view, loads the VRM only once per library session, and renders one pose at a time. VRM 0.x models (which face −Z) are shot from the front automatically. If no VRM is loaded, the header shows a notice instead.
+- The file-extension badge is color-coded: `.json` green, `.vrma` pink, `.vroidpose` light blue.
 
 ### Pose Save / Load
 
@@ -417,7 +465,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 | ⏱ | タイマーキャプチャのトグル（`timer_interval` 秒ごとに自動キャプチャ） |
 | VRM | VRM / GLB / GLTF ファイルをローカルから読み込む |
 | VRMA | `.vrma` アニメーションを読み込み、現在の VRM 上で再生（後述の[VRMAアニメーション再生](#vrmaアニメーション再生vrma)を参照） |
-| VRMA (KEY) | `.vrma` ファイルを読み込み、再生クリップとしてではなくLight & Pose Editorのタイムラインへポーズキーフレーム列としてサンプリング読み込みする（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）。モーダルが未オープンなら自動的にPoseタブで開く |
+| VRMA (KEY) | `.vrma` ファイルを読み込み、再生クリップとしてではなくLight & Pose Editorのタイムラインへポーズキーフレーム列としてサンプリング読み込みする（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）。モーダルが未オープンなら自動的にPoseタブで開く |
 | CC | カラー補正 ON/OFF（sRGB + ACES Filmic） |
 
 **2行目**（Light & Pose Editor・背景・ポーズファイル）
@@ -452,7 +500,7 @@ Enable if VRoid Studio / Blender models appear too dark.
 
 #### 視線ターゲット（👁）
 
-ON にすると、モデルの目・頭が対象を自動的に追従します。対象は3Dビュー内のドラッグ可能なシアン色マーカー、またはその時点でアクティブなカメラのどちらかで、Light & Pose Editor下部（👁の右隣）の**🎯 Marker / 🎥 Camera**トグルで切り替えられます。Markerモードではマーカーをドラッグして視線の向きを調整でき、マーカー自体は出力画像には写り込みません。Cameraモードでは毎フレーム、その時点でアクティブなカメラの方を視線が追従します — **🖥 Monitor**がONの間は、自由に動き回れるMonitor自体ではなく、Monitorに入る直前にアクティブだったカメラを見続けます（そのカメラのヘルパーアイコンをドラッグすると、マーカーをドラッグしたときと同じように視線も追従します）。ON/OFF・対象モード・マーカー座標は、専用の**👀 Eyes**トラックでキーフレーム化できます — 詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照してください。ポーズリセット・ポーズ読込・ミラー実行時は揺れボーンの内部状態を新しいポーズに合わせて再アンカーするため、切替直後に不自然に跳ねることはありません。
+ON にすると、モデルの目・頭が対象を自動的に追従します。対象は3Dビュー内のドラッグ可能なシアン色マーカー、またはその時点でアクティブなカメラのどちらかで、Light & Pose Editor下部（👁の右隣）の**🎯 Marker / 🎥 Camera**トグルで切り替えられます。Markerモードではマーカーをドラッグして視線の向きを調整でき、マーカー自体は出力画像には写り込みません。Cameraモードでは毎フレーム、その時点でアクティブなカメラの方を視線が追従します — **🖥 Monitor**がONの間は、自由に動き回れるMonitor自体ではなく、Monitorに入る直前にアクティブだったカメラを見続けます（そのカメラのヘルパーアイコンをドラッグすると、マーカーをドラッグしたときと同じように視線も追従します）。ON/OFF・対象モード・マーカー座標は、専用の**👀 Eyes**トラックでキーフレーム化できます — 詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照してください。ポーズリセット・ポーズ読込・ミラー実行時は揺れボーンの内部状態を新しいポーズに合わせて再アンカーするため、切替直後に不自然に跳ねることはありません。
 
 #### 揺れ物理（🎐）
 
@@ -470,9 +518,9 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 以前は別々のウィンドウだったLightエディタ・ポーズライブラリの起動口・VRMAタイムラインエディタを1つのモーダルへ統合したものです。ライティング作業とポーズ・アニメーション作業を行き来するたびに形の違うダイアログへ切り替わる、という煩わしさを解消しています。
 
 - ノードの **💡 Light** または **🕺 Pose** をクリックすると、対応するタブが直接開いた状態でモーダルが表示されます。
-- ヘッダーには **💡 Light / 🕺 pose** タブ切り替え、**Point Size** スライダー（ノード自身のPoint Sizeスライダーと同じ機能。どちらを動かしてもボーンハンドルの球サイズが変わり、モーダルを閉じるとノード側の表示値も再同期されます）、そしてタブに応じて役割が変わる **📚 Library** ボタンがあります（後述）。
+- ヘッダーには **💡 Light / 🕺 pose / 🖼 Image** タブ切り替え（Imageタブは後述の[Imageタブ](#imageタブ-画像--ポーズsam-3d-body)を参照）、**Point Size** スライダー（ノード自身のPoint Sizeスライダーと同じ機能。どちらを動かしてもボーンハンドルの球サイズが変わり、モーダルを閉じるとノード側の表示値も再同期されます）、そしてタブに応じて役割が変わる **📚 Library** ボタンがあります（後述）。
 - 中央ペインには**実際のWebGLキャンバス**（コピーではない）が枠に合わせて埋め込まれ、ボーンドラッグ・カメラ操作・ライトヘルパードラッグがすべてノード上と全く同じようにモーダル内でネイティブに動作します。
-- 下部には両タブ共通の**キーフレームタイムラインパネル**が常設されています（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）。
+- 下部には全タブ共通の**キーフレームタイムラインパネル**が常設されています（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）。
 
 #### Lightタブ
 
@@ -482,7 +530,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 |---------|------|
 | **L** — Lights | ライト一覧（追加・削除・名前変更）と、右側の選択中ライトの**Properties**パネル: タイプ（☀ Sun / 💡 Point / 🔦 Spot / ▭ Box RectArea / 🌐 Ambient）、色、強度、位置XYZ、ターゲットXYZ（Directional/Spot）、角度＆ペナンブラ（Spot）、距離＆減衰（Point/Spot）、シャドウ（Directionalのみ） |
 | **E** — Environment | 地面・背景壁・シャドウ品質、および上述の**🌬 Wind**コントロール |
-| **S** — Settings | 🖱 Ctrl+右ドラッグでズームのトグル（[カメラ操作](#カメラ操作)参照）と、🖼 アンチエイリアス強化（スーパーサンプリング）のトグル |
+| **S** — Settings | 🖱 Ctrl+右ドラッグでズームのトグル（[カメラ操作](#カメラ操作)参照）、🖼 アンチエイリアス強化（スーパーサンプリング）のトグル、**Default Model**（`model/` のどのモデルを自動で読み込むか — [デフォルトモデルの設定](#デフォルトモデルの設定)参照） |
 
 **L**サブタブでは、**📚 Library**でライトプリセットライブラリパネルをトグルできます（後述の[ライトライブラリ](#ライトライブラリ📚)を参照）。プレビュー内の黄色球体をドラッグしてライトを3D移動できます。
 
@@ -492,15 +540,16 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 | サブタブ | 内容 |
 |---------|------|
-| **K** — Shape Keys | モデルが持つすべてのモーフ・表情のスライダー（0.0〜1.0）をリアルタイムに調整。従来ノード下部にあった折りたたみ式Shape Keysパネルはこちらに置き換わりました。 |
+| **K** — Shape Keys | モデルが持つすべてのモーフ・表情のスライダー（0.0〜1.0）をリアルタイムに調整。従来ノード下部にあった折りたたみ式Shape Keysパネルはこちらに置き換わりました。`blink` 表情を持つ VRM では、一覧の先頭に **😑 Auto Blink**（ON/OFF と間隔）があります — [Blinkトラック](#blinkトラック自動瞬き)を参照。 |
 | **C** — Camera | カメラ一覧（追加・選択・削除・名前変更・色変更）— 詳細は後述の[カメラ管理](#カメラ管理)を参照 |
 
 右ペイン（Lightタブ側のPropertiesパネルと同じ幅にすることで、Light/Poseタブやサブタブを切り替えてもダイアログ全体のサイズが変わらないようにしています。Lightタブと異なり「Properties」という見出しは表示しません）は、選択中の左サブタブに応じて内容が変わります:
 
 - **Kサブタブ**:
   - **Model** — **Load MODEL**（ノード側のモデルロード機能の複製）
-  - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）
+  - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）
   - **Output** — **🎬 WebM**・**🎥 MP4**・**🎞️ GIF**（こちらも同様の理由でキーフレームパネルから移設）
+    - **Save to ComfyUI output**（チェックボックス）: オンにすると、ダウンロードせずに ComfyUI の `output/vrm_pose_editor/` へ `pose_年月日_時分秒.<拡張子>` として保存します。保存先はチェックボックスの下に表示されます。設定は ComfyUI のユーザーデータに保存され、次回以降も引き継がれます。
 - **Cサブタブ**: リストで選択中のカメラの**Camera**プロパティ — Name、Color、OT/PR切替、**FOV**/**Near**スライダー。共有の`editor`状態のうち現在**アクティブ**なカメラの状態を直接読み書きするため（ノード自身のOT/RC/FOV/Nearコントロールと同じ）、モーダルを閉じた際やタブ・カメラの切替時にどちら側も再同期されます。（以前ここにあった**Look at Target**トグルは、カメラごとではなくモデル全体の設定であるため、下部のキーフレームパネルへ移設しました。）
 
 VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions`ブリッジ経由で処理されるため、ノード側のボタン表示も連動して更新されます。
@@ -514,7 +563,7 @@ VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions
 - シーンには最初から1台のカメラ（**Camera 1**）が存在し、**+ Add**で好きなだけ追加できます（**Camera 2**、**Camera 3**...と作成順に命名され、途中のカメラを削除しても番号が使い回されることはありません）。すべてのカメラは対等で、特別扱いされ削除できないカメラはありません — Camera 1を含むどのカメラも**✕**ボタンで削除できます。最後の1台を削除すると自動的に**🖥 Monitor**モードへ切り替わります（後述）。
 - リストでカメラをクリックすると、そのカメラが即座に**アクティブ**になります: プレビューがそのカメラの保存済み視点へ切り替わり、以降は通常のマウスドラッグ操作（回転／パン／ズーム／Alt+右ドラッグでロール — [カメラ操作](#カメラ操作)参照）がそのカメラを動かすようになります。他のカメラへ切り替えて戻ってきても、位置・向き・FOV・ニアクリップ・Ortho/Perspective状態はそのまま保持されています。
 - 現在操作していないカメラは、3Dビュー内に小さなカメラ形状のヘルパーアイコンとして表示されます（距離に応じて画面上でほぼ一定のサイズに見えるようスケール調整されます）。このヘルパーは**ドラッグして直接位置を動かす**こともできます — アクティブにする必要はありません。狙った位置にカメラを置いて、そのまま**Cameraトラック**のキーフレームとして記録する（後述）のに使えます。
-- 各カメラは**色**を持ちます（追加時に固定パレットから自動割り当て、Propertiesの**Color**欄で変更可能）。この色は、タイムラインの**🎬 Cam Switch**トラック上でそのカメラのキーフレームを描画する色になり、どのカットがどのカメラのものか一目で分かるようになります（詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyes)を参照）。
+- 各カメラは**色**を持ちます（追加時に固定パレットから自動割り当て、Propertiesの**Color**欄で変更可能）。この色は、タイムラインの**🎬 Cam Switch**トラック上でそのカメラのキーフレームを描画する色になり、どのカットがどのカメラのものか一目で分かるようになります（詳細は後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）。
 
 #### Monitor（🖥）
 
@@ -524,7 +573,35 @@ Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現�
 
 [視線ターゲット](#視線ターゲット-)がONで対象が**🎥 Camera**の場合、Monitorの自由視点はあえて対象から除外されています — 「撮影に写り込まない見回し用の視点」に視線を向けるのは意味が通らないためです。Monitor中は、Monitorに入る直前にアクティブだったカメラを見続け、そのカメラのヘルパーアイコンをドラッグすると視線もリアルタイムに追従します。
 
-### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind・Eyes）
+#### Imageタブ（🖼）— 画像 → ポーズ（SAM 3D Body）
+
+画像の人物のポーズを推定し、読み込み中の VRM に適用します。
+
+![Imageタブ](docs/7_image_tab.png)
+
+1. VRM を読み込む（Poseタブ → **Load MODEL**）。humanoid ボーンを持たない GLB/GLTF には適用できません。
+2. **Image** タブで画像を読み込む（**Load Image** またはドラッグ＆ドロップ）。
+3. **▶ Run SAM3D** を押す。画像をこの ComfyUI に送り、ネイティブの SAM 3D Body ノードを小さなワークフロー（`SAM3DBody_Loader` → `SAM3DBody_Predict` → `BuildPoseFile` ×2 → `SaveGLB` ×2）として実行し、出力された 2 つの GLB を読み込みます。
+   - `mesh_style=openpose` — 関節の 3D 位置（体の向きを解く）
+   - `mesh_style=body_mesh` — MHR 骨格（手首の向きと指の形）
+4. 解いたポーズがすぐ適用されます。以降は Poseタブ・キーフレームで通常どおり微調整・保存できます。
+
+| オプション | 内容 |
+|---|---|
+| Mirror | 自撮りなど鏡像の画像として扱う |
+| Hands | SAM3D の手の骨から手首・指を取り込む |
+| Fingers | 指のボーンを解く |
+| Face front | カメラに対する体全体の向き（ヨー）を除去して正面向きにする |
+| Ground | 足が床に付くよう腰の高さを調整 |
+| Head pitch | 頭のうつむき誤差（鼻が耳より下）の補正 |
+| Wrist twist | 手首のねじれを前腕に分配する割合 |
+
+- **Load GLB**: ComfyUI で同じノードを使って別途作った GLB（openpose と body_mesh の両方を選択）も読み込めます。
+- **Revert** で最初に適用する前のポーズへ戻せます。
+- 必要環境: ComfyUI **0.38 以降**（ネイティブ SAM 3D Body ノード）と、`models/detection/` に SAM 3D Body のモデル（例: `sam_3d_body_dinov3_bf16.safetensors`）。足首（足先）の回転は推定しません。
+- **ライセンス**: このノードには SAM 3D Body のコード・モデル重みを**一切含みません**。ComfyUI 本体の HTTP API を呼び、出力された GLB を解析するだけです。SAM 3D Body のモデルはそれぞれのライセンスに従い、ユーザーが各自導入してください。
+
+### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind・Eyes・Blink）
 
 Light & Pose Editor下部（両タブ共通）に常設されたパネルで、フレームベースのタイムライン上にキーフレームを配置して短いアニメーションを作成し、プレビュー・保存・`.vrma`/WebM/MP4/GIFとして書き出せます。
 
@@ -563,6 +640,12 @@ Shape Keysスライダーの現在値は、ポーズKFを追加/更新するた�
 #### Eyesトラック
 
 [視線ターゲット](#視線ターゲット-)のON/OFF・対象モード（Marker/Camera）・マーカー座標を、独立したトラックとして記録します。Shape Keysと違い、ポーズKFには束ねられません — ポーズを変えずに視線だけを別のタイミングでキー打ちでき、逆にポーズKFを追加/更新してもEyesトラックには一切影響しません。マーカー座標は前後のEyes KF間で線形補間され、ON/OFFと対象モードは離散値としてCam Switchのカット切替と同じように区間終端で切り替わります。他の非Poseトラックと同様、**プレビュー専用**であり、エクスポートされる`.vrma`には含まれません。
+
+#### Blinkトラック（自動瞬き）
+
+Poseタブの Shape Keys 一覧の先頭にある **😑 Auto Blink** で、VRM を自動で瞬きさせます。トグルと**間隔**スライダー（瞬きの平均間隔・秒。少し揺らぎを入れています）で操作します。瞬きのタイミングは時刻だけで決まるため、タイムライン再生と WebM / MP4 / GIF の書き出しでは同じフレームで瞬きます。通常のプレビューは実時間で瞬きます。Auto Blink が ON の間も、`blink` シェイプキーのスライダーは自分で設定した値（半目など）を保ち、ポーズKFにも瞬き途中ではなくその値が記録されます。
+
+**😑 Blink** トラックは、Auto Blink の ON/OFF と間隔をキーフレームとして記録します。値は補間されず、現在フレーム以前の最後のキーがそのまま使われます。`blink` 表情を持つ VRM が必要です。他の非Poseトラックと同様、**プレビュー専用**であり、エクスポートされる`.vrma`には含まれません。
 
 #### Cameraトラック
 
@@ -634,9 +717,11 @@ WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出し�
 
 #### Option B: 手動インストール
 
-1. `3dpose_custom_cm` フォルダを `ComfyUI/custom_nodes/` に配置。
+1. このリポジトリを **`comfyui-vrm-pose-editor` という名前のフォルダで** `ComfyUI/custom_nodes/` に配置（例: `git clone https://github.com/ketle-man/comfyui-vrm-pose-editor`）。フォルダ名は変えないでください。ComfyUI はノードのスクリプトを `/extensions/<フォルダ名>/` で配信し、ComfyUI Comic Creator などは `/extensions/comfyui-vrm-pose-editor/` から読み込みます。
 2. ComfyUI を再起動。
 3. ノードメニューから **"3D Pose Editor"**（カテゴリ: `3D Pose`）を追加。
+4. （任意）`model/` に `.vrm` / `.glb` / `.gltf` を置くと、自動で読み込むモデルにできます — [デフォルトモデルの設定](#デフォルトモデルの設定)を参照。モデルは同梱していません。
+5. （任意）[Imageタブ](#imageタブ-画像--ポーズsam-3d-body)を使う場合は、ComfyUI 0.38 以降にし、`models/detection/` に SAM 3D Body のモデルを置いてください。
 
 ### カメラ操作
 
@@ -683,14 +768,15 @@ WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出し�
 - `.json`/`.vroidpose`のサムネイルを**クリック**するとポーズを即時適用（プレビュー列に反映）。`.vrma`のサムネイルを**クリック**するとプレビュー下部のミニプレイヤー（名前・✕Eject・▶/⏸・シークバー・時刻）に読み込まれ、その場で再生できますが、クリックはあくまでプレビューのみで、ノードやLight & Pose Editor側のタイムラインにはまだ反映されません。
   - ミニプレイヤー下部の**⬇ Load**は、プレビュー中の`.vrma`をそのまま（通常クリップとして、ノード自身のVRMAボタンと同じ形で）ノードへ反映し、Pose Libraryを閉じます。
   - **🔑 Load KEY**は、プレビュー中の`.vrma`をLight & Pose EditorのタイムラインへポーズKF列としてサンプリング読み込みし（[`.vrma`をポーズキーフレームとしてインポートする](#vrmaをポーズキーフレームとしてインポートする)を参照）、Pose Libraryを閉じます。
-- **右クリック**でメニュー（静止ポーズのみ）:
-  - ↔️ Mirror & Apply（左右反転して適用）
+- **右クリック**でメニュー:
+  - ↔️ Mirror & Apply（左右反転して適用。静止ポーズのみ）
   - ⭐ お気に入り追加 / 解除
   - 📝 メモ編集
   - ✏️ ファイル名変更
   - 🖼 サムネイル再生成（正面 / 背面）
 - **💾 Save**: 現在のエディタのポーズを `poses/p_HHMMSS.json` として保存。
-- サムネイルは読み込み済み VRM を使ってオフスクリーンで自動生成・キャッシュ（`.vrma`は固定の🎬プレースホルダー、アニメーションのためサムネイル生成は行わない）。
+- サムネイルは、読み込み中の VRM（自分で読み込んだもの、または[デフォルトモデル](#デフォルトモデルの設定)）で自動生成し、サーバーに保存します。次回からは小さな PNG を表示するだけです。`.vrma` は**1フレーム目**のポーズでサムネイルを作り、🎬 の印を付けます。生成はカードが画面に入った時点で始まり、VRM の読み込みはライブラリを開くごとに1回だけ、描画は1件ずつ順番に行います。VRM 0.x のモデル（正面が −Z）も自動で正面から撮ります。VRM が読み込まれていないときは、ヘッダーに案内が表示されます。
+- 拡張子の表示は色分けされます: `.json` は緑、`.vrma` はピンク、`.vroidpose` は水色。
 
 ### ポーズの保存/読込
 
@@ -754,15 +840,19 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 
 ### デフォルトモデルの設定
 
-`js/` フォルダに以下のいずれかを配置すると起動時に自動ロードされます。
+`model/` フォルダにモデル（`.vrm` / `.glb` / `.gltf`、ファイル名は自由）を置き、**Light & Pose Editor → Lightタブ → S（Settings）→ Default Model** で自動で読み込むものを選びます。
 
-| ファイル名 | 形式 |
+![Default Model 設定](docs/8_default_model.png)
+
+| 選択 | 動作 |
 |-----------|------|
-| `model.glb` | GLB |
-| `model.vrm` | VRM |
-| `model.gltf` | GLTF |
+| `Auto` | `model/` の先頭（名前順）のファイル |
+| ファイル名 | そのファイル |
+| `None` | 起動時にモデルを読み込まない |
 
-優先順位: `model.glb` → `model.vrm` → `model.gltf`
+- 選択は ComfyUI のユーザーデータ（`user/<user>/vrm_pose_editor_settings.json`）に保存されるため、ノードの更新・再インストールでも消えません。ノード作成時・ページ読み込み時に反映されます。**Load** で選択中のモデルを今のノードにすぐ読み込めます（`.vrm` / `.glb` のみ）。
+- モデルは同梱していません。`model/` が空のときはモデル無しで起動します（**VRM** ボタンで読み込めます）。
+- 既定モデルが VRM なら、Pose Library のサムネイル生成にも使われます。
 
 ---
 
@@ -806,7 +896,7 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 - **Eyes track and the Pose/LookAt split**: `kf.lookAt` (`{enabled, targetMode, position}`) is read/written *only* by the Eyes track's own capture/delete functions. It used to also be captured and cleared by the Pose track (bundled the same way Shape Keys still are), which caused two bugs once cameras/keyframes were layered on top of the original marker-only LookAt: adding a Pose keyframe would silently overwrite whatever gaze was already keyed on a given frame with "whatever the eyes happened to be doing at pose-capture time," breaking Eyes-track interpolation between real keyframes; and — independently — `editor.exportPose()` bakes *every* humanoid bone including `leftEye`/`rightEye` into pose keyframes, so the self-loadback preview clip (`refreshPreview()`) would carry eye-bone tracks that fought with LookAt's own per-frame bone writes. `refreshPreview()` now strips `leftEye`/`rightEye` from each keyframe's bones before building the preview clip whenever LookAt is enabled (does not affect the bones written into a downloaded `.vrma`), and `applyShapeKeysForFrame()` similarly skips the VRM1 lookAt-preset expression names (`lookUp`/`lookDown`/`lookLeft`/`lookRight`) while LookAt is on, in case a given model's LookAt is expression-based rather than bone-based.
 - **Pose/LookAt coexistence fix**: even after the split above, adding a single Pose keyframe still left LookAt permanently disabled. `loadVRMAFromBuffer()` — the function every preview-clip rebuild and every real `.vrma` load goes through — used to unconditionally set `currentVRM.lookAt.target = null` "to avoid fighting with the VRMA's own look-at track," and `_applyLookAtTarget()` had an early `if (_vrmaMixer) return` guard that made every subsequent ON/OFF toggle, target-mode switch, and Eyes-keyframe application a no-op for as long as any VRMA clip (including the self-preview one) stayed loaded — which, once any Pose keyframe exists, is permanently. Both were removed: `loadVRMAFromBuffer()` now calls `_applyLookAtTarget()` instead of forcing `null`, and `_applyLookAtTarget()` always sets `lookAt.target` from the current enabled/mode state. This is safe because `animate()` always calls `currentVRM.update()` (which runs `vrm.lookAt.update()`) *after* any `_vrmaMixer.update()` call in the same frame, so LookAt's own bone writes are guaranteed to be the last ones each frame regardless of whether a VRMA clip is loaded or playing.
 - **VRMA export**: [three.js `GLTFExporter`](https://github.com/mrdoob/three.js/blob/r160/examples/jsm/exporters/GLTFExporter.js) (bundled locally as `js/vendor/GLTFExporter.js`, matching the existing three.js r160; its `TextureUtils.js` dependency lives in `js/utils/`). Keyframe poses (`{boneName:{qx,qy,qz,qw}}`, the same shape `exportPose()` produces) are converted into a `THREE.AnimationClip` of per-bone `QuaternionKeyframeTrack`s named `` `${normalizedBoneNode.name}.quaternion` ``, matching the naming `GLTFExporter` resolves against the exported scene automatically. The export target is `humanoid.normalizedHumanBonesRoot` (bones only, no mesh/material data), temporarily reset to its T-pose via `resetNormalizedPose()`/`setNormalizedPose()` for the duration of the export (VRMA's reference skeleton must be a rest pose) and restored immediately after. A custom exporter plugin (`VRMCVrmAnimationExporterPlugin`, registered via `GLTFExporter.register()`) adds the `VRMC_vrm_animation` extension in its `afterParse` hook, resolving each bone's node index from `writer.nodeMap` (populated by the time `afterParse` runs). Source poses from a VRM0 model have their quaternion x/z components flipped before being written, since the VRMA spec's reference space is VRM1-canonical (mirroring the flip `createVRMAnimationHumanoidTracks` applies at load time when the *playback* target is VRM0) — this path is implemented but not yet verified against a real VRM0 model.
-- **Keyframe timeline**: a single flat array of frame-indexed entries, `{frame, bones?, label?, shapeKeys?, lookAt?, cameras?, cameraId?, light?, wind?}` — one entry per frame can carry data for more than one track simultaneously (`cameras` is an object keyed by camera id, e.g. `{0: {position,target,up,fov}, 2: {...}}`, one entry per camera that has a keyframe at that frame). Tracks are declared as a `TRACKS` table rebuilt on every camera add/remove/rename (`buildTracks()`/`refreshTracks()`), keyed `pose` / `camera:<id>` (one per camera currently in the scene) / `cameraSwitch` / `light` / `wind` / `eyes`. Every track exposes the same four-function accessor interface — `hasData(kf)` / `getValue(kf)` / `setValue(kf, v)` / `clearValue(kf)` — so the simple single-field tracks (built by a small `fieldAccessors(field)` factory) and the nested per-camera tracks (`cameraTrackAccessors(cameraId)`, reading/writing `kf.cameras[cameraId]`) are indistinguishable to everything else that drives the timeline: the track-select dropdown, the Add/Delete buttons, the marker-drawing filter, hit-testing for 🔀 Move / 🗑 Delete Mode, and the empty-entry check (`isEntryEmpty()`, replacing an earlier hand-written `!kf.bones && !kf.camera && ...` chain that had to be edited by hand every time a track was added). Camera keyframes (`{position, target, up, fov}`) are linearly interpolated per-camera (`up` is normalized after interpolation so camera roll blends smoothly) and applied via `editor.updateCameraConfig(cameraId, state)`, which writes straight into that camera's stored config regardless of whether it's the one currently on screen. Cam Switch keyframes store only `cameraId` (a plain number, deliberately checked with `!== undefined` everywhere rather than a truthy check, since a camera's id can be `0`); playback walks the sorted list of Cam Switch keyframes and snaps `editor.setActiveCameraId()` to whichever one's frame is `<= currentFrame` — no interpolation, matching the same "switches at the interval's end" pattern LookAt's ON/OFF uses. Light keyframes store `{lights: [...editor.getLights()]}`, matched between keyframes by light `id`; Wind keyframes store `{enabled, strength, direction, turbulence, sourceEnabled, sourcePosition}`. Both are interpolated by a shared generic `lerpLightConfig(a, b, t)` that inspects each field's shape at runtime (number → lerp, `{x,y,z}` → vector-lerp, anything else → switches over at `t=1`), reused as-is for Wind since its fields happen to fit the same three shapes. Shape Keys (`{name: value}`) are bundled onto pose keyframes rather than living on their own track; LookAt (`{enabled, targetMode, position}`, stored under `kf.lookAt`) used to be bundled the same way but now lives on its own `eyes` track — see the LookAt bullets below for why that split was necessary. 🔀-Move onto an occupied frame now moves only the *selected track's* value (`track.getValue`/`clearValue`/`setValue`) rather than the whole entry — an earlier version copied the entire source entry with `Object.assign(dest, moved)`, which silently dragged along whatever other tracks happened to share that frame. Playback is driven by the panel's own `requestAnimationFrame` timer advancing one frame every `1000/fps` ms and looping at `totalFrames` — deliberately *not* tied to `AnimationMixer`/`isVRMAPlaying()`, since those only exist once at least one pose keyframe has produced a loaded `.vrma` clip, and their `duration` would otherwise cap playback at the last pose keyframe instead of the full timeline. Projects (the full `{fps, totalFrames, keyframes}` state) are saved/loaded server-side (`.kf_projects/`, same pattern as light presets); a `migrateLegacyCameraField()` pass on load rewrites the pre-multi-camera `kf.camera` single field into `kf.cameras = {0: kf.camera}` for backward compatibility.
+- **Keyframe timeline**: a single flat array of frame-indexed entries, `{frame, bones?, label?, shapeKeys?, lookAt?, cameras?, cameraId?, light?, wind?, blink?}` — one entry per frame can carry data for more than one track simultaneously (`cameras` is an object keyed by camera id, e.g. `{0: {position,target,up,fov}, 2: {...}}`, one entry per camera that has a keyframe at that frame). Tracks are declared as a `TRACKS` table rebuilt on every camera add/remove/rename (`buildTracks()`/`refreshTracks()`), keyed `pose` / `camera:<id>` (one per camera currently in the scene) / `cameraSwitch` / `light` / `wind` / `eyes` / `blink`. Every track exposes the same four-function accessor interface — `hasData(kf)` / `getValue(kf)` / `setValue(kf, v)` / `clearValue(kf)` — so the simple single-field tracks (built by a small `fieldAccessors(field)` factory) and the nested per-camera tracks (`cameraTrackAccessors(cameraId)`, reading/writing `kf.cameras[cameraId]`) are indistinguishable to everything else that drives the timeline: the track-select dropdown, the Add/Delete buttons, the marker-drawing filter, hit-testing for 🔀 Move / 🗑 Delete Mode, and the empty-entry check (`isEntryEmpty()`, replacing an earlier hand-written `!kf.bones && !kf.camera && ...` chain that had to be edited by hand every time a track was added). Camera keyframes (`{position, target, up, fov}`) are linearly interpolated per-camera (`up` is normalized after interpolation so camera roll blends smoothly) and applied via `editor.updateCameraConfig(cameraId, state)`, which writes straight into that camera's stored config regardless of whether it's the one currently on screen. Cam Switch keyframes store only `cameraId` (a plain number, deliberately checked with `!== undefined` everywhere rather than a truthy check, since a camera's id can be `0`); playback walks the sorted list of Cam Switch keyframes and snaps `editor.setActiveCameraId()` to whichever one's frame is `<= currentFrame` — no interpolation, matching the same "switches at the interval's end" pattern LookAt's ON/OFF uses. Light keyframes store `{lights: [...editor.getLights()]}`, matched between keyframes by light `id`; Wind keyframes store `{enabled, strength, direction, turbulence, sourceEnabled, sourcePosition}`. Both are interpolated by a shared generic `lerpLightConfig(a, b, t)` that inspects each field's shape at runtime (number → lerp, `{x,y,z}` → vector-lerp, anything else → switches over at `t=1`), reused as-is for Wind since its fields happen to fit the same three shapes. Shape Keys (`{name: value}`) are bundled onto pose keyframes rather than living on their own track; LookAt (`{enabled, targetMode, position}`, stored under `kf.lookAt`) used to be bundled the same way but now lives on its own `eyes` track — see the LookAt bullets below for why that split was necessary. 🔀-Move onto an occupied frame now moves only the *selected track's* value (`track.getValue`/`clearValue`/`setValue`) rather than the whole entry — an earlier version copied the entire source entry with `Object.assign(dest, moved)`, which silently dragged along whatever other tracks happened to share that frame. Playback is driven by the panel's own `requestAnimationFrame` timer advancing one frame every `1000/fps` ms and looping at `totalFrames` — deliberately *not* tied to `AnimationMixer`/`isVRMAPlaying()`, since those only exist once at least one pose keyframe has produced a loaded `.vrma` clip, and their `duration` would otherwise cap playback at the last pose keyframe instead of the full timeline. Projects (the full `{fps, totalFrames, keyframes}` state) are saved/loaded server-side (`.kf_projects/`, same pattern as light presets); a `migrateLegacyCameraField()` pass on load rewrites the pre-multi-camera `kf.camera` single field into `kf.cameras = {0: kf.camera}` for backward compatibility.
 - **🗑 Delete Mode**: reuses the exact click/drag detection `nearestKeyframe()` already provides for 🔀 Move, but instead of moving the hit keyframe it calls the selected track's `delete()` — which is hard-coded to act on `currentFrame` — after temporarily setting `currentFrame` to the hit keyframe's frame and restoring it (plus a forced `drawTimeline()`) immediately after, so the playhead doesn't visibly jump to the deleted frame. Mutually exclusive with 🔀 Move (toggling one clears the other's flag and cursor style).
 - **Multi-camera management**: `managedCameras` is an array of `{id, name, color, config, helperMesh}` — every camera is equal, none is protected from deletion. Only the *active* camera ever has a live Three.js presence — it's whichever camera currently owns `perspCamera`/`orthoCamera`/`orbit` (the same objects every other camera-related feature already reads from, so `raycaster.setFromCamera()`, `renderer.render()`, roll/pan/zoom, etc. needed no changes) — but `getCameraConfig(id)`/`updateCameraConfig(id, changes)` can read/write *any* camera's config transparently regardless of whether it's active, which is what lets the Camera track record/scrub a non-active camera and what lets a helper-drag move one directly. Switching cameras snapshots the outgoing camera's live state into its `config` (`_captureLiveCameraConfig()`: position/quaternion/up/target/fov/near/isOrtho) and loads the incoming camera's `config` back onto the live objects (`_applyCameraConfigToLive()`). Non-active cameras are drawn as a small box+cone helper mesh (`THREE.Group`, `userData.isCameraHelper`/`cameraId`) tinted to the camera's own color and rescaled every frame to a roughly constant on-screen size (`scale = distance-to-active-camera × constant`); the same pointerdown/move/up handler used for light-helper dragging raycasts these helpers' child meshes, resolves the hit back to its parent `Group`'s `userData.cameraId`, and drags it across a camera-facing plane exactly like a light. **🖥 Monitor** (free third-person view) is modelled as `activeCameraId === null`: `_setActiveCamera(null)` snapshots whichever camera was live into its `config` and detaches the live Three.js objects from every managed camera without moving them, so the view stays exactly where you were; `_setMonitorMode(on)` remembers the previously-active camera (`_lastActiveBeforeMonitor`) as the OFF fallback, and the keyframe panel additionally re-runs `applyCameraSwitchForFrame()`/`applyAllCameraTracksForFrame()` right after turning Monitor off so the current frame's Cam Switch state (if any) takes priority over that fallback. Helper visibility (`_updateCameraHelperVisibility()`) is `(_cameraHelpersShown || activeCameraId === null) && c.id !== activeCameraId` — so every camera shows up as a draggable helper while Monitor is on, independent of which tab/sub-tab is open, on top of the existing "C sub-tab is open" condition. `getCameraConfig`/`updateCameraConfig` also let `applyCameraSwitchForFrame()`/`applyCameraTrackForFrame()` early-return while Monitor is active, so timeline playback never fights the free view.
 - **Alt+Right-drag roll fix**: fixed as part of the multi-camera work — the roll handler previously always rotated `perspCamera.up` even while Orthographic was active (`camera === orthoCamera`), so the visible roll and the value captured into a camera's `config` could silently disagree. It now rotates whichever object `camera` currently points at and re-syncs `perspCamera.up` afterward when Orthographic is active.
@@ -817,9 +907,19 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 - **GIF export**: same per-frame render pipeline as WebM, capped to 480px on the long edge, encoded with a bundled dependency-free encoder (`js/gif_encoder.js`) implementing NeuQuant 256-color quantization and GIF LZW compression from scratch. `encode()` is async and yields to the event loop after each frame's quantization (the most expensive part, an O(colors²) 64³ nearest-color LUT build) so a many-frame GIF doesn't freeze the tab while encoding.
 - **MP4 export**: generates a WebM via the same pipeline, then `POST`s it to `pose_library_server.py`'s `/pose_library/webm_to_mp4?fps=<fps>` endpoint. Server-side, `ffmpeg` is located via `shutil.which("ffmpeg")` then a fallback to the `imageio-ffmpeg`-bundled binary (same probing order as ComfyUI-VideoHelperSuite), and the H.264 encoder is chosen dynamically from `ffmpeg -encoders` output (`libx264` if present, else `libopenh264` — some redistributed ffmpeg builds, e.g. StabilityMatrix's, disable `libx264` for GPL-avoidance reasons). `-r <fps>` is applied on the *input* side (not the output) because the WebM's container timestamps come from wall-clock capture timing rather than the timeline's intended frame rate — reinterpreting the same frame count at the intended fps on read gives the correct duration.
 - **Pose Library preview**: when opened with a canvas reference, `pose_library.js` temporarily reparents the shared WebGL canvas into its own 280px-wide preview column using the same DOM-move + CSS-`transform: scale()` technique the Light & Pose Editor uses for its own preview panel, and restores the canvas's original position/style (plus, via an `onClose` callback, re-triggers the caller's own scale recalculation) when the library closes.
+- **Image → Pose (Image tab)**: `js/image_pose.js` uploads the image (`/upload/image`), queues a small API-format workflow with ComfyUI's native nodes (`SAM3DBody_Loader` → `SAM3DBody_Predict` → `BuildPoseFile` ×2 → `SaveGLB` ×2) via `/prompt`, polls `/history`, and downloads the two GLBs via `/view`. `js/image_pose_solver.js` (ported from a TypeScript prototype, no MediaPipe) reads the `openpose_*` joint markers from the `mesh_style=openpose` GLB and the MHR skeleton (`bone_042`/`bone_078` wrists + fingers) from the `mesh_style=body_mesh` GLB, solves VRM 1.0-convention local rotations for the normalized humanoid bones (limb twist from the bend direction, clavicle absorbs the residual shoulder line, hinge-constrained finger joints), flips `x/z` for VRM 0.x, optionally lifts the hips so the feet touch the floor, and applies everything through `editor.importPose()` (version 2 JSON). No SAM 3D Body code or weights are included.
+- **Default model**: `default_model_server.py` lists `model/` (`GET /pose_editor/models`) and serves files from it (`GET /pose_editor/models/<path>`, restricted to `model/` after `resolve()`, path-style so a `.gltf`'s relative `.bin`/textures resolve). The choice is stored in ComfyUI user data (`/userdata/vrm_pose_editor_settings.json`). The node passes a `defaultModelProvider` to `initPoseEditor3D()`; `.vrm`/`.glb` are fetched once and the same buffer is used for display and Pose Library thumbnails. Without a provider (pages other than the node), the core still falls back to `js/model.{glb,vrm,gltf}`.
+- **Save to ComfyUI output**: `POST /pose_editor/save_output?ext=webm|mp4|gif` writes to `<output>/vrm_pose_editor/pose_YYYYmmdd_HHMMSS[_n].<ext>`. The server picks the file name, accepts only the three extensions, checks the leading bytes (EBML / `ftyp` / `GIF87a`·`GIF89a`), and caps the size at 1 GB.
+- **Auto Blink**: the core writes the `blink` expression weight right before `vrm.update()` in both the render loop and `renderClean()`. The weight is a pure function of time (`_blinkWeightAt(t, interval)`: blinks at `(k + 0.5 + jitter(k)) × interval`, close 0.06 s / hold 0.04 s / open 0.10 s, `jitter` a hash of `k`), so the keyframe panel only has to pass the timeline time (`setBlinkTime(frame / fps)`) during playback and export for every frame to match. While Auto Blink is on, the `blink` shape key reads/writes a separate user value so pose keyframes never record a mid-blink weight.
+- **Running outside ComfyUI's own page**: `light_editor.js` and everything it imports are also imported dynamically by other pages on the same server (ComfyUI Comic Creator's `/ccc`), where `window.comfyAPI` doesn't exist. Those modules therefore never import `../../scripts/api.js`/`app.js` statically; `js/comfy_api.js` uses `window.comfyAPI.api.api` when present and falls back to `fetch("/api" + route)`. Only `pose_editor_3d.js` (the node itself) imports `app.js`.
+- **Pose Library thumbnails**: keys are the md5 of the path relative to `poses/` (moving the node folder or symlinking it doesn't orphan thumbnails; old absolute-path keys are migrated when listing). `GET/POST /pose_library/thumbnail/{file_id}` accept only a 32-hex-digit id and PNG data. A single `createThumbnailRenderer()` per library session owns one WebGL context and one VRM, renders queued poses one at a time, and is disposed (`VRMUtils.deepDispose` + `forceContextLoss`) when the library closes.
 
 ---
 
 ## License
 
 MIT License
+
+This repository does not include any SAM 3D Body code or model weights — the Image tab only calls ComfyUI's own native nodes through its HTTP API. The SAM 3D Body model is subject to its own license, which you accept when you download it. No 3D model is bundled either; screenshots use VRoid's sample model AvatarSample_F (redistribution and commercial use allowed, no credit required).
+
+このリポジトリには SAM 3D Body のコードやモデルの重みは含まれていません（Imageタブは ComfyUI 本体のネイティブノードを HTTP API 経由で呼び出すだけです）。SAM 3D Body のモデルは、それぞれのライセンスに同意して各自で導入してください。3D モデルも同梱していません。スクリーンショットには VRoid のサンプルモデル AvatarSample_F（再配布・商用利用可、クレジット不要）を使用しています。

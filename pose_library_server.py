@@ -9,6 +9,7 @@ Pose Library Server
 """
 
 import os
+import re
 import json
 import hashlib
 import base64
@@ -20,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import server
+import folder_paths
 web = server.web
 
 # ----------------------------------------------------------------
@@ -55,7 +57,41 @@ def _save_meta(meta: dict):
 
 
 def _file_id(filepath: str) -> str:
+    """サムネイル・メタデータのキー。poses/ からの相対パスで作るため、ノードのフォルダを
+    移動・シンボリックリンク化しても変わらない(旧方式は絶対パスのハッシュで、移動すると
+    サムネイルが全て見えなくなっていた)。poses/ の外のパスは従来どおり絶対パスで作る"""
+    p = Path(filepath).resolve()
+    try:
+        key = p.relative_to(POSES_DIR).as_posix()
+    except ValueError:
+        key = str(p)
+    return hashlib.md5(key.encode("utf-8")).hexdigest()
+
+
+def _legacy_file_id(filepath: str) -> str:
+    """旧方式(絶対パスのハッシュ)のキー。移行用"""
     return hashlib.md5(filepath.encode("utf-8")).hexdigest()
+
+
+def _migrate_legacy_id(path: Path, fid: str, meta: dict) -> bool:
+    """旧方式のキーで保存されたサムネイル・メタデータを新方式のキーへ移す。meta を変更したら True"""
+    old = _legacy_file_id(str(path))
+    if old == fid:
+        return False
+    old_thumb = _THUMB_DIR / f"{old}.png"
+    new_thumb = _THUMB_DIR / f"{fid}.png"
+    if old_thumb.exists():
+        try:
+            if new_thumb.exists():
+                old_thumb.unlink()  # 新方式のキーで既にある → 旧ファイルは不要
+            else:
+                old_thumb.rename(new_thumb)
+        except OSError:
+            pass
+    if old in meta and fid not in meta:
+        meta[fid] = meta.pop(old)
+        return True
+    return False
 
 
 # ----------------------------------------------------------------
@@ -83,6 +119,7 @@ async def list_poses(request):
         return web.json_response({"error": f"Directory not found: {target}"}, status=404)
 
     meta  = _load_meta()
+    meta_changed = False
     poses = []
 
     # subdir 指定なし（すべて）は再帰スキャン、指定ありは1階層のみ
@@ -91,6 +128,7 @@ async def list_poses(request):
     for ext in ("*.json", "*.vroidpose", "*.vrma"):
         for p in sorted(scan(ext)):
             fid = _file_id(str(p))
+            meta_changed |= _migrate_legacy_id(p, fid, meta)
             m   = meta.get(fid, {})
             thumb_file = _THUMB_DIR / f"{fid}.png"
             thumb_url  = f"/pose_library/thumbnail/{fid}" if thumb_file.exists() else None
@@ -103,6 +141,9 @@ async def list_poses(request):
                 "memo":     m.get("memo", ""),
                 "thumb":    thumb_url,
             })
+
+    if meta_changed:
+        _save_meta(meta)
 
     return web.json_response({
         "poses":     poses,
@@ -128,9 +169,18 @@ async def list_subdirs(request):
 # API: サムネイル
 # ----------------------------------------------------------------
 
+# サムネイルの file_id は _file_id() が作る md5 の16進32文字だけを受け付ける。
+# そのままファイル名に使うため、Windows で `..%5C..%5Cfoo` のように `\` を含む値を通すと
+# thumbnails/ の外を読み書きできてしまう(aiohttp のパス変数は `/` は弾くが `\` は通す)
+_FILE_ID_RE = re.compile(r"[0-9a-f]{32}")
+_PNG_SIGNATURE = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])  # PNG のファイル先頭8バイト
+
+
 @server.PromptServer.instance.routes.get("/pose_library/thumbnail/{file_id}")
 async def get_thumbnail(request):
     fid        = request.match_info["file_id"]
+    if not _FILE_ID_RE.fullmatch(fid):
+        return web.json_response({"error": "invalid file_id"}, status=400)
     thumb_file = _THUMB_DIR / f"{fid}.png"
     if not thumb_file.exists():
         return web.Response(status=404)
@@ -140,6 +190,8 @@ async def get_thumbnail(request):
 @server.PromptServer.instance.routes.post("/pose_library/thumbnail/{file_id}")
 async def save_thumbnail(request):
     fid = request.match_info["file_id"]
+    if not _FILE_ID_RE.fullmatch(fid):
+        return web.json_response({"error": "invalid file_id"}, status=400)
     try:
         body     = await request.json()
         img_data = body.get("image", "")
@@ -148,6 +200,9 @@ async def save_thumbnail(request):
         png_bytes = base64.b64decode(img_data)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
+    # サムネイルとして PNG 以外のデータを保存させない
+    if not png_bytes.startswith(_PNG_SIGNATURE):
+        return web.json_response({"error": "image must be PNG"}, status=400)
     (_THUMB_DIR / f"{fid}.png").write_bytes(png_bytes)
     return web.json_response({"ok": True, "url": f"/pose_library/thumbnail/{fid}"})
 
@@ -462,6 +517,60 @@ async def webm_to_mp4(request):
             return web.json_response({"error": f"ffmpeg failed: {err}"}, status=500)
 
         return web.Response(body=dst.read_bytes(), content_type="video/mp4")
+
+
+# ----------------------------------------------------------------
+# API: 書き出した動画/GIFを ComfyUI の output フォルダへ保存
+# ----------------------------------------------------------------
+# Pose タブの WebM / MP4 / GIF 出力で「Save to ComfyUI output」をオンにしたときに使う。
+# ファイル名はサーバー側で決める(クライアントの名前は使わない)ので、パスの細工はできない。
+# 拡張子は3種類に限定し、中身の先頭バイトもその形式か確認する。
+
+_OUTPUT_SUBFOLDER = "vrm_pose_editor"
+_OUTPUT_MAX_BYTES = 1024 * 1024 * 1024  # 1GB
+
+
+def _output_signature_ok(ext: str, data: bytes) -> bool:
+    if ext == "webm":
+        return data[:4] == bytes([0x1A, 0x45, 0xDF, 0xA3])  # EBML
+    if ext == "mp4":
+        return data[4:8] == b"ftyp"
+    if ext == "gif":
+        return data[:6] in (b"GIF87a", b"GIF89a")
+    return False
+
+
+@server.PromptServer.instance.routes.post("/pose_editor/save_output")
+async def save_output(request):
+    """
+    POST /pose_editor/save_output?ext=webm|mp4|gif
+    body: 動画/GIFのバイナリ。<output>/vrm_pose_editor/pose_YYYYmmdd_HHMMSS[_n].<ext> に保存し、
+    { filename, subfolder, type: "output" } を返す(ComfyUI の /view でそのまま取得できる形)。
+    """
+    ext = request.rel_url.query.get("ext", "").lower()
+    if ext not in ("webm", "mp4", "gif"):
+        return web.json_response({"error": "ext must be webm, mp4 or gif"}, status=400)
+    if request.content_length and request.content_length > _OUTPUT_MAX_BYTES:
+        return web.json_response({"error": "file too large"}, status=413)
+
+    data = await request.read()
+    if not data:
+        return web.json_response({"error": "empty body"}, status=400)
+    if len(data) > _OUTPUT_MAX_BYTES:
+        return web.json_response({"error": "file too large"}, status=413)
+    if not _output_signature_ok(ext, data):
+        return web.json_response({"error": f"body is not a {ext} file"}, status=400)
+
+    out_dir = Path(folder_paths.get_output_directory()) / _OUTPUT_SUBFOLDER
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = "pose_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+    dst = out_dir / f"{stem}.{ext}"
+    n = 1
+    while dst.exists():
+        dst = out_dir / f"{stem}_{n}.{ext}"
+        n += 1
+    await asyncio.to_thread(dst.write_bytes, data)
+    return web.json_response({"filename": dst.name, "subfolder": _OUTPUT_SUBFOLDER, "type": "output"})
 
 
 # ================================================================
