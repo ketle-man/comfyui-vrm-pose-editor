@@ -2016,6 +2016,9 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             });
         },
         getPointSize() { return pointSize; },
+        // 読み込み中の VRM(three-vrm の VRM インスタンス)。GLB/GLTF モデルや未読込時は null。
+        // Image タブ(image_pose.js)がレスト位置の取得・接地計算に使う
+        getVRM() { return currentVRM; },
         exportPose() {
             if (!loadedModel) return null;
             const data = {};

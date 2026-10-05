@@ -145,6 +145,32 @@ Turning Monitor **OFF** hands control back to a real camera: if the current fram
 
 If [LookAt Target](#lookat-target-) is enabled with its target set to **🎥 Camera**, the Monitor's free viewpoint is deliberately excluded from being that target — looking at a scouting viewpoint that isn't really "in the shot" wouldn't make sense. While Monitor is on, the gaze instead keeps following whichever camera was active right before Monitor was turned on; dragging that camera's helper icon moves the gaze in real time, exactly like dragging the LookAt marker.
 
+#### Image tab (🖼) — Image → Pose (SAM 3D Body)
+
+Estimates the pose of a person in an image and applies it to the loaded VRM.
+
+1. Load a VRM (Pose tab → **Load MODEL**). GLB/GLTF models without humanoid bones are not supported.
+2. In the **Image** tab, load an image (**Load Image** or drag & drop).
+3. Press **▶ Run SAM3D**. The image is sent to this ComfyUI server, the native SAM 3D Body nodes run as a small workflow (`SAM3DBody_Loader` → `SAM3DBody_Predict` → `BuildPoseFile` ×2 → `SaveGLB` ×2), and the two output GLBs are read back:
+   - `mesh_style=openpose` — 3D joint positions, used to solve the body
+   - `mesh_style=body_mesh` — MHR skeleton, used for wrist orientation and finger shapes
+4. The solved pose is applied immediately. Continue with the Pose tab / keyframes as usual.
+
+| Option | Description |
+|---|---|
+| Mirror | Treat the image as mirrored (selfies) |
+| Hands | Use SAM3D's hand skeleton for wrists and fingers |
+| Fingers | Solve finger bones |
+| Face front | Remove the body's yaw relative to the camera |
+| Ground | Lift/lower hips so the feet touch the floor |
+| Head pitch | Corrects the head tilting down (nose below ears) |
+| Wrist twist | Share of wrist twist moved to the forearm |
+
+- **Load GLB**: you can also load GLBs made elsewhere in ComfyUI with the same nodes (select both openpose and body_mesh files).
+- **Revert** returns to the pose before the first apply.
+- Requirements: ComfyUI **0.38+** (native SAM 3D Body nodes) and a SAM 3D Body model in `models/detection/` (e.g. `sam_3d_body_dinov3_bf16.safetensors`). Foot (ankle) rotation is not estimated.
+- **Licensing**: this node does **not** include any SAM 3D Body code or model weights. It only calls ComfyUI's own HTTP API and parses the resulting GLB files. The SAM 3D Body model is subject to its own license, which you accept when you download it.
+
 ### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind · Eyes)
 
 Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / MP4 / GIF.
@@ -523,6 +549,32 @@ VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions
 Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現在フレームに**Cam Switch**のキーフレームがあればそのカメラへ（再生時と同じ挙動）、無ければMonitorをONにする直前にアクティブだったカメラへ、それも既に削除されていればリスト先頭のカメラへフォールバックします。
 
 [視線ターゲット](#視線ターゲット-)がONで対象が**🎥 Camera**の場合、Monitorの自由視点はあえて対象から除外されています — 「撮影に写り込まない見回し用の視点」に視線を向けるのは意味が通らないためです。Monitor中は、Monitorに入る直前にアクティブだったカメラを見続け、そのカメラのヘルパーアイコンをドラッグすると視線もリアルタイムに追従します。
+
+#### Imageタブ（🖼）— 画像 → ポーズ（SAM 3D Body）
+
+画像の人物のポーズを推定し、読み込み中の VRM に適用します。
+
+1. VRM を読み込む（Poseタブ → **Load MODEL**）。humanoid ボーンを持たない GLB/GLTF には適用できません。
+2. **Image** タブで画像を読み込む（**Load Image** またはドラッグ＆ドロップ）。
+3. **▶ Run SAM3D** を押す。画像をこの ComfyUI に送り、ネイティブの SAM 3D Body ノードを小さなワークフロー（`SAM3DBody_Loader` → `SAM3DBody_Predict` → `BuildPoseFile` ×2 → `SaveGLB` ×2）として実行し、出力された 2 つの GLB を読み込みます。
+   - `mesh_style=openpose` — 関節の 3D 位置（体の向きを解く）
+   - `mesh_style=body_mesh` — MHR 骨格（手首の向きと指の形）
+4. 解いたポーズがすぐ適用されます。以降は Poseタブ・キーフレームで通常どおり微調整・保存できます。
+
+| オプション | 内容 |
+|---|---|
+| Mirror | 自撮りなど鏡像の画像として扱う |
+| Hands | SAM3D の手の骨から手首・指を取り込む |
+| Fingers | 指のボーンを解く |
+| Face front | カメラに対する体全体の向き（ヨー）を除去して正面向きにする |
+| Ground | 足が床に付くよう腰の高さを調整 |
+| Head pitch | 頭のうつむき誤差（鼻が耳より下）の補正 |
+| Wrist twist | 手首のねじれを前腕に分配する割合 |
+
+- **Load GLB**: ComfyUI で同じノードを使って別途作った GLB（openpose と body_mesh の両方を選択）も読み込めます。
+- **Revert** で最初に適用する前のポーズへ戻せます。
+- 必要環境: ComfyUI **0.38 以降**（ネイティブ SAM 3D Body ノード）と、`models/detection/` に SAM 3D Body のモデル（例: `sam_3d_body_dinov3_bf16.safetensors`）。足首（足先）の回転は推定しません。
+- **ライセンス**: このノードには SAM 3D Body のコード・モデル重みを**一切含みません**。ComfyUI 本体の HTTP API を呼び、出力された GLB を解析するだけです。SAM 3D Body のモデルはそれぞれのライセンスに従い、ユーザーが各自導入してください。
 
 ### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind・Eyes）
 

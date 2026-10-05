@@ -5,14 +5,16 @@
  * - "Light" タブ: 複数ライト管理(Directional/Point/Spot/RectArea/Ambient)。左ペインを
  *   L(ライト一覧)/E(環境: 地面・壁・風)/S(基本設定: アンチエイリアス・マウス)の3サブタブ化。
  * - "pose" タブ: シェイプキー一覧 + ポーズライブラリボタン(既存 pose_library.js を起動するだけ)。
+ * - "image" タブ: 画像 → SAM 3D Body(ComfyUI ネイティブノード) → VRM へポーズ適用(image_pose.js)。
  * - モーダル下部にキーフレームパネル(pose_vrma_export.js の buildKeyframePanel)を両タブ共通で常設。
  * - Light Library: save/load/rename/delete presets (server-side .light_library/) ※Lightタブ専用。
  */
 
 import { openPoseLibrary } from './pose_library.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
+import { buildImagePosePanel } from './image_pose.js';
 
-// initialTab: "light"(既定) | "pose" — モーダルを開いた直後に表示するメインタブ
+// initialTab: "light"(既定) | "pose" | "image" — モーダルを開いた直後に表示するメインタブ
 // (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
 // nodeActions: { doCapture, loadVrmFile, loadVrmaFile } (省略可)。ノード側(pose_editor_3d.js)にしか
 //   無い機能(画像キャプチャ・VRM/VRMAロード時のキャッシュ更新等)を、Poseタブ Properties欄と
@@ -149,7 +151,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const mainTabBar = el("div", { style: "display:flex;gap:4px;flex:1;margin-left:6px;" });
     const lightTabBtn = mkMainTabBtn("💡 Light");
     const poseTabBtn  = mkMainTabBtn("🕺 pose");
-    mainTabBar.append(lightTabBtn, poseTabBtn);
+    const imageTabBtn = mkMainTabBtn("🖼 Image");
+    imageTabBtn.title = "画像からポーズを推定して VRM に適用 (SAM 3D Body / ComfyUI)";
+    mainTabBar.append(lightTabBtn, poseTabBtn, imageTabBtn);
 
     // ---- Point Size (ボーンハンドルの球サイズ倍率) ----
     // ノード側(pose_editor_3d.js)のコントロールポイントサイズパネルと同じeditor.setPointSize()を
@@ -803,7 +807,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const libPanel = buildLibraryPanel(editor, uiRefs, refreshList, showProps);
     libPanel.style.display = "none";
 
-    body.append(lightLeftWrap, poseLeftWrap, previewPanel, propPanel, posePropPanel, libPanel);
+    // ---- Image タブ: 左ペイン(画像) / 右ペイン(SAM3D 実行・オプション)。幅は Light/Pose と同じ 270px / 280px ----
+    const imagePanel = buildImagePosePanel(editor);
+
+    body.append(lightLeftWrap, poseLeftWrap, imagePanel.leftEl, previewPanel, propPanel, posePropPanel, imagePanel.propEl, libPanel);
     dialog.append(header, body, keyframePanel.el);
     overlay.appendChild(dialog);
 
@@ -833,7 +840,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     };
 
     // ---- メインタブ / サブタブ切り替え ----
-    let activeMainTab = initialTab === "pose" ? "pose" : "light"; // "light" | "pose"
+    let activeMainTab = (initialTab === "pose" || initialTab === "image") ? initialTab : "light"; // "light" | "pose" | "image"
     let activeSubTab  = "L";     // "L" | "E" | "S"
 
     function applySubTab() {
@@ -871,12 +878,18 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
     function applyMainTab() {
         const isLight = activeMainTab === "light";
+        const isPose  = activeMainTab === "pose";
+        const isImage = activeMainTab === "image";
         lightLeftWrap.style.display = isLight ? "flex" : "none";
-        poseLeftWrap.style.display = isLight ? "none" : "flex";
-        posePropPanel.style.display = isLight ? "none" : "flex";
+        poseLeftWrap.style.display = isPose ? "flex" : "none";
+        posePropPanel.style.display = isPose ? "flex" : "none";
+        imagePanel.leftEl.style.display = isImage ? "flex" : "none";
+        imagePanel.propEl.style.display = isImage ? "flex" : "none";
         if (!isLight && libPanel.style.display !== "none") {
             libPanel.style.display = "none";
         }
+        // Imageタブでは Library ボタンは使わない(Poseタブ側の Pose Library を使う)
+        libBtn.style.display = isImage ? "none" : "";
         libBtn.textContent = isLight ? "📚 Library" : "📚 Pose Library";
         libBtn.title = isLight ? "Light Preset Library" : "Open Pose Library";
         const libActive = isLight && libPanel.style.display !== "none";
@@ -884,9 +897,11 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         libBtn.style.color      = libActive ? "#fff"    : "#aac";
         propPanel.style.display = (isLight && activeSubTab === "L") ? "flex" : "none";
         setMainTabActive(lightTabBtn, isLight);
-        setMainTabActive(poseTabBtn, !isLight);
-        if (isLight) {
+        setMainTabActive(poseTabBtn, isPose);
+        setMainTabActive(imageTabBtn, isImage);
+        if (isLight || isImage) {
             editor.clearCameraHelpers();
+            if (isImage) imagePanel.onShow();
         } else {
             rebuildShapeKeySliders();
             syncPosePropPanel();
@@ -895,6 +910,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     }
     lightTabBtn.onclick = () => { activeMainTab = "light"; applyMainTab(); };
     poseTabBtn.onclick  = () => { activeMainTab = "pose";  applyMainTab(); };
+    imageTabBtn.onclick = () => { activeMainTab = "image"; applyMainTab(); };
 
     applySubTab();
     applyMainTab();
