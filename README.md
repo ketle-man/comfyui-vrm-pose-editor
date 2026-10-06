@@ -51,12 +51,13 @@ VRM・GLB・GLTF モデルをブラウザから直接読み込み、ボーンを
 
 | Button | Function |
 |--------|----------|
-| 💡 Light | Open the **Light & Pose Editor** on its Light tab (see below) |
-| 🕺 Pose | Open the **Light & Pose Editor** on its Pose tab (see below) |
+| Light | Open the **Light & Pose Editor** on its Light tab (see below) |
+| Pose | Open the **Light & Pose Editor** on its Pose tab (see below) |
 | BG | Load background image from local disk |
 | ✕ | Clear background image **and** background color |
 | 🎨 | Scene background color picker |
 | ⬇️ | Download current pose as JSON file |
+| ⬇️VP | Download current pose as a VRoid Studio `.vroidpose` file (VRM only) |
 | 💾 | Save current pose to `poses/` folder |
 | 📂 | Load pose file (.json / .vroidpose) |
 
@@ -96,7 +97,7 @@ Adds a gentle breeze to the spring bones (hair, skirts, etc.) on top of the mode
 
 A single modal that combines what used to be three separate windows (Light Editor, Pose Library launcher, VRMA Timeline Editor) into one, so switching between lighting work and pose/animation work no longer means jumping between differently-shaped dialogs.
 
-- Click **💡 Light** or **🕺 Pose** on the node to open it directly on the corresponding tab.
+- Click **Light** or **Pose** on the node to open it directly on the corresponding tab.
 - The header holds the **💡 Light / 🕺 pose / 🖼 Image** tab switcher (the Image tab is described in [Image tab](#image-tab---image--pose-sam-3d-body) below), a **Point Size** slider (same control as the node's own Point Size slider below the canvas — moving either one updates the bone-handle marker size; the node's slider is re-synced when the modal closes), and a **📚 Library** button whose role depends on the active tab (see below).
 - The center pane embeds the **actual WebGL canvas** (not a copy), scaled to fit — bone dragging, camera orbit, and light-helper dragging all work natively inside the modal exactly as on the node.
 - A **keyframe timeline panel** is docked at the bottom and shared by all tabs — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink) below.
@@ -126,7 +127,7 @@ The right pane (kept at the same width as the Light tab's Properties panel so th
 
 - **K sub-tab**:
   - **Model** — **Load MODEL**, a duplicate of the node's own model loader.
-  - **Pose Data** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **⬇️ Download**, **💾 Save**, **📂 Load from JSON**, and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink)).
+  - **Pose Data** — grouped into three blocks: **Load** — **VRMA**, **✕** (unload the currently loaded VRMA), **VRMA (KEY)** (load a `.vrma` as pose keyframes instead of a clip), **📂 Load from JSON**; **Save (poses/)** — **💾 Save** and **💾 Save .vrma** (moved here from the keyframe panel below, since that panel was getting crowded — see [Keyframe Timeline](#keyframe-timeline-pose--camera--cam-switch--light--wind--eyes--blink)); **Download** — **⬇️ Download** (`pose.json`) and **⬇️ .vroidpose**.
   - **Output** — **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF**, also moved here from the keyframe panel for the same reason.
     - **Save to ComfyUI output** (checkbox): when on, the file is saved to ComfyUI's `output/vrm_pose_editor/` (as `pose_YYYYmmdd_HHMMSS.<ext>`) instead of being downloaded. The saved path is shown under the checkbox. The setting is remembered (ComfyUI user data).
 - **C sub-tab**: **Camera** properties for whichever camera is selected in the list — Name, Color, an OT/PR toggle, and **FOV**/**Near** sliders. These read/write the shared `editor` state for the currently *active* camera (same as the node's own OT/RC/FOV/Near controls), so either side stays in sync once the modal is closed or you switch tabs/cameras. (The Look at Target toggle used to live here too — it's been moved to the keyframe panel below, since it's a model-wide setting rather than a per-camera one.)
@@ -363,7 +364,7 @@ Place model files (`.vrm` / `.glb` / `.gltf`, any file name) in the `model/` fol
 
 ### Pose Library (📚)
 
-Open it via **🕺 Pose → 📚 Library** on the node (or the same button from inside the Light & Pose Editor's Pose tab).
+Open it via **Pose → 📚 Library** on the node (or the same button from inside the Light & Pose Editor's Pose tab).
 
 - Pose files (`.json` / `.vroidpose`) **and** `.vrma` animations stored in the `poses/` folder are displayed as thumbnails side by side.
 - A **1-column-wide preview pane** on the left embeds the live 3D canvas (the same DOM-move technique the Light & Pose Editor itself uses), so applying a still pose or playing back a `.vrma` is actually visible while the library is open — it no longer plays "behind" the dialog.
@@ -386,6 +387,7 @@ Open it via **🕺 Pose → 📚 Library** on the node (or the same button from 
 | Button | Action |
 |--------|--------|
 | ⬇️ | Download pose as `pose.json` (browser download) |
+| ⬇️VP | Download pose as `pose.vroidpose` for VRoid Studio (VRM only) |
 | 💾 | Save pose to `poses/p_HHMMSS.json` on the server |
 | 📂 | Load pose file (or drop onto canvas) |
 
@@ -394,7 +396,7 @@ Supported formats:
 | Format | Description |
 |--------|-------------|
 | `.json` (own format) | Saved by ⬇️ or 💾 |
-| `.vroidpose` | VRoid Studio pose file (body / arms / legs; finger presets not supported) |
+| `.vroidpose` | VRoid Studio pose file (body / arms / legs; finger presets not supported). Can also be exported with ⬇️VP (VRM only). VRoid Studio rebuilds the pose from the `VRoidCustomData` control points rather than from the bone rotations, so the exporter computes them on VRoid's standard skeleton. Finger poses are not written (hands use the `Natural` preset) |
 
 #### VRM0 / VRM1 Compatibility
 
@@ -472,12 +474,13 @@ Enable if VRoid Studio / Blender models appear too dark.
 
 | ボタン | 機能 |
 |--------|------|
-| 💡 Light | **Light & Pose Editor** をLightタブで開く（後述） |
-| 🕺 Pose | **Light & Pose Editor** をPoseタブで開く（後述） |
+| Light | **Light & Pose Editor** をLightタブで開く（後述） |
+| Pose | **Light & Pose Editor** をPoseタブで開く（後述） |
 | BG | 背景画像をローカルから読み込む |
 | ✕ | 背景画像**および**背景色をクリア |
 | 🎨 | シーン背景色ピッカー |
 | ⬇️ | 現在のポーズを JSON ファイルとしてダウンロード |
+| ⬇️VP | 現在のポーズを VRoid Studio の `.vroidpose` ファイルとしてダウンロード（VRM のみ） |
 | 💾 | 現在のポーズを `poses/` フォルダに保存 |
 | 📂 | ポーズファイルを読み込む（.json / .vroidpose） |
 
@@ -517,7 +520,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 以前は別々のウィンドウだったLightエディタ・ポーズライブラリの起動口・VRMAタイムラインエディタを1つのモーダルへ統合したものです。ライティング作業とポーズ・アニメーション作業を行き来するたびに形の違うダイアログへ切り替わる、という煩わしさを解消しています。
 
-- ノードの **💡 Light** または **🕺 Pose** をクリックすると、対応するタブが直接開いた状態でモーダルが表示されます。
+- ノードの **Light** または **Pose** をクリックすると、対応するタブが直接開いた状態でモーダルが表示されます。
 - ヘッダーには **💡 Light / 🕺 pose / 🖼 Image** タブ切り替え（Imageタブは後述の[Imageタブ](#imageタブ-画像--ポーズsam-3d-body)を参照）、**Point Size** スライダー（ノード自身のPoint Sizeスライダーと同じ機能。どちらを動かしてもボーンハンドルの球サイズが変わり、モーダルを閉じるとノード側の表示値も再同期されます）、そしてタブに応じて役割が変わる **📚 Library** ボタンがあります（後述）。
 - 中央ペインには**実際のWebGLキャンバス**（コピーではない）が枠に合わせて埋め込まれ、ボーンドラッグ・カメラ操作・ライトヘルパードラッグがすべてノード上と全く同じようにモーダル内でネイティブに動作します。
 - 下部には全タブ共通の**キーフレームタイムラインパネル**が常設されています（後述の[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）。
@@ -547,7 +550,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 - **Kサブタブ**:
   - **Model** — **Load MODEL**（ノード側のモデルロード機能の複製）
-  - **Pose Data** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**⬇️ Download**、**💾 Save**、**📂 Load from JSON**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）
+  - **Pose Data** — 3つのブロックに分かれています。**Load** — **VRMA**、**✕**（読み込み中のVRMAをアンロード）、**VRMA (KEY)**（`.vrma`をクリップではなくポーズキーフレームとして読み込む）、**📂 Load from JSON**。**Save (poses/)** — **💾 Save**、**💾 Save .vrma**（下部のキーフレームパネルが手狭になったためこちらへ移設 — 詳細は[キーフレームタイムライン](#キーフレームタイムラインポーズカメラカメラ切替ライトwindeyesblink)を参照）。**Download** — **⬇️ Download**（`pose.json`）、**⬇️ .vroidpose**。
   - **Output** — **🎬 WebM**・**🎥 MP4**・**🎞️ GIF**（こちらも同様の理由でキーフレームパネルから移設）
     - **Save to ComfyUI output**（チェックボックス）: オンにすると、ダウンロードせずに ComfyUI の `output/vrm_pose_editor/` へ `pose_年月日_時分秒.<拡張子>` として保存します。保存先はチェックボックスの下に表示されます。設定は ComfyUI のユーザーデータに保存され、次回以降も引き継がれます。
 - **Cサブタブ**: リストで選択中のカメラの**Camera**プロパティ — Name、Color、OT/PR切替、**FOV**/**Near**スライダー。共有の`editor`状態のうち現在**アクティブ**なカメラの状態を直接読み書きするため（ノード自身のOT/RC/FOV/Nearコントロールと同じ）、モーダルを閉じた際やタブ・カメラの切替時にどちら側も再同期されます。（以前ここにあった**Look at Target**トグルは、カメラごとではなくモデル全体の設定であるため、下部のキーフレームパネルへ移設しました。）
@@ -760,7 +763,7 @@ WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出し�
 
 ### ポーズライブラリ（📚）
 
-ノードの **🕺 Pose → 📚 Library**（またはLight & Pose EditorのPoseタブ内の同ボタン）から開きます。
+ノードの **Pose → 📚 Library**（またはLight & Pose EditorのPoseタブ内の同ボタン）から開きます。
 
 - `poses/` フォルダ内のポーズファイル（`.json` / `.vroidpose`）**と**`.vrma`アニメーションを、同じサムネイル一覧に並べて表示。
 - 左側に**1列分の幅のプレビュー列**があり、実際の3Dキャンバスを埋め込みます（Light & Pose Editor自身と同じDOM移動方式）。そのため静止ポーズの適用や`.vrma`の再生がその場で実際に見えます（以前はモーダルの背後で再生されていて見えませんでした）。
@@ -783,6 +786,7 @@ WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出し�
 | ボタン | 動作 |
 |--------|------|
 | ⬇️ | ポーズを `pose.json` としてダウンロード（ブラウザダウンロード） |
+| ⬇️VP | ポーズを VRoid Studio 用の `pose.vroidpose` としてダウンロード（VRM のみ） |
 | 💾 | ポーズをサーバー上の `poses/p_HHMMSS.json` に保存 |
 | 📂 | ポーズファイルを読み込む（またはキャンバスへドロップ） |
 
@@ -791,7 +795,7 @@ WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出し�
 | フォーマット | 説明 |
 |-------------|------|
 | `.json`（独自形式） | ⬇️ または 💾 で保存したもの |
-| `.vroidpose` | VRoid Studio のポーズファイル（体幹・腕・脚。指プリセットは非対応） |
+| `.vroidpose` | VRoid Studio のポーズファイル（体幹・腕・脚。指プリセットは非対応）。⬇️VP で書き出しも可能（VRM のみ）。VRoid Studio はボーンの回転ではなく `VRoidCustomData` の制御点からポーズを復元するため、VRoid の標準骨格で制御点を計算して書き出します。指のポーズは書き出されません（手は `Natural` プリセット） |
 
 #### VRM0 / VRM1 互換性
 
