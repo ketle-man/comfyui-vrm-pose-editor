@@ -1435,7 +1435,11 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             loadedModel = model;
             scene.add(model);
             const displayScale = placeModel(model);
-            model.traverse(obj => { if (obj.isMesh || obj.isSkinnedMesh) obj.castShadow = true; });
+            // SkinnedMesh の視錐台カリングは静止ポーズで計算した範囲のまま判定されるため、腰の移動や
+            // 大きなポーズ(SAM3D の適用など)で見えているのに顔・髪が消える。GLB/GLTF(setupModel)と同じく無効にする
+            model.traverse(obj => {
+                if (obj.isMesh || obj.isSkinnedMesh) { obj.castShadow = true; obj.frustumCulled = false; }
+            });
             _applyGroundToModel(model);
 
             // VRM0はrotateVRM0なしだとZ軸負方向が正面 → カメラをZ軸負方向から見る
