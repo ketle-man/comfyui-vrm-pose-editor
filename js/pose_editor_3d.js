@@ -82,6 +82,7 @@ app.registerExtension({
             vrmaKeyBtn.onclick = () => vrmaKeyInput.click();
 
             const savePoseBtn    = makeSmallButton("⬇️", "#4a7a4a", "Download the pose");
+            const saveVroidBtn   = makeSmallButton("⬇️VP", "#3a7a8a", "Download the pose as .vroidpose (VRM only)");
             const saveToPosesBtn = makeSmallButton("💾", "#4a6a8a", "Save pose to poses/");
             const loadPoseBtn    = makeSmallButton("📂", "#7a6a3a", "Load pose from JSON");
             const poseInput = document.createElement("input");
@@ -94,8 +95,8 @@ app.registerExtension({
 
             // Light & Pose Editor統合モーダルを開くボタン(旧: 1個の🎛ボタンから、Light/Poseそれぞれの
             // タブへ直接開ける2ボタンに分割。モーダル自体は共通で、initialTabで開始タブだけ切り替える)
-            const lightBtn = makeSmallButton("💡 Light", "#5a5a9a", "Open Light Editor");
-            const poseBtn  = makeSmallButton("🕺 Pose",  "#5a5a9a", "Open Pose Editor");
+            const lightBtn = makeSmallButton("Light", "#5a5a9a", "Open Light Editor");
+            const poseBtn  = makeSmallButton("Pose",  "#5a5a9a", "Open Pose Editor");
 
             let colorCorrectOn = false;
             const ccBtn = makeSmallButton("CC", "#444", "Color Correct: OFF");
@@ -193,6 +194,7 @@ app.registerExtension({
             btnRow2.appendChild(bgClearBtn);
             btnRow2.appendChild(bgColorInput);
             btnRow2.appendChild(savePoseBtn);
+            btnRow2.appendChild(saveVroidBtn);
             btnRow2.appendChild(saveToPosesBtn);
             btnRow2.appendChild(loadPoseBtn);
             // ---- 3行目: 視線・揺れ + カメラ操作 + ポーズ操作系 ----
@@ -805,6 +807,18 @@ app.registerExtension({
                 const a = document.createElement("a");
                 a.href = URL.createObjectURL(blob);
                 a.download = "pose.json";
+                a.click();
+                URL.revokeObjectURL(a.href);
+            };
+
+            // ---- .vroidpose ダウンロード（VRMのみ） ----
+            saveVroidBtn.onclick = () => {
+                const json = editor.exportVroidPose();
+                if (!json) { alert(".vroidpose export requires a VRM model."); return; }
+                const blob = new Blob([json], { type: "application/json" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "pose.vroidpose";
                 a.click();
                 URL.revokeObjectURL(a.href);
             };

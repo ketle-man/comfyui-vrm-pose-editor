@@ -7,10 +7,94 @@ import { OrbitControls } from './vendor/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from './vendor/three-vrm-animation.module.js';
 import { GLTFExporter } from './vendor/GLTFExporter.js';
+import { VROIDPOSE_CUSTOM_TEMPLATE } from './vroidpose_template.js';
 
 // ---- Three.js エディタ本体 ----
 // defaultModelProvider(省略可): 既定モデルの URL を返す async 関数。戻り値が文字列ならそれを読み込み、
 //   null なら既定モデルを読み込まない。省略時(ComfyUI 以外のページから使う場合)は baseUrl の model.{glb,vrm,gltf} を探す
+// ---- .vroidpose 変換テーブル(importPose / exportVroidPose で共用) ----
+const VROID_TO_VRM = {
+    'Hips':           'hips',
+    'Spine':          'spine',
+    'Chest':          'chest',
+    'UpperChest':     'upperChest',
+    'Neck':           'neck',
+    'Head':           'head',
+    'LeftShoulder':   'leftShoulder',
+    'LeftUpperArm':   'leftUpperArm',
+    'LeftLowerArm':   'leftLowerArm',
+    'LeftHand':       'leftHand',
+    'RightShoulder':  'rightShoulder',
+    'RightUpperArm':  'rightUpperArm',
+    'RightLowerArm':  'rightLowerArm',
+    'RightHand':      'rightHand',
+    'LeftUpperLeg':   'leftUpperLeg',
+    'LeftLowerLeg':   'leftLowerLeg',
+    'LeftFoot':       'leftFoot',
+    'LeftToes':       'leftToes',
+    'RightUpperLeg':  'rightUpperLeg',
+    'RightLowerLeg':  'rightLowerLeg',
+    'RightFoot':      'rightFoot',
+    'RightToes':      'rightToes',
+};
+// VRoidのrest poseとVRM normalized rest poseのずれを補正するX軸オフセット（度数）
+const BONE_CORRECTION_X = {
+    Spine: 10, Chest: -18, UpperChest: -9, Neck: 15, Head: 0,
+    LeftUpperLeg: 2, RightUpperLeg: 2,
+    LeftShoulder: 16, RightShoulder: 16,
+};
+// VRM1用の補正値（VRM0とrest poseが異なるため別途調整）
+const BONE_CORRECTION_X_VRM1 = {
+    Spine: -10, Chest: 18, UpperChest: 9, Neck: -15, Head: 0,
+    LeftUpperLeg: -2, RightUpperLeg: -2,
+    LeftShoulder: -16, RightShoulder: -16,
+};
+
+// VRoid(Unity Humanoid)のボーン親子関係
+const VROID_PARENT = {
+    Spine: 'Hips', Chest: 'Spine', UpperChest: 'Chest', Neck: 'UpperChest', Head: 'Neck',
+    LeftShoulder: 'UpperChest', LeftUpperArm: 'LeftShoulder', LeftLowerArm: 'LeftUpperArm', LeftHand: 'LeftLowerArm',
+    RightShoulder: 'UpperChest', RightUpperArm: 'RightShoulder', RightLowerArm: 'RightUpperArm', RightHand: 'RightLowerArm',
+    LeftUpperLeg: 'Hips', LeftLowerLeg: 'LeftUpperLeg', LeftFoot: 'LeftLowerLeg', LeftToes: 'LeftFoot',
+    RightUpperLeg: 'Hips', RightLowerLeg: 'RightUpperLeg', RightFoot: 'RightLowerLeg', RightToes: 'RightFoot',
+};
+// VRoidCustomData.Types の値(Unity の HumanBodyBones 列挙値) → ボーン名
+const VROID_BONE_TYPES = {
+    0: 'Hips', 1: 'LeftUpperLeg', 2: 'RightUpperLeg', 3: 'LeftLowerLeg', 4: 'RightLowerLeg',
+    5: 'LeftFoot', 6: 'RightFoot', 7: 'Spine', 8: 'Chest', 9: 'Neck', 10: 'Head',
+    11: 'LeftShoulder', 12: 'RightShoulder', 13: 'LeftUpperArm', 14: 'RightUpperArm',
+    15: 'LeftLowerArm', 16: 'RightLowerArm', 17: 'LeftHand', 18: 'RightHand',
+    19: 'LeftToes', 20: 'RightToes', 54: 'UpperChest',
+};
+// VRoid の静止姿勢(T ポーズ、回転はすべて単位)での親ボーンからの相対位置(親ローカル、Unity 座標、m)。
+// VRoid Studio で保存した初期ポーズから逆算。Positions の向きはこれ、長さは読み込み中モデルから取る
+const VROID_REST_OFFSETS = {
+    Spine: [0, 0.0469, 0.0052], Chest: [0, 0.0987, -0.0124], UpperChest: [0, 0.0956, -0.0013],
+    Neck: [0, 0.1210, 0.0068], Head: [0, 0.0622, 0.0004],
+    LeftShoulder: [-0.0196, 0.0965, 0.0060], LeftUpperArm: [-0.0710, -0.0001, 0],
+    LeftLowerArm: [-0.1935, -0.0007, 0.0001], LeftHand: [-0.1820, -0.0007, 0.0002],
+    RightShoulder: [0.0196, 0.0965, 0.0060], RightUpperArm: [0.0710, -0.0001, 0],
+    RightLowerArm: [0.1935, -0.0007, 0.0001], RightHand: [0.1820, -0.0007, 0.0002],
+    LeftUpperLeg: [-0.0674, -0.0347, 0.0012], LeftLowerLeg: [0.0002, -0.2584, 0],
+    LeftFoot: [0.0002, -0.2998, 0.0017], LeftToes: [-0.0001, -0.0475, 0.0845],
+    RightUpperLeg: [0.0674, -0.0347, 0.0012], RightLowerLeg: [-0.0002, -0.2584, 0],
+    RightFoot: [-0.0002, -0.2998, 0.0017], RightToes: [0.0001, -0.0475, 0.0845],
+};
+// VRoid の静止姿勢での腰の位置(Unity 座標、m)。VRoidCustomData.HipPositionDelta はここからの差
+const VROID_REST_HIPS = { x: -0.000198669382, y: 0.682707965, z: 0.00820569 };
+// ハンドル(PoseGizmoDefinitions)の Direction = ボーンのワールド回転 × この基準軸(ボーンローカル、Unity 座標)。
+// VRoid Studio の保存データ 2 件から逆算(頭・手は誤差 1% 未満、足は数 % ずれる)
+const VROID_GIZMO_DIRECTIONS = {
+    'Head Roll':                     ['Head',      [0, 1, 0]],
+    'Head LookAt':                   ['Head',      [0, 0.0131, 0.9999]],
+    'LeftHandLookAtControlPoint':    ['LeftHand',  [-1, -0.0038, 0.0008]],
+    'RightHandLookAtControlPoint':   ['RightHand', [1, -0.0038, 0.0008]],
+    'LeftFootLookAtControlPoint':    ['LeftFoot',  [0.0094, 0.0689, 0.9976]],
+    'LeftFootFootRollControlPoint':  ['LeftFoot',  [-0.0004, -1, 0.0082]],
+    'RightFootLookAtControlPoint':   ['RightFoot', [-0.0094, 0.0689, 0.9976]],
+    'RightFootFootRollControlPoint': ['RightFoot', [0.0004, -1, 0.0082]],
+};
+
 export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady, isModern, onModelReady, defaultModelProvider) {
 
     // -- メインレンダラー --
@@ -2125,41 +2209,113 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             const vrmVer = currentVRM?.meta?.metaVersion ?? null;
             return JSON.stringify({ version: 2, vrmVersion: vrmVer, bones: data }, null, 2);
         },
+        // VRoid Studio 形式(.vroidpose)で書き出す。humanoid が必要なので VRM のみ対応(それ以外は null)。
+        // VRoid Studio は BoneDefinition ではなく VRoidCustomData の Positions(腰基準のボーン位置)と
+        // ハンドルの Direction からポーズを復元する(VRoidCustomData が無いと読込エラー)ため両方を書き出す。
+        // Positions は読み込み中モデルの実寸なので、VRoid Studio 側と同じキャラの VRM で書き出すと一致する
+        // (体格が違うと崩れる)。指のポーズは書き出せない(手は Natural プリセット)
+        exportVroidPose() {
+            if (!currentVRM) return null;
+            const humanoid = currentVRM.humanoid;
+            const isVrm0 = currentVRM.meta?.metaVersion === '0';
+            const activeBoneCorrection = isVrm0 ? BONE_CORRECTION_X : BONE_CORRECTION_X_VRM1;
+            // three.js → Unity 座標。VRM0(-Z正面)はZ反転、VRM1(+Z正面)はY軸180°回転+Z反転 = X反転
+            const toUnity = (v) => isVrm0 ? { x: v.x, y: v.y, z: -v.z } : { x: -v.x, y: v.y, z: v.z };
+
+            // ---- BoneDefinition: importPose の .vroidpose 分岐の逆変換 ----
+            const bd = {};
+            const localQ = {}; // VRoid(Unity)空間のローカル回転。ハンドルの向きの計算に使う
+            // 腰の位置: 静止位置からの移動量を VRoid 骨格の腰の高さとの比で拡縮し、VRoid の静止位置に足す
+            const hipsNode = humanoid.getNormalizedBoneNode('hips');
+            const restHips = humanoid.normalizedRestPose?.hips?.position;
+            let hipsDelta = { x: 0, y: 0, z: 0 };
+            if (hipsNode && restHips && restHips[1] > 0) {
+                const d = hipsNode.position.clone().sub(new THREE.Vector3().fromArray(restHips))
+                    .multiplyScalar(VROID_REST_HIPS.y / restHips[1]);
+                hipsDelta = toUnity(d);
+            }
+            bd.HipsPosition = {
+                x: VROID_REST_HIPS.x + hipsDelta.x,
+                y: VROID_REST_HIPS.y + hipsDelta.y,
+                z: VROID_REST_HIPS.z + hipsDelta.z,
+            };
+
+            for (const [vroidKey, vrmKey] of Object.entries(VROID_TO_VRM)) {
+                const node = humanoid.getNormalizedBoneNode(vrmKey);
+                if (!node) continue;
+                // import: node = base * corr → base = node * corr^-1
+                const base = node.quaternion.clone();
+                const corrDeg = activeBoneCorrection[vroidKey];
+                if (corrDeg) {
+                    const corrInv = new THREE.Quaternion().setFromEuler(
+                        new THREE.Euler(THREE.MathUtils.degToRad(corrDeg), 0, 0)
+                    ).invert();
+                    base.multiply(corrInv);
+                }
+                // VRM1 → VRM0 変換(自己逆変換)
+                if (!isVrm0) base.set(base.x, -base.y, base.z, -base.w);
+                base.normalize();
+                // Three.js右手系 → Unity左手系(import の (x, y, -z, -w) の逆)
+                bd[vroidKey] = { x: base.x, y: base.y, z: -base.z, w: -base.w };
+                localQ[vroidKey] = new THREE.Quaternion(base.x, base.y, -base.z, -base.w);
+            }
+            bd.SpineControlPointDeltaPosition = { x: 0, y: 0, z: 0 };
+
+            // VRoid 空間のワールド回転(ローカル回転を親から順に掛ける。無いボーンは回転なし扱い)
+            const worldQ = {};
+            const getWorldQ = (key) => {
+                if (worldQ[key]) return worldQ[key];
+                const local = localQ[key] ?? new THREE.Quaternion();
+                const parent = VROID_PARENT[key];
+                worldQ[key] = parent ? getWorldQ(parent).clone().multiply(local) : local.clone();
+                return worldQ[key];
+            };
+
+            // ---- VRoidCustomData ----
+            const custom = structuredClone(VROIDPOSE_CUSTOM_TEMPLATE);
+            // Positions: 各ボーンの腰からの相対位置(Unity 座標)。VRoid Studio はこれを元にポーズを組み直すため、
+            // モデルの見た目の位置ではなく「VRoid の静止骨格(VROID_REST_OFFSETS)に BoneDefinition の回転を
+            // 掛けた位置」を出す。骨の長さを読み込み中モデルに合わせると、VRoid 側のモデルより大きい場合に
+            // 崩れる(1.4 倍で崩れることを確認)ため、長さも VRoid の骨格のまま使う
+            const relPos = { Hips: new THREE.Vector3() };
+            const getRelPos = (key) => {
+                if (relPos[key]) return relPos[key];
+                const parent = VROID_PARENT[key];
+                const offset = new THREE.Vector3(...VROID_REST_OFFSETS[key]).applyQuaternion(getWorldQ(parent));
+                relPos[key] = getRelPos(parent).clone().add(offset);
+                return relPos[key];
+            };
+            custom.Positions = custom.Types.map(t => {
+                const v = getRelPos(VROID_BONE_TYPES[t]);
+                return { x: v.x, y: v.y, z: v.z };
+            });
+            custom.HipPositionDelta = hipsDelta;
+            // ハンドルの向き = ボーンのワールド回転 × ボーンローカルの基準軸。Value は JSON 文字列で格納する
+            for (const g of custom.PoseGizmoDefinitions) {
+                const dirDef = VROID_GIZMO_DIRECTIONS[g.Key];
+                if (dirDef) {
+                    const [bone, axis] = dirDef;
+                    const v = new THREE.Vector3(...axis).normalize().applyQuaternion(getWorldQ(bone));
+                    g.Value.Direction = { x: v.x, y: v.y, z: v.z };
+                }
+                g.Value = JSON.stringify(g.Value);
+            }
+
+            return JSON.stringify({
+                Version: 1,
+                LeftHandAnimationName: 'L_Natural',
+                LeftHandAnimationWeight: 1.0,
+                RightHandAnimationName: 'R_Natural',
+                RightHandAnimationWeight: 1.0,
+                BoneDefinition: bd,
+                VRoidCustomData: custom,
+            });
+        },
         importPose(jsonStr) {
             const parsed = JSON.parse(jsonStr);
 
             // ---- .vroidpose形式 ----
             if (parsed.BoneDefinition) {
-                const VROID_TO_VRM = {
-                    'Hips':           'hips',
-                    'Spine':          'spine',
-                    'Chest':          'chest',
-                    'UpperChest':     'upperChest',
-                    'Neck':           'neck',
-                    'Head':           'head',
-                    'LeftShoulder':   'leftShoulder',
-                    'LeftUpperArm':   'leftUpperArm',
-                    'LeftLowerArm':   'leftLowerArm',
-                    'LeftHand':       'leftHand',
-                    'RightShoulder':  'rightShoulder',
-                    'RightUpperArm':  'rightUpperArm',
-                    'RightLowerArm':  'rightLowerArm',
-                    'RightHand':      'rightHand',
-                    'LeftUpperLeg':   'leftUpperLeg',
-                    'LeftLowerLeg':   'leftLowerLeg',
-                    'LeftFoot':       'leftFoot',
-                    'LeftToes':       'leftToes',
-                    'RightUpperLeg':  'rightUpperLeg',
-                    'RightLowerLeg':  'rightLowerLeg',
-                    'RightFoot':      'rightFoot',
-                    'RightToes':      'rightToes',
-                };
-                // VRoidのrest poseとVRM normalized rest poseのずれを補正するX軸オフセット（度数）
-                const BONE_CORRECTION_X = {
-                    Spine: 10, Chest: -18, UpperChest: -9, Neck: 15, Head: 0,
-                    LeftUpperLeg: 2, RightUpperLeg: 2,
-                    LeftShoulder: 16, RightShoulder: 16,
-                };
                 const bd = parsed.BoneDefinition;
                 // boneMapはVRM以外（GLB等）のフォールバック用
                 const boneMap = {};
@@ -2168,12 +2324,6 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                     if (key) boneMap[key] = h.userData.bone;
                 });
                 const isVrm0 = currentVRM?.meta?.metaVersion === '0';
-                // VRM1用の補正値（VRM0とrest poseが異なるため別途調整）
-                const BONE_CORRECTION_X_VRM1 = {
-                    Spine: -10, Chest: 18, UpperChest: 9, Neck: -15, Head: 0,
-                    LeftUpperLeg: -2, RightUpperLeg: -2,
-                    LeftShoulder: -16, RightShoulder: -16,
-                };
                 const activeBoneCorrection = isVrm0 ? BONE_CORRECTION_X : BONE_CORRECTION_X_VRM1;
                 for (const [vroidKey, vrmKey] of Object.entries(VROID_TO_VRM)) {
                     const r = bd[vroidKey];

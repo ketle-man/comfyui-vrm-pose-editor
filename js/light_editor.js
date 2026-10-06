@@ -831,6 +831,19 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         URL.revokeObjectURL(a.href);
     };
 
+    const poseVroidBtn = mkBtn("⬇️ .vroidpose", "#3a7a8a");
+    poseVroidBtn.title = "Download the pose as .vroidpose (VRM only)";
+    poseVroidBtn.onclick = () => {
+        const json = editor.exportVroidPose();
+        if (!json) { alert(".vroidpose export requires a VRM model."); return; }
+        const blob = new Blob([json], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "pose.vroidpose";
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+
     const poseSaveBtn = mkBtn("💾 Save", "#4a6a8a");
     poseSaveBtn.title = "Save pose to poses/";
     poseSaveBtn.onclick = async () => {
@@ -882,12 +895,16 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         sectionTitle("Model"),
         fieldRow("", poseVrmBtn),
         sectionTitle("Pose Data"),
+        // Load(読込) / Save(サーバーの poses/ へ保存) / Download(ブラウザダウンロード) で区切る
+        subTitle("Load"),
         fieldRow("", row2(poseVrmaBtn, poseVrmaEjectBtn, poseVrmaKeyBtn)),
-        fieldRow("", row2(poseDownloadBtn, poseSaveBtn)),
         fieldRow("", poseLoadJsonBtn),
+        subTitle("Save (poses/)"),
         // 下部のキーフレームパネルはボタンが増えて手狭になったため、Save .vrma/WebM/GIFの3つを
         // こちらへ移設した(ロジックはpose_vrma_export.js内に残したまま、ボタンのDOM要素だけを移動)
-        fieldRow("", keyframePanel.downloadBtn),
+        fieldRow("", row2(poseSaveBtn, keyframePanel.downloadBtn)),
+        subTitle("Download"),
+        fieldRow("", row2(poseDownloadBtn, poseVroidBtn)),
         sectionTitle("Output"),
         fieldRow("", row2(keyframePanel.webmBtn, keyframePanel.mp4Btn, keyframePanel.gifBtn)),
         fieldRow("", keyframePanel.saveOutputCtrl),
@@ -1907,6 +1924,11 @@ function sectionTitle(t) {
         style: "font-size:10px;font-weight:bold;color:#6a8a9a;margin:6px 0 2px;" +
                "border-bottom:1px solid #252535;padding-bottom:2px;letter-spacing:.4px;",
     }, t.toUpperCase());
+}
+
+// sectionTitle 内をさらに区切る小見出し
+function subTitle(t) {
+    return el("div", { style: "font-size:9px;color:#778;margin:4px 0 1px;" }, t);
 }
 
 function lbl(text) {
