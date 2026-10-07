@@ -193,7 +193,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         style: "padding:4px 10px;background:#4a90d9;color:#fff;border:none;border-radius:3px;" +
                "cursor:pointer;font-size:12px;flex-shrink:0;",
     }, "▶");
-    const downloadBtn = mkBtn("💾 Save .vrma", "#4a7a4a", "Export and save the animation to poses/ (visible in Pose Library)");
+    const downloadBtn = mkBtn("💾 Save .vrma", "#444","Export and save the animation to poses/ (visible in Pose Library)");
     // ノード側の「📸 Capture」の複製ボタン。実処理(image_data出力ウィジェットへの書き込み等)は
     // nodeActions.doCapture(pose_editor_3d.js)をそのまま呼び出す
     const captureBtn = mkBtn("📸 Capture", "#4a90d9", "Send pose to output");
@@ -206,9 +206,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             captureBtn.style.background = "#4a90d9";
         }, 1500);
     };
-    const webmBtn = mkBtn("🎬 WebM", "#3a6a8a", "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
-    const mp4Btn = mkBtn("🎥 MP4", "#3a6a8a", "タイムライン全体をMP4動画としてダウンロード(サーバー側でffmpeg変換、要imageio-ffmpeg)");
-    const gifBtn = mkBtn("🎞️ GIF", "#3a6a8a", "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
+    const webmBtn = mkBtn("🎬 WebM", "#444","タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
+    const mp4Btn = mkBtn("🎥 MP4", "#444","タイムライン全体をMP4動画としてダウンロード(サーバー側でffmpeg変換、要imageio-ffmpeg)");
+    const gifBtn = mkBtn("🎞️ GIF", "#444","タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
     // WebM/MP4/GIF をダウンロードせず ComfyUI の output フォルダ(output/vrm_pose_editor/)へ保存するオプション。
     // 状態は ComfyUI のユーザーデータ(default_model.js の設定ファイル)に保存し、次回以降も引き継ぐ
     const saveOutputChk = el("input", { type: "checkbox" });
@@ -289,7 +289,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const windCount = keyframes.filter(k => k.wind).length;
         const eyesCount = keyframes.filter(k => k.lookAt).length;
         const blinkCount = keyframes.filter(k => k.blink).length;
-        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${camSwitchCount} cam-switch · ${lightCount} light · ${windCount} wind · ${eyesCount} eyes · ${blinkCount} blink`;
+        const lipCount = keyframes.filter(k => k.lip).length;
+        statusMsg.textContent = `${poseCount} pose · ${camCount} camera · ${camSwitchCount} cam-switch · ${lightCount} light · ${windCount} wind · ${eyesCount} eyes · ${blinkCount} blink · ${lipCount} lip`;
     }
 
     // ----------------------------------------------------------------
@@ -310,6 +311,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLightForFrame(currentFrame);
         applyWindForFrame(currentFrame);
         applyBlinkForFrame(currentFrame);
+        applyLipForFrame(currentFrame);
         // 再生中(rAFループ)からの毎フレーム呼び出しではスライダー全再構築・DOM更新コストを
         // 避けるため呼ばない。ON/OFF・対象(Marker/Camera)ボタンはapplyLookAtForFrameが変更した
         // ライブ状態を反映するため、シーク/スクラブ時はここで表示を同期する(呼ばないと、KF間の
@@ -649,6 +651,14 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             delTitle: "現在フレームの自動瞬きキーフレームを削除",
             capture: () => captureBlinkAtCurrentFrame(), delete: () => deleteBlinkAtCurrentFrame(),
         };
+        tracks.lip = {
+            ...fieldAccessors("lip"), color: "#ff7eb6", optionLabel: "👄 Lip",
+            addLabel: "👄 +", addColor: "#8a2a5a",
+            addTitle: "現在フレームから、Lip Sync欄のテキストを話すキーフレームを追加/上書き(空欄だと口を閉じる)",
+            delLabel: "👄 −",
+            delTitle: "現在フレームのLipキーフレームを削除",
+            capture: () => captureLipAtCurrentFrame(), delete: () => deleteLipAtCurrentFrame(),
+        };
         return tracks;
     }
     let TRACKS = buildTracks();
@@ -958,6 +968,47 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             else break;
         }
         editor.setAutoBlink?.(state);
+    }
+
+    // Lip トラック: キーフレームのテキストを、そのフレームから話す(次の Lip キーフレームまで)。
+    // 口形はタイムラインの時刻(フレーム/fps)で決まるので、再生・書き出しでも同じ位置に出る
+    function captureLipAtCurrentFrame() {
+        const text = editor.getLipSync?.().text ?? "";
+        const existing = keyframes.find(k => k.frame === currentFrame);
+        if (existing) {
+            existing.lip = { text };
+        } else {
+            keyframes.push({ frame: currentFrame, lip: { text } });
+            keyframes.sort((a, b) => a.frame - b.frame);
+        }
+        ensureTotalFrames();
+        drawTimeline();
+        updateStatus();
+        applyLipForFrame(currentFrame);
+    }
+
+    function deleteLipAtCurrentFrame() {
+        const idx = keyframes.findIndex(k => k.frame === currentFrame);
+        if (idx === -1) return;
+        const kf = keyframes[idx];
+        if (!kf.lip) return;
+        delete kf.lip;
+        if (isEntryEmpty(kf)) keyframes.splice(idx, 1);
+        drawTimeline();
+        updateStatus();
+        applyLipForFrame(currentFrame);
+    }
+
+    function applyLipForFrame(frame) {
+        const lKfs = keyframes.filter(k => k.lip).sort((a, b) => a.frame - b.frame);
+        if (lKfs.length === 0) { editor.setLipTime?.(null); return; }
+        let cur = null;
+        for (const k of lKfs) {
+            if (k.frame <= frame) cur = k;
+            else break;
+        }
+        editor.setLipKeyClip?.(cur?.lip.text ?? "", (cur?.frame ?? 0) / fps);
+        editor.setLipTime?.(frame / fps);
     }
 
     // ----------------------------------------------------------------
@@ -1615,6 +1666,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLightForFrame(0);
         applyWindForFrame(0);
         applyBlinkForFrame(0);
+        applyLipForFrame(0);
         schedulePreviewRefresh();
     }
 
@@ -1743,6 +1795,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         applyLightForFrame(currentFrame);
         applyWindForFrame(currentFrame);
         applyBlinkForFrame(currentFrame);
+        applyLipForFrame(currentFrame);
         schedulePreviewRefresh();
     }
 

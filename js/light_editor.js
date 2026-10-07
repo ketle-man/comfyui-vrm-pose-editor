@@ -13,6 +13,7 @@
 import { openPoseLibrary } from './pose_library.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
+import { buildAudioTab, buildSettingsTab, generateSpeech, fetchAudioFile, getSelectedAudio, setSelectedAudio, onSelectedAudioChange } from './audio_panel.js';
 import { listModels, loadEditorSettings, saveEditorSettings, modelUrl, NONE_MODEL } from './default_model.js';
 
 // initialTab: "light"(既定) | "pose" | "image" — モーダルを開いた直後に表示するメインタブ
@@ -496,7 +497,12 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     });
     const poseSubTabK = mkSubTabBtn("K", "Shape Keys");
     const poseSubTabC = mkSubTabBtn("C", "Camera");
-    poseSubTabStrip.append(poseSubTabK, poseSubTabC);
+    // A: 音声ファイル(作成・選択・削除) / S: API 設定(Lemonade など)
+    const poseSubTabA = mkSubTabBtn("A", "Audio（音声ファイルの管理）");
+    const poseSubTabS = mkSubTabBtn("S", "API設定（Lemonade など）");
+    poseSubTabStrip.append(poseSubTabK, poseSubTabC, poseSubTabA, poseSubTabS);
+    const audioTab = buildAudioTab();
+    const apiSettingsTab = buildSettingsTab();
 
     const poseSubTabContent = el("div", {
         style: "width:238px;flex-shrink:0;display:flex;flex-direction:column;" +
@@ -547,10 +553,92 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         return wrap;
     }
 
+    // Lip Sync 行の開閉状態(既定は折りたたみ)
+    let _lipRowOpen = false;
+    let _lipRowUnsub = null;   // 選択中の音声の表示の購読(Lip Sync 行の再構築時に解除する)
+    // リップシンク(Lip Sync): テキストまたは音声ファイルから口形(母音)を付けて再生する。
+    // テキストは日本語・英語のどちらも可(漢字は読みが無いため口を開けた仮の単位になる)
+    function buildLipSyncRow() {
+        if (!editor.hasLipSync?.()) return null;
+        const state = editor.getLipSync?.() ?? { text: "" };
+        const wrap = el("div", {
+            style: "display:flex;flex-direction:column;gap:4px;padding:6px 0 8px;margin-bottom:4px;" +
+                   "border-bottom:1px solid #2a2a4a;",
+        });
+        // 開閉状態はパネルの再構築(キーフレーム適用時など)で戻らないよう、このモーダル内で保持する
+        const body = el("div", { style: "display:flex;flex-direction:column;gap:4px;" });
+        const title = el("button", {
+            style: "all:unset;cursor:pointer;font-size:11px;color:#aaa;user-select:none;",
+        }, (_lipRowOpen ? "▾" : "▸") + " 👄 Lip Sync");
+        title.title = "テキストまたは音声の再生に合わせて口形(aa/ih/ou/ee/oh)を動かします。停止すると口は元の値に戻ります";
+        const applyOpen = () => {
+            body.style.display = _lipRowOpen ? "flex" : "none";
+            title.textContent = (_lipRowOpen ? "▾" : "▸") + " 👄 Lip Sync";
+        };
+        title.onclick = () => { _lipRowOpen = !_lipRowOpen; applyOpen(); };
+        applyOpen();
+        const ta = el("textarea", {
+            rows: "2", placeholder: "テキスト（日本語・英語）",
+            style: "background:#111;border:1px solid #444;color:#ddd;padding:3px 7px;border-radius:4px;" +
+                   "font-size:12px;resize:vertical;box-sizing:border-box;width:100%;",
+        });
+        ta.value = state.text;
+        ta.addEventListener("input", () => editor.setLipText?.(ta.value));
+        // 選択中の音声(A タブと共有)。行を作り直すときは前の購読を解除する
+        const selLabel = el("div", { style: "font-size:11px;color:#8fd;word-break:break-all;" });
+        const renderSel = (name) => {
+            selLabel.textContent = name ? `🎵 選択中: ${name}` : "🎵 選択中: なし（A タブで選択）";
+        };
+        renderSel(getSelectedAudio());
+        if (_lipRowUnsub) _lipRowUnsub();
+        _lipRowUnsub = onSelectedAudioChange(renderSel);
+        const status = el("div", { style: "font-size:11px;color:#888;word-break:break-all;" });
+        const btns = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;" });
+        const btnText = mkBtn("▶ テキストで再生", "#3a6a1a");
+        btnText.onclick = () => editor.playLipText?.();
+        const btnAudio = mkBtn("🎵 選択中の音声で再生", "#3a6a1a");
+        btnAudio.onclick = async () => {
+            const name = getSelectedAudio();
+            if (!name) { status.textContent = "音声を選択してください（A タブ、または「テキストから音声を作成」）。"; return; }
+            try {
+                const file = await fetchAudioFile(name);
+                const ok = await editor.playLipAudio?.(file);
+                status.textContent = ok === false ? "再生できませんでした。" : `再生中: ${name}`;
+            } catch (e) {
+                status.textContent = `再生できませんでした: ${e.message}`;
+            }
+        };
+        const btnGen = mkBtn("🔊 テキストから音声を作成", "#2a6a8a");
+        btnGen.title = "Lip Sync 欄のテキストを Lemonade で音声にし、Audio フォルダへ保存して選択します";
+        btnGen.onclick = async () => {
+            const text = ta.value.trim();
+            if (!text) { status.textContent = "テキストを入力してください。"; return; }
+            btnGen.disabled = true;
+            status.textContent = "音声を作成中…";
+            try {
+                const name = await generateSpeech(text);
+                setSelectedAudio(name);
+                status.textContent = `作成しました: ${name}`;
+            } catch (e) {
+                status.textContent = `作成できませんでした: ${e.message}`;
+            } finally {
+                btnGen.disabled = false;
+            }
+        };
+        const btnStop = mkBtn("■ 停止", "#6a2a2a");
+        btnStop.onclick = () => editor.stopLipSync?.();
+        btns.append(btnText, btnGen, btnAudio, btnStop);
+        body.append(ta, selLabel, btns, status);
+        wrap.append(title, body);
+        return wrap;
+    }
+
     function rebuildShapeKeySliders() {
         shapeKeyBody.innerHTML = "";
         const blinkRow = buildAutoBlinkRow();
         if (blinkRow) shapeKeyBody.appendChild(blinkRow);
+        const lipRow = buildLipSyncRow();
+        if (lipRow) shapeKeyBody.appendChild(lipRow);
         const keys = getShapeKeys?.() ?? [];
         if (keys.length === 0) {
             shapeKeyBody.appendChild(el("div", {
@@ -654,7 +742,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         keyframePanel.refreshTracks?.();
     });
 
-    poseSubTabContent.append(kBody, cBody);
+    poseSubTabContent.append(kBody, cBody, audioTab.el, apiSettingsTab.el);
     poseLeftWrap.append(poseSubTabStrip, poseSubTabContent);
 
     // ---- Col: Preview (actual WebGL canvas embedded, shared across both main tabs) ----
@@ -710,7 +798,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     function syncPoseCamModeBtn() {
         const orthoOn = editor.getIsOrtho();
         poseCamModeBtn.textContent = orthoOn ? "PR" : "OT";
-        poseCamModeBtn.style.background = orthoOn ? "#4a7aaa" : "#444";
+        poseCamModeBtn.style.background = "#444";
         poseCamModeBtn.title = orthoOn
             ? "Camera: Orthographic (click to switch to Perspective)"
             : "Camera: Perspective (click to toggle Orthographic)";
@@ -758,7 +846,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // ---- Poseタブ Properties: モデル/ポーズデータ (VRM / VRMA / download / Save / Load from JSON) ----
     // VRM/VRMAロードはノード側のキャッシュ・サムネイル用バッファ・ノードサイズ再計算等の副作用があるため、
     // nodeActions経由でpose_editor_3d.js側のloadVrmFile/loadVrmaFileをそのまま呼び出す。
-    const poseVrmBtn = mkBtn("Load MODEL", "#7a5a9a");
+    const poseVrmBtn = mkBtn("Load MODEL", "#444");
     poseVrmBtn.title = "Load VRM/GLB/GLTF file";
     const poseVrmInput = mkFileInput(".vrm,.glb,.gltf");
     poseVrmBtn.onclick = () => poseVrmInput.click();
@@ -774,7 +862,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         poseVrmInput.value = "";
     });
 
-    const poseVrmaBtn = mkBtn("VRMA", "#3a7a9a");
+    const poseVrmaBtn = mkBtn("VRMA", "#444");
     poseVrmaBtn.title = "Load .vrma animation onto the current VRM";
     const poseVrmaInput = mkFileInput(".vrma");
     poseVrmaBtn.onclick = () => poseVrmaInput.click();
@@ -792,13 +880,13 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
     // ノード側の「✕ Unload VRMA animation」ボタンの複製。実処理(vrmaPanel非表示・ノードサイズ再計算)は
     // ノード側に副作用があるため、nodeActions経由でpose_editor_3d.js側のunloadVrmaをそのまま呼び出す
-    const poseVrmaEjectBtn = mkBtn("✕", "#5a3a3a");
+    const poseVrmaEjectBtn = mkBtn("✕", "#444");
     poseVrmaEjectBtn.title = "Unload VRMA animation";
     poseVrmaEjectBtn.onclick = () => nodeActions?.unloadVrma?.();
 
     // VRMAボタンのキーフレーム読み込み版。選んだ.vrmaをそのままロードせず、この場でキーフレーム
     // タイムライン(Poseトラック)へサンプリング読み込みする(モーダル内なのでkeyframePanelを直接呼べる)
-    const poseVrmaKeyBtn = mkBtn("VRMA (KEY)", "#3a7a9a");
+    const poseVrmaKeyBtn = mkBtn("VRMA (KEY)", "#444");
     poseVrmaKeyBtn.title = "Load .vrma as pose keyframes";
     const poseVrmaKeyInput = mkFileInput(".vrma");
     poseVrmaKeyBtn.onclick = () => poseVrmaKeyInput.click();
@@ -818,7 +906,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         poseVrmaKeyInput.value = "";
     });
 
-    const poseDownloadBtn = mkBtn("⬇️ Download", "#4a7a4a");
+    const poseDownloadBtn = mkBtn("⬇️ Download", "#444");
     poseDownloadBtn.title = "Download the pose";
     poseDownloadBtn.onclick = () => {
         const json = editor.exportPose();
@@ -831,7 +919,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         URL.revokeObjectURL(a.href);
     };
 
-    const poseVroidBtn = mkBtn("⬇️ .vroidpose", "#3a7a8a");
+    const poseVroidBtn = mkBtn("⬇️ .vroidpose", "#444");
     poseVroidBtn.title = "Download the pose as .vroidpose (VRM only)";
     poseVroidBtn.onclick = () => {
         const json = editor.exportVroidPose();
@@ -844,7 +932,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         URL.revokeObjectURL(a.href);
     };
 
-    const poseSaveBtn = mkBtn("💾 Save", "#4a6a8a");
+    const poseSaveBtn = mkBtn("💾 Save", "#444");
     poseSaveBtn.title = "Save pose to poses/";
     poseSaveBtn.onclick = async () => {
         const json = editor.exportPose();
@@ -864,7 +952,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         }
     };
 
-    const poseLoadJsonBtn = mkBtn("📂 Load from JSON", "#7a6a3a");
+    const poseLoadJsonBtn = mkBtn("📂 Load from JSON", "#444");
     const poseJsonInput = mkFileInput(".json,.vroidpose");
     poseLoadJsonBtn.onclick = () => poseJsonInput.click();
     poseJsonInput.addEventListener("change", e => {
@@ -994,8 +1082,12 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     function applyPoseSubTab() {
         kBody.style.display = poseActiveSubTab === "K" ? "flex" : "none";
         cBody.style.display = poseActiveSubTab === "C" ? "flex" : "none";
+        audioTab.el.style.display = poseActiveSubTab === "A" ? "flex" : "none";
+        apiSettingsTab.el.style.display = poseActiveSubTab === "S" ? "flex" : "none";
         setSubTabActive(poseSubTabK, poseActiveSubTab === "K");
         setSubTabActive(poseSubTabC, poseActiveSubTab === "C");
+        setSubTabActive(poseSubTabA, poseActiveSubTab === "A");
+        setSubTabActive(poseSubTabS, poseActiveSubTab === "S");
         // 要件: Cameraサブタブ選択時は右ペインにカメラ設定のみ、Shape Keys選択時はModel/Pose Dataのみ
         posePropCameraSection.style.display = poseActiveSubTab === "C" ? "" : "none";
         posePropModelSection.style.display  = poseActiveSubTab === "K" ? "" : "none";
@@ -1008,6 +1100,8 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     }
     poseSubTabK.onclick = () => { poseActiveSubTab = "K"; applyPoseSubTab(); };
     poseSubTabC.onclick = () => { poseActiveSubTab = "C"; applyPoseSubTab(); };
+    poseSubTabA.onclick = () => { poseActiveSubTab = "A"; applyPoseSubTab(); audioTab.refresh(); };
+    poseSubTabS.onclick = () => { poseActiveSubTab = "S"; applyPoseSubTab(); apiSettingsTab.refresh(); };
 
     function applyMainTab() {
         const isLight = activeMainTab === "light";

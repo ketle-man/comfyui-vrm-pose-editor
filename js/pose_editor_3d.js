@@ -25,8 +25,8 @@ app.registerExtension({
                 // クラシックノード（false）では表示したままにする
                 const isModern = app.ui?.settings?.getSettingValue?.("Comfy.VueNodes.Enabled", false);
                 const toHide = isModern
-                    ? ["image_data", "output_size_mode", "custom_width", "custom_height", "preview"]
-                    : ["image_data", "preview"];
+                    ? ["image_data", "output_size_mode", "custom_width", "custom_height", "preview", "lip_text"]
+                    : ["image_data", "preview", "lip_text"];
                 for (const name of toHide) {
                     const w = node.widgets?.find(w => w.name === name);
                     if (w) { w.computeSize = () => [0, -4]; w.hidden = true; }
@@ -591,7 +591,15 @@ app.registerExtension({
 
             // Light & Pose Editorを閉じた際、モーダル内でWind状態が変更された可能性があるため
             // ツールバー側の表示を再同期する(Light/Poseどちらのボタンから開いた場合も共通)
+            // Lip Sync の入力テキストは lip_text ウィジェットに保存し、ワークフローの出力として使う。
+            // モーダルを開く前に lip_text の値をエディタへ入れ、閉じたときにエディタの値を書き戻す
+            const lipTextWidget = () => node.widgets?.find(w => w.name === "lip_text");
+            function syncLipTextToEditor() {
+                editor.setLipText(lipTextWidget()?.value ?? "");
+            }
             function onLightPoseEditorClosed() {
+                const lw = lipTextWidget();
+                if (lw) lw.value = editor.getLipSync?.().text ?? "";
                 const on = editor.getWindEnabled();
                 windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
                 windBtn.style.background = on ? "#2a6a8a" : "#444";
@@ -640,9 +648,11 @@ app.registerExtension({
             const nodeActions = { doCapture, loadVrmFile, loadVrmaFile, unloadVrma, getVrmBuffer: () => _currentVrmBuffer };
 
             lightBtn.onclick = () => {
+                syncLipTextToEditor();
                 openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "light", nodeActions);
             };
             poseBtn.onclick = () => {
+                syncLipTextToEditor();
                 openLightPoseEditor(editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys, onLightPoseEditorClosed, "pose", nodeActions);
             };
 
@@ -714,6 +724,7 @@ app.registerExtension({
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (ev) => {
+                    syncLipTextToEditor();
                     importVrmaAsKeyframesFromNode(
                         editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys,
                         onLightPoseEditorClosed, nodeActions,

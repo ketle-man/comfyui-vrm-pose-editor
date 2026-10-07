@@ -22,14 +22,16 @@ class PoseEditor3DNode:
                 "custom_width":     ("INT", {"default": 600, "min": 64, "max": 4096, "step": 8}),
                 "custom_height":    ("INT", {"default": 600, "min": 64, "max": 4096, "step": 8}),
                 "timer_interval":   ("INT", {"default": 5, "min": 1, "max": 3600, "step": 1}),
+                # Light & Pose Editor の Lip Sync 欄の入力。既存ワークフローの並びを崩さないよう末尾に置く
+                "lip_text":         ("STRING", {"default": "", "multiline": True}),
             },
             "optional": {
                 "background_image": ("IMAGE",),
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "MASK")
-    RETURN_NAMES = ("image", "mask", "inverted_mask")
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "STRING")
+    RETURN_NAMES = ("image", "mask", "inverted_mask", "lip_text")
     FUNCTION = "export_pose"
     CATEGORY = "3D Pose"
     OUTPUT_NODE = False
@@ -40,6 +42,7 @@ class PoseEditor3DNode:
                     custom_width: int = 600,
                     custom_height: int = 600,
                     timer_interval: int = 5,
+                    lip_text: str = "",
                     background_image=None):
 
         # ---- 背景画像の準備 ----
@@ -107,13 +110,13 @@ class PoseEditor3DNode:
         mask_tensor = torch.from_numpy(mask_array).unsqueeze(0)  # (1, H, W)
         inverted_mask_tensor = 1.0 - mask_tensor
 
-        return (img_tensor, mask_tensor, inverted_mask_tensor)
+        return (img_tensor, mask_tensor, inverted_mask_tensor, lip_text or "")
 
     @classmethod
     def IS_CHANGED(cls, image_data, output_size_mode="Standard",
-                   custom_width=600, custom_height=600, timer_interval=5, background_image=None):
+                   custom_width=600, custom_height=600, timer_interval=5, lip_text="", background_image=None):
         import hashlib
-        key = f"{image_data}|{output_size_mode}|{custom_width}|{custom_height}"
+        key = f"{image_data}|{output_size_mode}|{custom_width}|{custom_height}|{lip_text}"
         return hashlib.md5(key.encode()).hexdigest()
 
 
