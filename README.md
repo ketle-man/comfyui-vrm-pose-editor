@@ -116,12 +116,14 @@ On the **L** sub-tab, **📚 Library** toggles a light-preset library panel — 
 
 #### Pose tab
 
-The left pane has two sub-tabs:
+The left pane has four sub-tabs:
 
 | Sub-tab | Contents |
 |---------|----------|
-| **K** — Shape Keys | Sliders (0.0 – 1.0) for every morph/expression on the model, updated in real time. This replaces the old collapsible "Shape Keys" panel that used to live at the bottom of the node. For VRMs with a `blink` expression, the list starts with **😑 Auto Blink** (ON/OFF + interval) — see [Blink track](#blink-track-auto-blink). |
+| **K** — Shape Keys | Sliders (0.0 – 1.0) for every morph/expression on the model, updated in real time. This replaces the old collapsible "Shape Keys" panel that used to live at the bottom of the node. For VRMs with a `blink` expression, the list starts with **😑 Auto Blink** (ON/OFF + interval) — see [Blink track](#blink-track-auto-blink). Below the list is the collapsed **👄 Lip Sync** block — see [Lip Sync](#lip-sync). |
 | **C** — Camera | The camera list (add / select / delete / rename / recolor) — see [Camera Management](#camera-management-) below |
+| **A** — Audio | Audio files made from text for Lip Sync: pick, preview, and delete them — see [Audio files and API settings](#audio-files-and-api-settings-a--s) |
+| **S** — API settings | The Lemonade connection (Base URL, model, default voice) and a connection test — see the same section |
 
 The right pane (kept at the same width as the Light tab's Properties panel so the dialog doesn't change size when you flip between tabs or sub-tabs; no "Properties" heading is shown, unlike the Light tab) shows different content depending on which left sub-tab is active:
 
@@ -135,6 +137,33 @@ The right pane (kept at the same width as the Light tab's Properties panel so th
 VRM/VRMA loading and unloading are routed through the same `nodeActions` bridge the node uses internally, so the node's own buttons/labels stay in sync too.
 
 **📚 Library** opens the [Pose Library](#pose-library-) instead of a preset panel.
+
+#### Lip Sync
+
+Turns text into mouth movement on the VRM's vowel shapes (`aa` / `ih` / `ou` / `ee` / `oh`; the VRM 0.x presets `a` / `i` / `u` / `e` / `o` are mapped automatically). Japanese (kana) and English are supported. Kanji have no reading, so each one is treated as an open-mouth unit — write Japanese in kana for accurate timing. Timing is estimated from the characters, not from phoneme alignment, so the sync is approximate.
+
+- Type into the **Lip Sync** box at the bottom of the K list. The block is collapsed by default; click its header to open it. Closing the modal also copies the text into the node's `lip_text` output.
+- **▶ Text**: moves the mouth for the text without any audio.
+- **🔊 Create audio from text**: generates an audio file with Lemonade (see [Audio files and API settings](#audio-files-and-api-settings-a--s)) and selects it.
+- **🎵 Play selected audio**: plays the selected file while the mouth follows its loudness.
+- **■ Stop**: returns the mouth to the values it had before. Manual shape-key values are kept.
+
+Lip Sync only moves the mouth during playback; the exported `.vrma` is unchanged. To put speech on the timeline, use the [Lip track](#lip-track).
+
+#### Audio files and API settings (A · S)
+
+Audio made from text is saved under ComfyUI's output folder: `output/vrm_pose_editor/Audio/tts_YYYYmmdd_HHMMSS_<voice>.mp3`.
+
+- **A — Audio**: the toolbar at the top applies to the rows you tick.
+  - **✓ Select** sets the Lip Sync audio. It needs exactly one ticked row.
+  - **▶ Play** previews the file. It also needs exactly one ticked row.
+  - **🗑 Delete** removes every ticked file, after a confirmation.
+  - **Select all** ticks or clears all rows.
+
+  Select and Play are greyed out unless exactly one row is ticked. Choosing a file clears the ticks, and the chosen file is highlighted.
+- **S — API settings**: the Lemonade **Base URL**, **Model** (`kokoro-v1`), and default **Voice** (a dropdown). Japanese voices: `jf_alpha`, `jf_gongitsune`, `jf_nezumi`, `jf_tebukuro`, `jm_kumo`. English voices: `af_heart`, `af_bella`, `bf_emma`. Settings are saved to `output/vrm_pose_editor/api_settings.json`. **Test connection** calls Lemonade's `/api/v1/health`.
+
+Lemonade must be running on this PC with the `kokoro-v1` model downloaded. Only `localhost` and loopback addresses (`127.0.0.1`, `::1`) are accepted, so the server never calls other hosts. Lemonade is optional: text-only Lip Sync works without it.
 
 #### Camera Management
 
@@ -185,7 +214,7 @@ Estimates the pose of a person in an image and applies it to the loaded VRM.
 
 Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / MP4 / GIF.
 
-The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one **Camera** track *per camera currently in the scene* (labelled with that camera's own icon and name, e.g. "🎥 Camera 1" / "📷 Camera 2" — the list grows/shrinks live as you add, delete, or rename cameras in the [C sub-tab](#camera-management-)), **🎬 Cam Switch**, **💡 Light**, **🌬 Wind**, and **👀 Eyes** (LookAt Target ON/OFF, target mode, and marker position — see [LookAt Target](#lookat-target-) above). Only the selected track's keyframes are drawn on the timeline (pose = yellow, light = orange, wind = cyan, eyes = cyan (matching the LookAt marker's own color), each per-camera Camera track = that camera's own color; Cam Switch markers are drawn in *each keyframe's own camera's color* too — see [Camera Management](#camera-management-)), and the **✚ Add/Update** / **− Delete** buttons always act on whichever track is selected (their color changes to match; the label itself no longer spells out the track name, since the dropdown already shows which one is selected). Dragging a marker (🔀 Move) onto a frame that already has a keyframe on a *different* track merges the two instead of overwriting the hidden track's data.
+The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one **Camera** track *per camera currently in the scene* (labelled with that camera's own icon and name, e.g. "🎥 Camera 1" / "📷 Camera 2" — the list grows/shrinks live as you add, delete, or rename cameras in the [C sub-tab](#camera-management-)), **🎬 Cam Switch**, **💡 Light**, **🌬 Wind**, **👀 Eyes**, and **👄 Lip** (LookAt Target ON/OFF, target mode, and marker position — see [LookAt Target](#lookat-target-) above). Only the selected track's keyframes are drawn on the timeline (pose = yellow, light = orange, wind = cyan, eyes = cyan (matching the LookAt marker's own color), each per-camera Camera track = that camera's own color; Cam Switch markers are drawn in *each keyframe's own camera's color* too — see [Camera Management](#camera-management-)), and the **✚ Add/Update** / **− Delete** buttons always act on whichever track is selected (their color changes to match; the label itself no longer spells out the track name, since the dropdown already shows which one is selected). Dragging a marker (🔀 Move) onto a frame that already has a keyframe on a *different* track merges the two instead of overwriting the hidden track's data.
 
 **🗑 Delete Mode** is a second way to remove keyframes: turn it on, then click a marker on the selected track to delete it, or drag across several markers to erase them one after another like an eraser. It's mutually exclusive with 🔀 Move — turning one on switches the other off.
 
@@ -226,6 +255,10 @@ Records the [LookAt Target](#lookat-target-)'s ON/OFF state, target mode (Marker
 **😑 Auto Blink** (top of the Pose tab's Shape Keys list) makes a VRM blink automatically — a toggle plus an **interval** slider (average seconds between blinks, with a little natural variation). The blink timing is a pure function of time, so timeline playback and WebM / MP4 / GIF export blink at exactly the same frames; the normal preview blinks in real time. While Auto Blink is on, the `blink` shape-key slider keeps your own value (e.g. half-closed eyes) and Pose keyframes record that value rather than a mid-blink one.
 
 The **😑 Blink** track records Auto Blink's ON/OFF and interval as keyframes. Values are discrete: the last key at or before the current frame applies (no interpolation). Requires a VRM with the `blink` expression. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
+
+#### Lip track
+
+The **👄 Lip** track records speech as text. Each Lip keyframe starts speaking its text on that frame, and the mouth closes at the next Lip keyframe or when the speech ends. A keyframe with empty text closes the mouth. The mouth shape is a function of timeline time, so playback and WebM / MP4 / GIF export produce the same frames (export has no audio loudness, so the mouth opens by a fixed amount). Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
 
 #### Camera track
 
@@ -539,12 +572,14 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 #### Poseタブ
 
-左ペインは2つのサブタブに分かれています。
+左ペインは4つのサブタブに分かれています。
 
 | サブタブ | 内容 |
 |---------|------|
-| **K** — Shape Keys | モデルが持つすべてのモーフ・表情のスライダー（0.0〜1.0）をリアルタイムに調整。従来ノード下部にあった折りたたみ式Shape Keysパネルはこちらに置き換わりました。`blink` 表情を持つ VRM では、一覧の先頭に **😑 Auto Blink**（ON/OFF と間隔）があります — [Blinkトラック](#blinkトラック自動瞬き)を参照。 |
+| **K** — Shape Keys | モデルが持つすべてのモーフ・表情のスライダー（0.0〜1.0）をリアルタイムに調整。従来ノード下部にあった折りたたみ式Shape Keysパネルはこちらに置き換わりました。`blink` 表情を持つ VRM では、一覧の先頭に **😑 Auto Blink**（ON/OFF と間隔）があります — [Blinkトラック](#blinkトラック自動瞬き)を参照。一覧の下には折りたたみ式の **👄 Lip Sync** があります（下記「リップシンク」を参照）。 |
 | **C** — Camera | カメラ一覧（追加・選択・削除・名前変更・色変更）— 詳細は後述の[カメラ管理](#カメラ管理)を参照 |
+| **A** — Audio | テキストから作った音声（Lip Sync 用）の選択・試聴・削除 — 後述の「音声ファイルと API 設定（A・S）」を参照 |
+| **S** — API設定 | Lemonade の接続設定（Base URL・モデル・既定の声）と接続テスト — 同じ節を参照 |
 
 右ペイン（Lightタブ側のPropertiesパネルと同じ幅にすることで、Light/Poseタブやサブタブを切り替えてもダイアログ全体のサイズが変わらないようにしています。Lightタブと異なり「Properties」という見出しは表示しません）は、選択中の左サブタブに応じて内容が変わります:
 
@@ -558,6 +593,33 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions`ブリッジ経由で処理されるため、ノード側のボタン表示も連動して更新されます。
 
 **📚 Library**は光源プリセットパネルではなく、[ポーズライブラリ](#ポーズライブラリ📚)を開きます。
+
+#### リップシンク（Lip Sync）
+
+テキストから、VRM の母音の口形（`aa` / `ih` / `ou` / `ee` / `oh`）を動かします（VRM 0.x の `a` / `i` / `u` / `e` / `o` は自動で変換されます）。日本語（かな）と英語に対応しています。漢字は読みが無いため、口を開けた仮の単位として扱われます。タイミングは音素のアライメントではなく文字数からの推定なので、同期は近似です。読みを正確にするには、かなで入力してください。
+
+- ポーズタブの K 一覧の下にある **Lip Sync** 欄に入力します（既定は折りたたみ。見出しをクリックして開きます）。モーダルを閉じると、テキストもノードの `lip_text` 出力に反映されます。
+- **▶ テキストで再生**: 音声なしで、テキストに合わせて口を動かします。
+- **🔊 テキストから音声を作成**: Lemonade で音声ファイルを作り、選択します（後述の「音声ファイルと API 設定（A・S）」を参照）。
+- **🎵 選択中の音声で再生**: 選択中の音声を再生し、その音量に合わせて口を動かします。
+- **■ 停止**: 口を再生前の値に戻します。手動で設定したシェイプキーの値は保たれます。
+
+リップシンクは再生中だけ口を動かし、書き出す `.vrma` は変えません。タイムラインに載せるには、下記の [Lipトラック](#lipトラック)を使います。
+
+#### 音声ファイルと API 設定（A・S）
+
+テキストから作った音声は、ComfyUI の output フォルダの `output/vrm_pose_editor/Audio/` に保存されます（`tts_YYYYmmdd_HHMMSS_<声>.mp3`）。
+
+- **A — Audio**: 上部のツールバーは、チェックした行に対して働きます。
+  - **✓ 選択**: Lip Sync の音声を選びます。チェックは 1 件だけ必要です。
+  - **▶ 再生**: 試聴します。チェックは 1 件だけ必要です。
+  - **🗑 削除**: チェックしたファイルをすべて削除します（確認あり）。
+  - **全選択**: すべての行をチェック、または解除します。
+
+  「選択」と「再生」は、チェックが 1 件のときだけ押せます。選択が決まるとチェックは外れ、選択中のファイルはハイライトされます。
+- **S — API設定**: Lemonade の **Base URL**、**Model**（`kokoro-v1`）、既定の **Voice**（ドロップダウン）。日本語の声は `jf_alpha` / `jf_gongitsune` / `jf_nezumi` / `jf_tebukuro` / `jm_kumo`、英語の声は `af_heart` / `af_bella` / `bf_emma` です。設定は `output/vrm_pose_editor/api_settings.json` に保存されます。**接続テスト** で Lemonade の `/api/v1/health` を確認します。
+
+Lemonade はこの PC で `kokoro-v1` モデルを読み込んだ状態で起動しておく必要があります。接続先は `localhost` とループバックアドレス（`127.0.0.1`、`::1`）だけに限定しています。Lemonade は必須ではなく、テキストだけのリップシンクは使えます。
 
 #### カメラ管理
 
@@ -608,7 +670,7 @@ Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現�
 
 Light & Pose Editor下部（両タブ共通）に常設されたパネルで、フレームベースのタイムライン上にキーフレームを配置して短いアニメーションを作成し、プレビュー・保存・`.vrma`/WebM/MP4/GIFとして書き出せます。
 
-「🎬 Keyframes」見出し横のドロップダウンには、**🕺 Pose**、**シーン内のカメラの数だけ動的に増減するCameraトラック**（そのカメラ自身のアイコン・名前でラベル表示、例:「🎥 Camera 1」「📷 Camera 2」— [Cサブタブ](#カメラ管理)でカメラを追加/削除/リネームするたびにこのリストも連動します）、**🎬 Cam Switch**、**💡 Light**、**🌬 Wind**、**👀 Eyes**（Look at TargetのON/OFF・対象モード・マーカー座標 — 前述の[視線ターゲット](#視線ターゲット-)参照）が並びます。タイムラインには選択中トラックのキーフレームだけが表示され（ポーズ＝黄、ライト＝橙、Wind＝水色、カメラごとのCameraトラックは**そのカメラ自身の色**、Cam Switchのマーカーも**そのキーフレームが指すカメラ自身の色**で描画されます — [カメラ管理](#カメラ管理)参照）、**✚ Add/Update**／**− Delete**ボタンは常に選択中トラックに対して動作します（色は連動して切り替わりますが、ドロップダウン側で既にどのトラックか分かるため、ラベル自体にはトラック名を含めていません）。マーカーを別フレームへドラッグ移動（🔀 Move）した際、移動先に**別トラック**のキーフレームが既にある場合は上書きせずマージされます。
+「🎬 Keyframes」見出し横のドロップダウンには、**🕺 Pose**、**シーン内のカメラの数だけ動的に増減するCameraトラック**（そのカメラ自身のアイコン・名前でラベル表示、例:「🎥 Camera 1」「📷 Camera 2」— [Cサブタブ](#カメラ管理)でカメラを追加/削除/リネームするたびにこのリストも連動します）、**🎬 Cam Switch**、**💡 Light**、**🌬 Wind**、**👀 Eyes**、**👄 Lip**（Look at TargetのON/OFF・対象モード・マーカー座標 — 前述の[視線ターゲット](#視線ターゲット-)参照）が並びます。タイムラインには選択中トラックのキーフレームだけが表示され（ポーズ＝黄、ライト＝橙、Wind＝水色、カメラごとのCameraトラックは**そのカメラ自身の色**、Cam Switchのマーカーも**そのキーフレームが指すカメラ自身の色**で描画されます — [カメラ管理](#カメラ管理)参照）、**✚ Add/Update**／**− Delete**ボタンは常に選択中トラックに対して動作します（色は連動して切り替わりますが、ドロップダウン側で既にどのトラックか分かるため、ラベル自体にはトラック名を含めていません）。マーカーを別フレームへドラッグ移動（🔀 Move）した際、移動先に**別トラック**のキーフレームが既にある場合は上書きせずマージされます。
 
 **🗑 Delete Mode**は、キーフレームを削除するもう一つの方法です。ONにした状態で選択中トラックのマーカーをクリックすると削除、複数のマーカーをまたいでドラッグすると消しゴムのように連続削除できます。🔀 Moveとは排他（片方をONにするともう片方は自動でOFFになります）。
 
@@ -649,6 +711,10 @@ Shape Keysスライダーの現在値は、ポーズKFを追加/更新するた�
 Poseタブの Shape Keys 一覧の先頭にある **😑 Auto Blink** で、VRM を自動で瞬きさせます。トグルと**間隔**スライダー（瞬きの平均間隔・秒。少し揺らぎを入れています）で操作します。瞬きのタイミングは時刻だけで決まるため、タイムライン再生と WebM / MP4 / GIF の書き出しでは同じフレームで瞬きます。通常のプレビューは実時間で瞬きます。Auto Blink が ON の間も、`blink` シェイプキーのスライダーは自分で設定した値（半目など）を保ち、ポーズKFにも瞬き途中ではなくその値が記録されます。
 
 **😑 Blink** トラックは、Auto Blink の ON/OFF と間隔をキーフレームとして記録します。値は補間されず、現在フレーム以前の最後のキーがそのまま使われます。`blink` 表情を持つ VRM が必要です。他の非Poseトラックと同様、**プレビュー専用**であり、エクスポートされる`.vrma`には含まれません。
+
+#### Lipトラック
+
+**👄 Lip** トラックは、話す内容をテキストとして記録します。Lip キーフレームは、そのフレームから自分のテキストを話し始め、次の Lip キーフレームか発話の終わりで口を閉じます。テキストを空にしたキーフレームは、そこで口を閉じます。口形はタイムラインの時刻で決まるため、再生と WebM / MP4 / GIF の書き出しで同じフレームになります（書き出しには音声の音量が無いため、口の開きは一定量です）。他の非Poseトラックと同様、**プレビュー専用**で、エクスポートされる `.vrma` には含まれません。
 
 #### Cameraトラック
 
@@ -868,9 +934,13 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 | `output_size_mode` | Standard / Background / Custom | Output resolution mode |
 | `custom_width` / `custom_height` | INT | Output size in Custom mode |
 | `timer_interval` | INT | Timer capture interval in seconds (1 – 3600, default 5) |
+| `lip_text` | STRING | Text of the Light & Pose Editor's Lip Sync box (synced when the modal closes; hidden on the node) |
 | **output: image** | IMAGE | Captured pose image (Torch tensor) |
 | **output: mask** | MASK | Alpha channel of the composited 3D capture layer (all-zero if no pose image) |
 | **output: inverted_mask** | MASK | `1 - mask` |
+| **output: lip_text** | STRING | The Lip Sync text, for routing to a TTS node |
+
+A separate **Lip Sync Text** node (category *3D Pose*) passes a text input through as a `STRING` output, for routing text to a TTS node.
 
 ---
 
@@ -879,6 +949,7 @@ Light & Pose EditorのLightタブ →「E」（Environment）サブタブにあ�
 - **Frontend**: JavaScript + [Three.js r160](https://threejs.org/) + [@pixiv/three-vrm 2.1.0](https://github.com/pixiv/three-vrm) (bundled locally)
 - **Backend**: Python — Base64 PNG → PIL → Torch Tensor; `mask`/`inverted_mask` are derived from the composited pose layer's alpha channel
 - **Pose Library API**: aiohttp routes registered via `@PromptServer.instance.routes`; also serves `.vrma` binaries (`GET /pose_library/vrma_content`) and accepts server-side `.vrma` saves (`POST /pose_library/save_vrma`)
+- **Lip sync & audio API**: `pose_audio_server.py` serves `/pose_editor/audio/*` (list, file, delete) and `/pose_editor/tts/*` (generate, health, settings). Files go to `<output>/vrm_pose_editor/Audio/`. Lemonade is called through `http.client` (urllib always sends `Connection: close`, which broke long audio responses), and only loopback URLs are accepted.
 - **Keyframe Project Library API**: `GET/POST /kf_project/*` — timeline projects stored in `.kf_projects/`, same route pattern as the Light Library API
 - **Light Library API**: `GET/POST /light_library/*` — presets stored in `.light_library/` as `l_HHMMSS.json`
 - **Capture**: letterbox-cropped to output aspect ratio (no stretching)

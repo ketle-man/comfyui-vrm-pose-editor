@@ -8,6 +8,7 @@ import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 import { VRMAnimationLoaderPlugin, createVRMAnimationClip } from './vendor/three-vrm-animation.module.js';
 import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { VROIDPOSE_CUSTOM_TEMPLATE } from './vroidpose_template.js';
+import { LipSync, MOUTH_VISEMES, buildVisemeTimeline, estimateSpeechDuration, attachAudioLevelMeter } from './lip_sync.js';
 
 // ---- Three.js エディタ本体 ----
 // defaultModelProvider(省略可): 既定モデルの URL を返す async 関数。戻り値が文字列ならそれを読み込み、
@@ -1384,6 +1385,141 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         }
     }
 
+    // ================================================================
+    // リップシンク(テキスト or 音声 → 口形 aa/ih/ou/ee/oh)
+    // ================================================================
+    // 再生中だけ口形の表情を上書きし、停止時に再生前の値へ戻す(手動で設定した口の値は消さない)。
+    // 時刻は performance.now() を使う(テキスト再生は実時間、音声再生は audio.currentTime)
+    const _lip = {
+        text: "", mode: null,           // mode: null | "text" | "audio"
+        vrm: null, lipSync: null,       // 口形を反映している VRM と LipSync
+        base: null,                     // 再生前の口形の値
+        timeline: null, start: 0, lastNow: null,
+        file: null, audio: null, url: null, meter: null,
+    };
+    function _ensureLip() {
+        if (!currentVRM?.expressionManager) return null;
+        if (_lip.vrm !== currentVRM) {
+            _lip.vrm = currentVRM;
+            _lip.lipSync = new LipSync(currentVRM.expressionManager);
+        }
+        return _lip.lipSync;
+    }
+    function _captureLipBase() {
+        const em = currentVRM?.expressionManager;
+        return Object.fromEntries(MOUTH_VISEMES.map(k => [k, em?.getValue?.(k) ?? 0]));
+    }
+    function _stopLip() {
+        // 再生中で、反映中の VRM が今も読み込まれているときだけ口を元に戻す
+        // (停止中に呼ばれたとき、古い基準値で手動設定の値を上書きしないため)
+        if (_lip.mode && _lip.lipSync && _lip.vrm === currentVRM) _lip.lipSync.reset(_lip.base);
+        if (_lip.audio) _lip.audio.pause();
+        if (_lip.meter) { _lip.meter.close(); _lip.meter = null; }
+        if (_lip.url) { URL.revokeObjectURL(_lip.url); _lip.url = null; }
+        _lip.audio = null;
+        _lip.mode = null;
+        _lip.lastNow = null;
+    }
+    function _startLipText() {
+        const ls = _ensureLip();
+        if (!ls) return false;
+        _stopLip();
+        _lip.base = _captureLipBase();
+        const text = _lip.text;
+        _lip.timeline = buildVisemeTimeline(text, estimateSpeechDuration(text));
+        ls.setTimeline(_lip.timeline);
+        _lip.start = performance.now() / 1000;
+        _lip.mode = "text";
+        return true;
+    }
+    async function _startLipAudio(file) {
+        const ls = _ensureLip();
+        if (!ls || !file) return false;
+        _stopLip();
+        _lip.base = _captureLipBase();
+        const audio = new Audio(URL.createObjectURL(file));
+        _lip.url = audio.src;
+        _lip.audio = audio;
+        // AudioContext は再生ボタンのクリック内(この関数の同期部分)で作る
+        _lip.meter = attachAudioLevelMeter(audio);
+        const setTimeline = () => {
+            _lip.timeline = buildVisemeTimeline(_lip.text, isFinite(audio.duration) ? audio.duration : estimateSpeechDuration(_lip.text));
+            ls.setTimeline(_lip.timeline);
+        };
+        setTimeline();
+        audio.addEventListener("loadedmetadata", () => { if (_lip.audio === audio) setTimeline(); });
+        audio.addEventListener("ended", () => { if (_lip.audio === audio) _stopLip(); });
+        _lip.mode = "audio";
+        try {
+            await audio.play();
+        } catch (e) {
+            console.warn("[PoseEditor3D] Lip sync audio playback failed:", e);
+            if (_lip.audio === audio) _stopLip();
+            return false;
+        }
+        return true;
+    }
+    // 描画の直前(animate)に呼ぶ。再生していなければ何もしない
+    function _applyLipSync() {
+        if (!_lip.mode) return;
+        if (_lip.vrm !== currentVRM) { _stopLip(); return; }
+        const now = performance.now() / 1000;
+        const dt = _lip.lastNow == null ? 0 : now - _lip.lastNow;
+        _lip.lastNow = now;
+        if (_lip.mode === "text") {
+            const t = now - _lip.start;
+            _lip.lipSync.update(t, null, dt);
+            if (t > _lip.timeline.duration + 0.3) _stopLip();
+        } else if (_lip.audio) {
+            _lip.lipSync.update(_lip.audio.currentTime, _lip.meter ? _lip.meter.read() : null, dt);
+        }
+    }
+
+    // キーフレームの Lip トラック: 「いつ(start秒)から・どのテキストを」話すかを setLipKeyClip で指定し、
+    // タイムラインの時刻(秒)を setLipTime で渡す。時刻は実時間ではないので、再生・書き出しでも同じ位置に口が出る。
+    // 音量は使わず一定の開きで動かす(書き出しで音声が無いため)。実時間の口パク再生中は何もしない。
+    const _lipKey = { text: "", timeline: null, start: 0, time: null, applied: null, active: false, ls: null, base: null };
+    function _setLipKeyClip(text, startSec) {
+        const t = String(text ?? "");
+        if (t !== _lipKey.text) {
+            _lipKey.text = t;
+            _lipKey.timeline = t.trim() ? buildVisemeTimeline(t, estimateSpeechDuration(t)) : null;
+        }
+        _lipKey.start = startSec;
+    }
+    function _setLipTime(t) {
+        _lipKey.time = (typeof t === "number" && isFinite(t)) ? t : null;
+        // Lip トラックの管理を外れる(時刻 null)ときは、開始前の口の値へ戻す
+        if (_lipKey.time === null) _endLipKeyed(true);
+    }
+    // restore: true なら開始前の口形の値へ戻す。クリップ区間外では戻さない(ポーズ側の口形を尊重するため)
+    function _endLipKeyed(restore) {
+        if (_lipKey.active && restore && _lipKey.ls) _lipKey.ls.reset(_lipKey.base);
+        _lipKey.active = false;
+        _lipKey.ls = null;
+        _lipKey.applied = null;
+    }
+    function _applyLipKeyed() {
+        if (_lipKey.time === null || _lip.mode) return;
+        const tl = _lipKey.timeline;
+        const local = _lipKey.time - _lipKey.start;
+        // 発話の長さ(+少しの余韻)の間だけ口を動かす
+        if (!tl || local < 0 || local > tl.duration + 0.3) { _endLipKeyed(false); return; }
+        const ls = _ensureLip();
+        if (!ls) return;
+        if (!_lipKey.active) {
+            _lipKey.base = _captureLipBase();
+            _lipKey.ls = ls;
+            _lipKey.active = true;
+        }
+        if (_lipKey.applied !== tl) {
+            ls.setTimeline(tl);
+            _lipKey.applied = tl;
+        }
+        // dt=1 で目標値へ即座に追従させる(書き出しフレームごとの結果を毎回同じにするため)
+        ls.update(local, null, 1);
+    }
+
     function tryLoadDefaultModel(exts) {
         if (exts.length === 0) return;
         const [ext, ...rest] = exts;
@@ -1785,6 +1921,8 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 }
             }
             _applyAutoBlink();
+            _applyLipSync();
+            _applyLipKeyed();
             currentVRM.update(_springBoneEnabled ? (1 / 60) : 0);
         }
         orbit.update();
@@ -1876,6 +2014,7 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
         if (currentVRM) {
             _applyAutoBlink();
+            _applyLipKeyed();
             currentVRM.update(0);
         }
         renderer.render(scene, camera);
@@ -2197,6 +2336,17 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         setAutoBlink(state) { _setAutoBlink(state ?? {}); },
         // t: タイムラインの時刻(秒)。null で実時間に戻す(再生・書き出し中だけ時刻を指定する)
         setBlinkTime(t) { _blinkTimeOverride = (typeof t === "number" && isFinite(t)) ? t : null; },
+        // ---- リップシンク ----
+        // hasLipSync: 読み込み中のモデルに口形(aa/ih/ou/ee/oh)の表情があるか(無ければ UI を出さない)
+        hasLipSync() { return !!currentVRM?.expressionManager && MOUTH_VISEMES.some(k => !!currentVRM.expressionManager.getExpression?.(k)); },
+        getLipSync() { return { text: _lip.text, playing: _lip.mode !== null }; },
+        setLipText(text) { _lip.text = String(text ?? ""); },
+        playLipText() { return _startLipText(); },
+        playLipAudio(file) { return _startLipAudio(file); },
+        stopLipSync() { _stopLip(); },
+        // キーフレームの Lip トラック用: start 秒から text を話す指定と、タイムラインの時刻(null で解除)
+        setLipKeyClip(text, startSec) { _setLipKeyClip(text, startSec); },
+        setLipTime(t) { _setLipTime(t); },
         // 読み込み中の VRM(three-vrm の VRM インスタンス)。GLB/GLTF モデルや未読込時は null。
         // Image タブ(image_pose.js)がレスト位置の取得・接地計算に使う
         getVRM() { return currentVRM; },
