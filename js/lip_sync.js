@@ -126,6 +126,49 @@ export function attachAudioLevelMeter(audioEl) {
     };
 }
 
+// ---- 口の開きレベル(S タブで調整。ブラウザの localStorage に保存) ----
+//   text : テキスト再生(音量なし)での口の開き 0..1
+//   audio: 音声再生での音量の増幅倍率(結果は 1 で頭打ち)
+const LEVELS_KEY = "vrm_pose_editor.lip_levels";
+export const LIP_LEVEL_DEFAULTS = { text: 0.5, audio: 1.5 };
+let _levels = { ...LIP_LEVEL_DEFAULTS };
+try {
+    const saved = JSON.parse(localStorage.getItem(LEVELS_KEY) ?? "null");
+    for (const k of Object.keys(_levels)) {
+        if (typeof saved?.[k] === "number" && isFinite(saved[k]) && saved[k] >= 0) _levels[k] = saved[k];
+    }
+} catch { /* 保存値が読めなければ既定値 */ }
+export function getLipLevels() { return { ..._levels }; }
+export function setLipLevels(partial) {
+    for (const k of Object.keys(_levels)) {
+        if (typeof partial?.[k] === "number" && isFinite(partial[k]) && partial[k] >= 0) _levels[k] = partial[k];
+    }
+    try { localStorage.setItem(LEVELS_KEY, JSON.stringify(_levels)); } catch { /* 保存できなくても動作は続ける */ }
+}
+// 音量 0..1(attachAudioLevelMeter の read 相当)に音声用の倍率を掛ける
+export function scaleAudioLevel(level) { return Math.min(1, level * _levels.audio); }
+
+// 音声ファイルを先に解析して、時間ごとの音量(口の開き)の列を作る。キーフレーム(書き出し含む)用。
+// attachAudioLevelMeter と同じ RMS・増幅で、1/ENV_RATE 秒ごとの値(倍率は掛けない)を返す
+const ENV_RATE = 50;
+export async function analyzeAudioFile(file) {
+    const ctx = new OfflineAudioContext(1, 1, 44100);
+    const audio = await ctx.decodeAudioData(await file.arrayBuffer());
+    const data = audio.getChannelData(0);
+    const win = 1024;
+    const n = Math.max(1, Math.ceil(audio.duration * ENV_RATE));
+    const env = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        const end = Math.min(data.length, Math.floor((i + 1) / ENV_RATE * audio.sampleRate));
+        const start = Math.max(0, end - win);
+        let sum = 0;
+        for (let j = start; j < end; j++) sum += data[j] * data[j];
+        const rms = end > start ? Math.sqrt(sum / (end - start)) : 0;
+        env[i] = Math.min(1, Math.max(0, (rms - 0.01) * 5));
+    }
+    return { duration: audio.duration, rate: ENV_RATE, env };
+}
+
 // VRM の表情に口形を反映する。毎フレーム update() を呼ぶ
 export class LipSync {
     constructor(expressionManager) {
@@ -142,7 +185,7 @@ export class LipSync {
         this.cursor = 0;
     }
 
-    // t: タイムライン上の時刻(秒)。level: 音量 0..1。null なら文字だけのプレビュー(一定の開き)
+    // t: タイムライン上の時刻(秒)。level: 音量 0..1(倍率適用済み)。null なら文字だけのプレビュー(テキスト用レベルの一定の開き)
     update(t, level, dtSec) {
         const units = this.timeline?.units ?? [];
         let target = null;
@@ -151,7 +194,7 @@ export class LipSync {
             while (this.cursor < units.length - 1 && t >= units[this.cursor].t1) this.cursor++;
             const u = units[this.cursor];
             if (u.v && t >= u.t0 && t < u.t1) {
-                target = { v: u.v, amount: level == null ? 0.8 : level };
+                target = { v: u.v, amount: level == null ? _levels.text : level };
             }
         }
 

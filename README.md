@@ -123,7 +123,7 @@ The left pane has four sub-tabs:
 | **K** — Shape Keys | Sliders (0.0 – 1.0) for every morph/expression on the model, updated in real time. This replaces the old collapsible "Shape Keys" panel that used to live at the bottom of the node. For VRMs with a `blink` expression, the list starts with **😑 Auto Blink** (ON/OFF + interval) — see [Blink track](#blink-track-auto-blink). Below the list is the collapsed **👄 Lip Sync** block — see [Lip Sync](#lip-sync). |
 | **C** — Camera | The camera list (add / select / delete / rename / recolor) — see [Camera Management](#camera-management-) below |
 | **A** — Audio | Audio files made from text for Lip Sync: pick, preview, and delete them — see [Audio files and API settings](#audio-files-and-api-settings-a--s) |
-| **S** — API settings | The Lemonade connection (Base URL, model, default voice) and a connection test — see the same section |
+| **S** — API settings | The speech engine (Lemonade or VOICEVOX) with its connection settings and a connection test, plus the mouth-level sliders — see the same section |
 
 The right pane (kept at the same width as the Light tab's Properties panel so the dialog doesn't change size when you flip between tabs or sub-tabs; no "Properties" heading is shown, unlike the Light tab) shows different content depending on which left sub-tab is active:
 
@@ -144,15 +144,17 @@ Turns text into mouth movement on the VRM's vowel shapes (`aa` / `ih` / `ou` / `
 
 - Type into the **Lip Sync** box at the bottom of the K list. The block is collapsed by default; click its header to open it. Closing the modal also copies the text into the node's `lip_text` output.
 - **▶ Text**: moves the mouth for the text without any audio.
-- **🔊 Create audio from text**: generates an audio file with Lemonade (see [Audio files and API settings](#audio-files-and-api-settings-a--s)) and selects it.
+- **🔊 Create audio from text**: generates an audio file with the engine chosen in the S tab (Lemonade or VOICEVOX — see [Audio files and API settings](#audio-files-and-api-settings-a--s)) and selects it.
 - **🎵 Play selected audio**: plays the selected file while the mouth follows its loudness.
 - **■ Stop**: returns the mouth to the values it had before. Manual shape-key values are kept.
+- **Keyframe T/A** (checkbox): chooses what the [Lip track](#lip-track) records when you add a keyframe. OFF = **T** (the text in the box), ON = **A** (the selected audio; its loudness drives how far the mouth opens). The setting is kept while the modal is open.
+- **Mouth level** (S tab): the text playback opens the mouth by a fixed amount (0–1), and the audio playback multiplies the loudness by a gain (0–3, capped at 1 after scaling). Adjust them separately if one looks too big or too small. The values are saved in the browser (`localStorage`) and also apply to the Lip track.
 
 Lip Sync only moves the mouth during playback; the exported `.vrma` is unchanged. To put speech on the timeline, use the [Lip track](#lip-track).
 
 #### Audio files and API settings (A · S)
 
-Audio made from text is saved under ComfyUI's output folder: `output/vrm_pose_editor/Audio/tts_YYYYmmdd_HHMMSS_<voice>.mp3`.
+Audio made from text is saved under ComfyUI's output folder: `output/vrm_pose_editor/Audio/tts_YYYYmmdd_HHMMSS_<voice>.mp3` (Lemonade) or `..._vv<speaker id>.wav` (VOICEVOX).
 
 - **A — Audio**: the toolbar at the top applies to the rows you tick.
   - **✓ Select** sets the Lip Sync audio. It needs exactly one ticked row.
@@ -161,9 +163,18 @@ Audio made from text is saved under ComfyUI's output folder: `output/vrm_pose_ed
   - **Select all** ticks or clears all rows.
 
   Select and Play are greyed out unless exactly one row is ticked. Choosing a file clears the ticks, and the chosen file is highlighted.
-- **S — API settings**: the Lemonade **Base URL**, **Model** (`kokoro-v1`), and default **Voice** (a dropdown). Japanese voices: `jf_alpha`, `jf_gongitsune`, `jf_nezumi`, `jf_tebukuro`, `jm_kumo`. English voices: `af_heart`, `af_bella`, `bf_emma`. Settings are saved to `output/vrm_pose_editor/api_settings.json`. **Test connection** calls Lemonade's `/api/v1/health`.
+- **S — API settings**: pick the **engine** (Lemonade or VOICEVOX); only the selected engine is used. For Lemonade: the **Base URL**, **Model** (`kokoro-v1`), and default **Voice** (a dropdown). Japanese voices: `jf_alpha`, `jf_gongitsune`, `jf_nezumi`, `jf_tebukuro`, `jm_kumo`. English voices: `af_heart`, `af_bella`, `bf_emma`. For VOICEVOX: the **Base URL** (default `http://127.0.0.1:50021`) and a **speaker** dropdown filled from the engine (**Update speakers** reloads it). Settings are saved to `output/vrm_pose_editor/api_settings.json`. **Test connection** calls Lemonade's `/api/v1/health` or VOICEVOX's `/version`, depending on the engine. The same tab also has the mouth-level sliders described under [Lip Sync](#lip-sync).
 
-Lemonade must be running on this PC with the `kokoro-v1` model downloaded. Only `localhost` and loopback addresses (`127.0.0.1`, `::1`) are accepted, so the server never calls other hosts. Lemonade is optional: text-only Lip Sync works without it.
+Lemonade must be running on this PC with the `kokoro-v1` model downloaded. Only `localhost` and loopback addresses (`127.0.0.1`, `::1`) are accepted, so the server never calls other hosts. Lemonade and VOICEVOX are both optional: text-only Lip Sync works without them.
+
+**VOICEVOX** ([VOICEVOX](https://github.com/VOICEVOX/voicevox), speech synthesis software) must be installed and running on this PC; the editor talks to its engine API (`/audio_query` → `/synthesis`). It is not bundled with this repository.
+
+> **VOICEVOX license notice**
+> - VOICEVOX is a separate product with its own terms: <https://voicevox.hiroshiba.jp/term/>. Read them before using the generated audio. This repository's MIT License does **not** cover VOICEVOX or its voices.
+> - According to the software terms, use is allowed commercially and non-commercially, but a **credit that shows VOICEVOX was used** is required, and you must follow the terms of **each voice library (character)** you use. Those terms differ by character, so check the one for your speaker.
+> - Redistributing VOICEVOX itself, and reverse engineering it, are prohibited. Do not bundle it with your own distribution.
+> - Audio created here is saved as `.wav`; when you publish a video or other work made with it, add the credit yourself (the editor does not add it).
+> - This is a summary, not legal advice. The terms on the official page above take precedence and may change.
 
 #### Camera Management
 
@@ -258,7 +269,7 @@ The **😑 Blink** track records Auto Blink's ON/OFF and interval as keyframes. 
 
 #### Lip track
 
-The **👄 Lip** track records speech as text. Each Lip keyframe starts speaking its text on that frame, and the mouth closes at the next Lip keyframe or when the speech ends. A keyframe with empty text closes the mouth. The mouth shape is a function of timeline time, so playback and WebM / MP4 / GIF export produce the same frames (export has no audio loudness, so the mouth opens by a fixed amount). Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
+The **👄 Lip** track records speech as text. Each Lip keyframe starts speaking its text on that frame, and the mouth closes at the next Lip keyframe or when the speech ends. A keyframe with empty text closes the mouth. The mouth shape is a function of timeline time, so playback and WebM / MP4 / GIF export produce the same frames (export does not play audio, so the mouth opens by a fixed amount for **T** keys, and by the loudness analyzed in advance for **A** keys). Which source a new key uses is set by the **Keyframe T/A** checkbox in the Lip Sync block: **T** records the text, **A** also records the selected audio file name (analyzed when the key is added, so the audio file must stay in the Audio folder). The mouth-level sliders in the S tab apply to both. Like the other non-Pose tracks, this is **preview-only** and not included in the exported `.vrma`.
 
 #### Camera track
 
@@ -579,7 +590,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 | **K** — Shape Keys | モデルが持つすべてのモーフ・表情のスライダー（0.0〜1.0）をリアルタイムに調整。従来ノード下部にあった折りたたみ式Shape Keysパネルはこちらに置き換わりました。`blink` 表情を持つ VRM では、一覧の先頭に **😑 Auto Blink**（ON/OFF と間隔）があります — [Blinkトラック](#blinkトラック自動瞬き)を参照。一覧の下には折りたたみ式の **👄 Lip Sync** があります（下記「リップシンク」を参照）。 |
 | **C** — Camera | カメラ一覧（追加・選択・削除・名前変更・色変更）— 詳細は後述の[カメラ管理](#カメラ管理)を参照 |
 | **A** — Audio | テキストから作った音声（Lip Sync 用）の選択・試聴・削除 — 後述の「音声ファイルと API 設定（A・S）」を参照 |
-| **S** — API設定 | Lemonade の接続設定（Base URL・モデル・既定の声）と接続テスト — 同じ節を参照 |
+| **S** — API設定 | 音声作成エンジン（Lemonade / VOICEVOX）の選択と接続設定・接続テスト、口形のレベル調整 — 同じ節を参照 |
 
 右ペイン（Lightタブ側のPropertiesパネルと同じ幅にすることで、Light/Poseタブやサブタブを切り替えてもダイアログ全体のサイズが変わらないようにしています。Lightタブと異なり「Properties」という見出しは表示しません）は、選択中の左サブタブに応じて内容が変わります:
 
@@ -600,15 +611,17 @@ VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions
 
 - ポーズタブの K 一覧の下にある **Lip Sync** 欄に入力します（既定は折りたたみ。見出しをクリックして開きます）。モーダルを閉じると、テキストもノードの `lip_text` 出力に反映されます。
 - **▶ テキストで再生**: 音声なしで、テキストに合わせて口を動かします。
-- **🔊 テキストから音声を作成**: Lemonade で音声ファイルを作り、選択します（後述の「音声ファイルと API 設定（A・S）」を参照）。
+- **🔊 テキストから音声を作成**: S タブで選んだエンジン（Lemonade または VOICEVOX）で音声ファイルを作り、選択します（後述の「音声ファイルと API 設定（A・S）」を参照）。
 - **🎵 選択中の音声で再生**: 選択中の音声を再生し、その音量に合わせて口を動かします。
 - **■ 停止**: 口を再生前の値に戻します。手動で設定したシェイプキーの値は保たれます。
+- **キーフレーム T/A**（チェックボックス）: [Lipトラック](#lipトラック)にキーフレームを追加するときの音源を選びます。OFF = **T**（欄のテキスト）、ON = **A**（選択中の音声。音量で口の開きが決まります）。モーダルを開いている間は設定が保たれます。
+- **口のレベル**（S タブ）: テキスト再生は口を一定量（0〜1）開き、音声再生は音量に倍率（0〜3。掛けた結果は 1 で頭打ち）を掛けます。片方だけ大きすぎる・小さすぎるときは、それぞれ調整してください。値はブラウザ（`localStorage`）に保存され、Lipトラックにも同じ値が使われます。
 
 リップシンクは再生中だけ口を動かし、書き出す `.vrma` は変えません。タイムラインに載せるには、下記の [Lipトラック](#lipトラック)を使います。
 
 #### 音声ファイルと API 設定（A・S）
 
-テキストから作った音声は、ComfyUI の output フォルダの `output/vrm_pose_editor/Audio/` に保存されます（`tts_YYYYmmdd_HHMMSS_<声>.mp3`）。
+テキストから作った音声は、ComfyUI の output フォルダの `output/vrm_pose_editor/Audio/` に保存されます（Lemonade は `tts_YYYYmmdd_HHMMSS_<声>.mp3`、VOICEVOX は `..._vv<話者ID>.wav`）。
 
 - **A — Audio**: 上部のツールバーは、チェックした行に対して働きます。
   - **✓ 選択**: Lip Sync の音声を選びます。チェックは 1 件だけ必要です。
@@ -617,9 +630,18 @@ VRM/VRMAの読み込み・アンロードはノード内部と同じ`nodeActions
   - **全選択**: すべての行をチェック、または解除します。
 
   「選択」と「再生」は、チェックが 1 件のときだけ押せます。選択が決まるとチェックは外れ、選択中のファイルはハイライトされます。
-- **S — API設定**: Lemonade の **Base URL**、**Model**（`kokoro-v1`）、既定の **Voice**（ドロップダウン）。日本語の声は `jf_alpha` / `jf_gongitsune` / `jf_nezumi` / `jf_tebukuro` / `jm_kumo`、英語の声は `af_heart` / `af_bella` / `bf_emma` です。設定は `output/vrm_pose_editor/api_settings.json` に保存されます。**接続テスト** で Lemonade の `/api/v1/health` を確認します。
+- **S — API設定**: **エンジン**（Lemonade または VOICEVOX）を選びます。使われるのは選んだエンジンだけです。Lemonade は **Base URL**、**Model**（`kokoro-v1`）、既定の **Voice**（ドロップダウン）。日本語の声は `jf_alpha` / `jf_gongitsune` / `jf_nezumi` / `jf_tebukuro` / `jm_kumo`、英語の声は `af_heart` / `af_bella` / `bf_emma` です。VOICEVOX は **Base URL**（既定 `http://127.0.0.1:50021`）と、エンジンから取得した **話者** のドロップダウン（**話者を更新**で再取得）。設定は `output/vrm_pose_editor/api_settings.json` に保存されます。**接続テスト** は、エンジンに応じて Lemonade の `/api/v1/health` または VOICEVOX の `/version` を確認します。同じタブに、[リップシンク](#リップシンクlip-sync)で説明した口のレベル調整もあります。
 
-Lemonade はこの PC で `kokoro-v1` モデルを読み込んだ状態で起動しておく必要があります。接続先は `localhost` とループバックアドレス（`127.0.0.1`、`::1`）だけに限定しています。Lemonade は必須ではなく、テキストだけのリップシンクは使えます。
+Lemonade はこの PC で `kokoro-v1` モデルを読み込んだ状態で起動しておく必要があります。接続先は `localhost` とループバックアドレス（`127.0.0.1`、`::1`）だけに限定しています。Lemonade も VOICEVOX も必須ではなく、テキストだけのリップシンクは使えます。
+
+**VOICEVOX**（[VOICEVOX](https://github.com/VOICEVOX/voicevox)、音声合成ソフト）は、この PC にインストールして起動しておく必要があります。エディタはそのエンジン API（`/audio_query` → `/synthesis`）を呼びます。このリポジトリには同梱していません。
+
+> **VOICEVOX のライセンスに関する注意**
+> - VOICEVOX は別製品で、独自の利用規約があります: <https://voicevox.hiroshiba.jp/term/>。作成した音声を使う前に必ず確認してください。このリポジトリの MIT License は VOICEVOX 本体や各音声には**及びません**。
+> - ソフトウェア利用規約では、商用・非商用を問わず利用できますが、**VOICEVOX を利用したことがわかるクレジット表記**が必要で、使用する**各音声ライブラリ（キャラクター）の規約**にも従う必要があります。規約はキャラクターごとに異なるため、使う話者の規約を確認してください。
+> - VOICEVOX 本体の無断再配布やリバースエンジニアリングは禁止されています。自作の配布物に同梱しないでください。
+> - ここで作成した音声は `.wav` で保存されます。これを使った動画などを公開するときは、クレジット表記を自分で入れてください（エディタは自動では付けません）。
+> - これは要約であり、法的助言ではありません。上記の公式ページの規約が優先され、内容は変更されることがあります。
 
 #### カメラ管理
 
@@ -714,7 +736,7 @@ Poseタブの Shape Keys 一覧の先頭にある **😑 Auto Blink** で、VRM 
 
 #### Lipトラック
 
-**👄 Lip** トラックは、話す内容をテキストとして記録します。Lip キーフレームは、そのフレームから自分のテキストを話し始め、次の Lip キーフレームか発話の終わりで口を閉じます。テキストを空にしたキーフレームは、そこで口を閉じます。口形はタイムラインの時刻で決まるため、再生と WebM / MP4 / GIF の書き出しで同じフレームになります（書き出しには音声の音量が無いため、口の開きは一定量です）。他の非Poseトラックと同様、**プレビュー専用**で、エクスポートされる `.vrma` には含まれません。
+**👄 Lip** トラックは、話す内容をテキストとして記録します。Lip キーフレームは、そのフレームから自分のテキストを話し始め、次の Lip キーフレームか発話の終わりで口を閉じます。テキストを空にしたキーフレームは、そこで口を閉じます。口形はタイムラインの時刻で決まるため、再生と WebM / MP4 / GIF の書き出しで同じフレームになります（書き出しでは音声を再生しないため、口の開きは **T** のキーでは一定量、**A** のキーでは事前に解析した音量です）。新しいキーの音源は、Lip Sync 欄の **キーフレーム T/A** チェックボックスで決まります。**T** はテキストを記録し、**A** は選択中の音声ファイル名も記録します（キーを追加するときに解析するため、音声ファイルは Audio フォルダに残しておいてください）。S タブの口のレベル調整は両方に効きます。他の非Poseトラックと同様、**プレビュー専用**で、エクスポートされる `.vrma` には含まれません。
 
 #### Cameraトラック
 
@@ -949,7 +971,7 @@ A separate **Lip Sync Text** node (category *3D Pose*) passes a text input throu
 - **Frontend**: JavaScript + [Three.js r160](https://threejs.org/) + [@pixiv/three-vrm 2.1.0](https://github.com/pixiv/three-vrm) (bundled locally)
 - **Backend**: Python — Base64 PNG → PIL → Torch Tensor; `mask`/`inverted_mask` are derived from the composited pose layer's alpha channel
 - **Pose Library API**: aiohttp routes registered via `@PromptServer.instance.routes`; also serves `.vrma` binaries (`GET /pose_library/vrma_content`) and accepts server-side `.vrma` saves (`POST /pose_library/save_vrma`)
-- **Lip sync & audio API**: `pose_audio_server.py` serves `/pose_editor/audio/*` (list, file, delete) and `/pose_editor/tts/*` (generate, health, settings). Files go to `<output>/vrm_pose_editor/Audio/`. Lemonade is called through `http.client` (urllib always sends `Connection: close`, which broke long audio responses), and only loopback URLs are accepted.
+- **Lip sync & audio API**: `pose_audio_server.py` serves `/pose_editor/audio/*` (list, file, delete) and `/pose_editor/tts/*` (generate, health, settings, speakers). `engine` in the settings picks Lemonade or VOICEVOX; VOICEVOX is called as `POST /audio_query` then `POST /synthesis`, and the speaker list comes from `GET /speakers`. Files go to `<output>/vrm_pose_editor/Audio/`. Both engines are called through `http.client` (urllib always sends `Connection: close`, which broke long audio responses), and only loopback URLs are accepted. Mouth levels live in `js/lip_sync.js` (`localStorage` key `vrm_pose_editor.lip_levels`); for **A** Lip keys, `analyzeAudioFile()` decodes the audio and stores a 50 Hz loudness envelope that the core reads per frame.
 - **Keyframe Project Library API**: `GET/POST /kf_project/*` — timeline projects stored in `.kf_projects/`, same route pattern as the Light Library API
 - **Light Library API**: `GET/POST /light_library/*` — presets stored in `.light_library/` as `l_HHMMSS.json`
 - **Capture**: letterbox-cropped to output aspect ratio (no stretching)
@@ -997,4 +1019,8 @@ MIT License
 
 This repository does not include any SAM 3D Body code or model weights — the Image tab only calls ComfyUI's own native nodes through its HTTP API. The SAM 3D Body model is subject to its own license, which you accept when you download it. No 3D model is bundled either; screenshots use VRoid's sample model AvatarSample_F (redistribution and commercial use allowed, no credit required).
 
+VOICEVOX is not included either. The optional VOICEVOX integration only calls the engine you installed yourself through its HTTP API. VOICEVOX and each voice library have their own terms (including a required credit) — see <https://voicevox.hiroshiba.jp/term/> and <https://github.com/VOICEVOX/voicevox>.
+
 このリポジトリには SAM 3D Body のコードやモデルの重みは含まれていません（Imageタブは ComfyUI 本体のネイティブノードを HTTP API 経由で呼び出すだけです）。SAM 3D Body のモデルは、それぞれのライセンスに同意して各自で導入してください。3D モデルも同梱していません。スクリーンショットには VRoid のサンプルモデル AvatarSample_F（再配布・商用利用可、クレジット不要）を使用しています。
+
+VOICEVOX も同梱していません。任意の VOICEVOX 連携は、ユーザーが自分でインストールしたエンジンを HTTP API 経由で呼び出すだけです。VOICEVOX と各音声ライブラリにはそれぞれ独自の利用規約（クレジット表記を含む）があります。<https://voicevox.hiroshiba.jp/term/> と <https://github.com/VOICEVOX/voicevox> を参照してください。

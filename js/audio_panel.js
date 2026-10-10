@@ -2,6 +2,7 @@
 //
 // 「選択中の音声」は A タブと Lip Sync 行で共有する。音声ファイルは <output>/vrm_pose_editor/Audio に置かれる。
 import { fetchApi } from "./comfy_api.js";
+import { getLipLevels, setLipLevels, LIP_LEVEL_DEFAULTS } from "./lip_sync.js";
 
 // ---- 選択中の音声(A タブ・Lip Sync 行で共有) ----
 let _selected = null;
@@ -283,32 +284,133 @@ export function buildSettingsTab() {
         return wrap;
     };
 
+    // VOICEVOX: 話者一覧はエンジンから取得する(/pose_editor/tts/speakers)
+    const vvSectionTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;", "VOICEVOX（音声作成）");
+    const vvBaseUrl = el("input", inputStyle);
+    vvBaseUrl.placeholder = "http://127.0.0.1:50021";
+    const vvSpeaker = el("select", inputStyle);
+    let vvSpeakerId = "";
+    const setSpeakerOptions = (speakers, current) => {
+        const list = speakers.some(s => s.id === current) || !current
+            ? speakers : [{ id: current, name: `ID ${current}` }, ...speakers];
+        vvSpeaker.replaceChildren(...list.map(s => {
+            const opt = document.createElement("option");
+            opt.value = s.id;
+            opt.textContent = s.name;
+            return opt;
+        }));
+        if (list.length) vvSpeaker.value = current || list[0].id;
+    };
+    const reloadBtn = smallBtn("話者を更新", "#333344", "VOICEVOX から話者一覧を取得する");
+
+    const engine = el("select", inputStyle);
+    for (const [value, label] of [["lemonade", "Lemonade（Kokoro）"], ["voicevox", "VOICEVOX"]]) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        engine.append(opt);
+    }
+
     const btnRow = el("div", "display:flex;gap:6px;flex-wrap:wrap;");
     const saveBtn = smallBtn("保存", "#3a6a1a", "API 設定を保存する");
-    const testBtn = smallBtn("接続テスト", "#333344", "Lemonade の /api/v1/health に接続する");
+    const testBtn = smallBtn("接続テスト", "#333344", "選択中のエンジンに接続する");
     btnRow.append(saveBtn, testBtn);
 
     const status = el("div", "font-size:11px;color:#888;white-space:pre-wrap;word-break:break-all;");
     const note = el("div", "font-size:10px;color:#666;",
                     "保存先: output/vrm_pose_editor/api_settings.json（ComfyUI の output フォルダ）");
 
-    body.append(sectionTitle, field("Base URL", baseUrl), field("Model", model),
-                field("Voice（既定の声）", voice), btnRow, status, note);
+    const lemonadeBox = el("div", "display:flex;flex-direction:column;gap:8px;");
+    lemonadeBox.append(sectionTitle, field("Base URL", baseUrl), field("Model", model),
+                       field("Voice（既定の声）", voice));
+    const voicevoxBox = el("div", "display:flex;flex-direction:column;gap:8px;");
+    voicevoxBox.append(vvSectionTitle, field("Base URL", vvBaseUrl), field("話者（既定の声）", vvSpeaker), reloadBtn);
+    const updateEngineVisibility = () => {
+        lemonadeBox.style.display = engine.value === "lemonade" ? "flex" : "none";
+        voicevoxBox.style.display = engine.value === "voicevox" ? "flex" : "none";
+    };
+    engine.onchange = updateEngineVisibility;
+
+    // 口形（シェイプキー aa/ih/ou/ee/oh）の開きレベル。変更はすぐ反映され、このブラウザに保存される
+    const lipTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;margin-top:6px;border-top:1px solid #2a2a4a;padding-top:10px;",
+                        "口形（シェイプキー）のレベル");
+    const levelRow = (label, hint, key, min, max, step, digits) => {
+        const wrap = el("div", "display:flex;flex-direction:column;gap:3px;");
+        const value = el("span", "color:#8fd;");
+        const range = el("input", "width:100%;");
+        range.type = "range";
+        Object.assign(range, { min, max, step });
+        range.value = getLipLevels()[key];
+        const render = () => { value.textContent = Number(range.value).toFixed(digits); };
+        render();
+        range.oninput = () => { setLipLevels({ [key]: Number(range.value) }); render(); };
+        const resetBtn = smallBtn("既定", "#333344", `既定値（${LIP_LEVEL_DEFAULTS[key]}）に戻す`);
+        resetBtn.onclick = () => { range.value = LIP_LEVEL_DEFAULTS[key]; range.oninput(); };
+        const top = el("div", "display:flex;align-items:center;gap:6px;font-size:11px;color:#aaa;");
+        const labelEl = el("span", "flex:1;", label);
+        top.append(labelEl, value, resetBtn);
+        wrap.append(top, range, el("div", "font-size:10px;color:#666;", hint));
+        return wrap;
+    };
+    const levelBox = el("div", "display:flex;flex-direction:column;gap:8px;");
+    levelBox.append(
+        lipTitle,
+        levelRow("テキストで再生（T）: 口の開き", "0〜1。大きいほど口が大きく開く。キーフレームの T も同じ値を使う", "text", 0, 1, 0.05, 2),
+        levelRow("選択中の音声で再生（A）: 音量の倍率", "0〜3。大きいほど小さい声でも口が開く（結果は 1 で頭打ち）。キーフレームの A も同じ値を使う", "audio", 0, 3, 0.1, 1),
+    );
+
+    body.append(field("使用するエンジン", engine), lemonadeBox, voicevoxBox, btnRow, status, levelBox, note);
     root.append(head, body);
 
-    function fill(cfg) {
-        baseUrl.value = cfg.base_url ?? "";
-        model.value = cfg.model ?? "";
-        setVoiceOptions(cfg.voice ?? "");
+    function fill(settings) {
+        engine.value = settings.engine ?? "lemonade";
+        baseUrl.value = settings.lemonade.base_url ?? "";
+        model.value = settings.lemonade.model ?? "";
+        setVoiceOptions(settings.lemonade.voice ?? "");
+        vvBaseUrl.value = settings.voicevox.base_url ?? "";
+        vvSpeakerId = settings.voicevox.speaker ?? "";
+        setSpeakerOptions([], vvSpeakerId);
+        updateEngineVisibility();
     }
+
+    // 話者一覧の取得。失敗しても保存済みの話者 ID は選択肢に残す
+    async function loadSpeakers() {
+        try {
+            const res = await fetchApi("/pose_editor/tts/speakers");
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+            setSpeakerOptions(data.speakers, vvSpeaker.value || vvSpeakerId);
+            status.textContent = `話者 ${data.speakers.length} 件を取得しました。`;
+        } catch (e) {
+            status.textContent = `話者一覧を取得できませんでした: ${e.message}`;
+        }
+    }
+    reloadBtn.onclick = async () => {
+        // URL を変更した直後でも取得できるよう、先に VOICEVOX の接続先だけ保存する
+        status.textContent = "話者一覧を取得中…";
+        try {
+            const res = await fetchApi("/pose_editor/tts/settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ voicevox: { base_url: vvBaseUrl.value, speaker: vvSpeaker.value || vvSpeakerId || "3" } }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        } catch (e) {
+            status.textContent = `保存できませんでした: ${e.message}`;
+            return;
+        }
+        await loadSpeakers();
+    };
 
     async function load() {
         try {
             const res = await fetchApi("/pose_editor/tts/settings");
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            fill(data.settings.lemonade);
+            fill(data.settings);
             status.textContent = "";
+            if (data.settings.engine === "voicevox") await loadSpeakers();
         } catch (e) {
             status.textContent = `設定を読み込めませんでした: ${e.message}`;
         }
@@ -321,12 +423,17 @@ export function buildSettingsTab() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    engine: engine.value,
                     lemonade: { base_url: baseUrl.value, model: model.value, voice: voice.value },
+                    voicevox: { base_url: vvBaseUrl.value, speaker: vvSpeaker.value || vvSpeakerId || "3" },
                 }),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-            fill(data.settings.lemonade);
+            const keep = vvSpeaker.value;
+            const options = [...vvSpeaker.options].map(o => ({ id: o.value, name: o.textContent }));
+            fill(data.settings);
+            setSpeakerOptions(options, keep);
             status.textContent = "保存しました。";
         } catch (e) {
             status.textContent = `保存できませんでした: ${e.message}`;

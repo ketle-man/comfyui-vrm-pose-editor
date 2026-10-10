@@ -1,7 +1,8 @@
 """
 Pose Audio Server
 - 音声ファイルの管理: <output>/vrm_pose_editor/Audio の一覧・配信・削除(A タブ)
-- テキストから音声を作成: Lemonade の OpenAI 互換 /api/v1/audio/speech を呼び、Audio フォルダへ保存
+- テキストから音声を作成: 設定で選んだエンジン(Lemonade / VOICEVOX)を呼び、Audio フォルダへ保存
+    Lemonade: OpenAI 互換 /api/v1/audio/speech / VOICEVOX: /audio_query → /synthesis
 - API 設定: <output>/vrm_pose_editor/api_settings.json に保存(S タブ)
 
 ファイル名は英数字・_・- と .mp3/.wav に限定し、Audio フォルダの外を指せないようにする。
@@ -28,6 +29,8 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,120}\.(mp3|wav)$")
 MAX_TEXT_LEN = 2000
 MAX_SETTING_LEN = 200
 DEFAULT_LEMONADE = {"base_url": "http://127.0.0.1:13305", "model": "kokoro-v1", "voice": "jf_alpha"}
+DEFAULT_VOICEVOX = {"base_url": "http://127.0.0.1:50021", "speaker": "3"}
+ENGINES = ("lemonade", "voicevox")
 
 
 def _out_root() -> Path:
@@ -78,13 +81,18 @@ def _load_settings() -> dict:
         data = json.loads(_settings_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    lemonade = dict(DEFAULT_LEMONADE)
-    saved = data.get("lemonade") if isinstance(data, dict) else None
-    if isinstance(saved, dict):
-        for key in DEFAULT_LEMONADE:
-            if isinstance(saved.get(key), str) and saved[key].strip():
-                lemonade[key] = saved[key].strip()
-    return {"lemonade": lemonade}
+    if not isinstance(data, dict):
+        data = {}
+    result = {"engine": data.get("engine") if data.get("engine") in ENGINES else "lemonade"}
+    for name, defaults in (("lemonade", DEFAULT_LEMONADE), ("voicevox", DEFAULT_VOICEVOX)):
+        cfg = dict(defaults)
+        saved = data.get(name)
+        if isinstance(saved, dict):
+            for key in defaults:
+                if isinstance(saved.get(key), str) and saved[key].strip():
+                    cfg[key] = saved[key].strip()
+        result[name] = cfg
+    return result
 
 
 def _http_request(url: str, method: str = "GET", body: bytes | None = None,
@@ -119,6 +127,23 @@ def _call_lemonade_speech(cfg: dict, text: str, voice: str) -> bytes:
     if not data:
         raise RuntimeError("Lemonade から空の音声が返りました")
     return data
+
+
+def _call_voicevox_speech(cfg: dict, text: str, speaker: str) -> bytes:
+    base = cfg["base_url"].rstrip("/")
+    q = urllib.parse.urlencode({"text": text, "speaker": speaker})
+    status, data = _http_request(base + "/audio_query?" + q, "POST", b"", {"Content-Length": "0"}, timeout=60)
+    if status != 200:
+        log.warning("VOICEVOX audio_query failed: HTTP %s %s", status, data.decode("utf-8", "replace")[:300])
+        raise RuntimeError(f"VOICEVOX の audio_query に失敗しました（HTTP {status}）")
+    status, wav = _http_request(base + "/synthesis?" + urllib.parse.urlencode({"speaker": speaker}), "POST", data,
+                                {"Content-Type": "application/json", "Content-Length": str(len(data))})
+    if status != 200:
+        log.warning("VOICEVOX synthesis failed: HTTP %s %s", status, wav.decode("utf-8", "replace")[:300])
+        raise RuntimeError(f"VOICEVOX が音声を返しませんでした（HTTP {status}）")
+    if not wav:
+        raise RuntimeError("VOICEVOX から空の音声が返りました")
+    return wav
 
 
 def _http_get_status(url: str, timeout: float = 5) -> str:
@@ -162,7 +187,7 @@ async def audio_delete(request):
 
 @ROUTES.post("/pose_editor/tts/generate")
 async def tts_generate(request):
-    """POST /pose_editor/tts/generate {text, voice?} — Lemonade で音声を作成し Audio フォルダへ保存"""
+    """POST /pose_editor/tts/generate {text, voice?} — 設定のエンジンで音声を作成し Audio フォルダへ保存"""
     body = await request.json()
     text = str(body.get("text", "")).strip()
     if not text:
@@ -170,24 +195,33 @@ async def tts_generate(request):
     if len(text) > MAX_TEXT_LEN:
         return web.json_response({"error": f"テキストは {MAX_TEXT_LEN} 文字以内にしてください"}, status=400)
 
-    cfg = _load_settings()["lemonade"]
+    settings = _load_settings()
+    engine = settings["engine"]
+    cfg = settings[engine]
     err = _base_url_error(cfg["base_url"])
     if err:
         return web.json_response({"error": err}, status=400)
-    voice = str(body.get("voice") or cfg["voice"]).strip() or cfg["voice"]
-    voice_tag = re.sub(r"[^A-Za-z0-9_\-]", "", voice)[:32] or "voice"
+    if engine == "voicevox":
+        voice = str(body.get("voice") or cfg["speaker"]).strip() or cfg["speaker"]
+        if not voice.isdigit():
+            return web.json_response({"error": "VOICEVOX の話者 ID は数字で指定してください"}, status=400)
+        voice_tag, ext, call = f"vv{voice}", "wav", _call_voicevox_speech
+    else:
+        voice = str(body.get("voice") or cfg["voice"]).strip() or cfg["voice"]
+        voice_tag = re.sub(r"[^A-Za-z0-9_\-]", "", voice)[:32] or "voice"
+        ext, call = "mp3", _call_lemonade_speech
     try:
-        audio = await asyncio.to_thread(_call_lemonade_speech, cfg, text, voice)
+        audio = await asyncio.to_thread(call, cfg, text, voice)
     except Exception:  # noqa: BLE001 — 詳細はログへ。利用者には一般的な文言のみ返す
-        log.exception("Lemonade speech generation failed")
+        log.exception("%s speech generation failed", engine)
         return web.json_response({"error": "音声の作成に失敗しました（サーバーのログを確認してください）"}, status=502)
 
     out_dir = _audio_dir()
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = f"tts_{stamp}_{voice_tag}.mp3"
+    name = f"tts_{stamp}_{voice_tag}.{ext}"
     n = 1
     while (out_dir / name).exists():
-        name = f"tts_{stamp}_{voice_tag}_{n}.mp3"
+        name = f"tts_{stamp}_{voice_tag}_{n}.{ext}"
         n += 1
     (out_dir / name).write_bytes(audio)
     return web.json_response({"name": name, "size": len(audio)})
@@ -196,17 +230,38 @@ async def tts_generate(request):
 @ROUTES.get("/pose_editor/tts/health")
 async def tts_health(request):
     """GET /pose_editor/tts/health — Lemonade に接続できるか確認(S タブの接続テスト)"""
-    cfg = _load_settings()["lemonade"]
+    settings = _load_settings()
+    engine = settings["engine"]
+    cfg = settings[engine]
     err = _base_url_error(cfg["base_url"])
     if err:
         return web.json_response({"ok": False, "error": err})
-    url = cfg["base_url"].rstrip("/") + "/api/v1/health"
+    url = cfg["base_url"].rstrip("/") + ("/version" if engine == "voicevox" else "/api/v1/health")
     try:
         status = await asyncio.to_thread(_http_get_status, url)
     except Exception:  # noqa: BLE001
-        log.exception("Lemonade health check failed")
+        log.exception("%s health check failed", engine)
         return web.json_response({"ok": False, "error": "接続できませんでした（サーバーのログを確認してください）"})
     return web.json_response({"ok": True, "status": status})
+
+
+@ROUTES.get("/pose_editor/tts/speakers")
+async def tts_speakers(request):
+    """GET /pose_editor/tts/speakers — VOICEVOX の話者(スタイル)一覧 [{id, name}]"""
+    cfg = _load_settings()["voicevox"]
+    err = _base_url_error(cfg["base_url"])
+    if err:
+        return web.json_response({"error": err}, status=400)
+    try:
+        status, data = await asyncio.to_thread(_http_request, cfg["base_url"].rstrip("/") + "/speakers", "GET", None, None, 10)
+        if status != 200:
+            raise RuntimeError(f"HTTP {status}")
+        speakers = [{"id": str(st["id"]), "name": f"{sp['name']}（{st['name']}）"}
+                    for sp in json.loads(data) for st in sp.get("styles", [])]
+    except Exception:  # noqa: BLE001
+        log.exception("VOICEVOX speakers fetch failed")
+        return web.json_response({"error": "話者一覧を取得できませんでした"}, status=502)
+    return web.json_response({"speakers": speakers})
 
 
 @ROUTES.get("/pose_editor/tts/settings")
@@ -217,24 +272,33 @@ async def tts_settings_get(request):
 
 @ROUTES.post("/pose_editor/tts/settings")
 async def tts_settings_post(request):
-    """POST /pose_editor/tts/settings {lemonade: {base_url, model, voice}} — API 設定を保存"""
+    """POST /pose_editor/tts/settings {engine?, lemonade?: {...}, voicevox?: {base_url, speaker}} — API 設定を保存"""
     body = await request.json()
-    lemonade = body.get("lemonade") if isinstance(body, dict) else None
-    if not isinstance(lemonade, dict):
-        return web.json_response({"error": "lemonade の設定がありません"}, status=400)
-
-    cleaned = {}
-    for key in DEFAULT_LEMONADE:
-        value = str(lemonade.get(key, "")).strip()
-        if not value or len(value) > MAX_SETTING_LEN:
-            return web.json_response({"error": f"{key} が空、または長すぎます"}, status=400)
-        cleaned[key] = value
-    err = _base_url_error(cleaned["base_url"])
-    if err:
-        return web.json_response({"error": err}, status=400)
-    cleaned["base_url"] = cleaned["base_url"].rstrip("/")
-
+    if not isinstance(body, dict):
+        return web.json_response({"error": "設定が不正です"}, status=400)
     current = _load_settings()
-    current["lemonade"] = cleaned
+    if "engine" in body:
+        if body["engine"] not in ENGINES:
+            return web.json_response({"error": "engine が不正です"}, status=400)
+        current["engine"] = body["engine"]
+    for name, defaults in (("lemonade", DEFAULT_LEMONADE), ("voicevox", DEFAULT_VOICEVOX)):
+        incoming = body.get(name)
+        if incoming is None:
+            continue
+        if not isinstance(incoming, dict):
+            return web.json_response({"error": f"{name} の設定が不正です"}, status=400)
+        cleaned = {}
+        for key in defaults:
+            value = str(incoming.get(key, "")).strip()
+            if not value or len(value) > MAX_SETTING_LEN:
+                return web.json_response({"error": f"{name}.{key} が空、または長すぎます"}, status=400)
+            cleaned[key] = value
+        err = _base_url_error(cleaned["base_url"])
+        if err:
+            return web.json_response({"error": err}, status=400)
+        cleaned["base_url"] = cleaned["base_url"].rstrip("/")
+        if name == "voicevox" and not cleaned["speaker"].isdigit():
+            return web.json_response({"error": "speaker は数字の話者 ID で指定してください"}, status=400)
+        current[name] = cleaned
     _settings_path().write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
     return web.json_response({"settings": current})
