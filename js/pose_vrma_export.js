@@ -1,5 +1,7 @@
 import { loadEditorSettings, saveEditorSettings } from './default_model.js';
 import { fetchApi } from './comfy_api.js';
+import { fetchAudioFile, getSelectedAudio } from './audio_panel.js';
+import { analyzeAudioFile } from './lip_sync.js';
 
 /**
  * VRMA Keyframe Panel (フレームベース)
@@ -972,13 +974,41 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     // Lip トラック: キーフレームのテキストを、そのフレームから話す(次の Lip キーフレームまで)。
     // 口形はタイムラインの時刻(フレーム/fps)で決まるので、再生・書き出しでも同じ位置に出る
+    //   音源は Lip Sync 欄の T/A で切り替える。T はテキストだけ、A は選択中の音声(Audio フォルダのファイル名)も記録する。
+    //   A の音声は音量を事前に解析して口の開きに使う(再生・書き出しは音声を鳴らさない)
+    const _lipAudioCache = new Map();   // 音声ファイル名 → {id, duration, rate, env}(解析済み) / null(読込中・失敗)
+    function getLipAudioEnv(name) {
+        if (_lipAudioCache.has(name)) return _lipAudioCache.get(name);
+        _lipAudioCache.set(name, null);
+        fetchAudioFile(name).then(analyzeAudioFile).then(data => {
+            _lipAudioCache.set(name, { id: name, ...data });
+            applyLipForFrame(currentFrame);
+        }).catch(e => {
+            console.warn("[PoseEditor3D] Lip audio analysis failed:", name, e);
+            _lipAudioCache.delete(name);
+            statusMsg.textContent = `Lip 音声を解析できませんでした: ${name}`;
+        });
+        return null;
+    }
+
     function captureLipAtCurrentFrame() {
-        const text = editor.getLipSync?.().text ?? "";
+        const lip = editor.getLipSync?.() ?? {};
+        const text = lip.text ?? "";
+        const entry = { text };
+        if (lip.keyAudio) {
+            const name = getSelectedAudio();
+            if (!name) {
+                statusMsg.textContent = "Lip: A の音声がありません（A タブで音声を選択してください）";
+                return;
+            }
+            entry.audio = name;
+            getLipAudioEnv(name);
+        }
         const existing = keyframes.find(k => k.frame === currentFrame);
         if (existing) {
-            existing.lip = { text };
+            existing.lip = entry;
         } else {
-            keyframes.push({ frame: currentFrame, lip: { text } });
+            keyframes.push({ frame: currentFrame, lip: entry });
             keyframes.sort((a, b) => a.frame - b.frame);
         }
         ensureTotalFrames();
@@ -1007,7 +1037,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             if (k.frame <= frame) cur = k;
             else break;
         }
-        editor.setLipKeyClip?.(cur?.lip.text ?? "", (cur?.frame ?? 0) / fps);
+        const audio = cur?.lip.audio ? getLipAudioEnv(cur.lip.audio) : null;
+        editor.setLipKeyClip?.(cur?.lip.text ?? "", (cur?.frame ?? 0) / fps, audio);
         editor.setLipTime?.(frame / fps);
     }
 

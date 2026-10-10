@@ -628,7 +628,21 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         const btnStop = mkBtn("■ 停止", "#6a2a2a");
         btnStop.onclick = () => editor.stopLipSync?.();
         btns.append(btnText, btnGen, btnAudio, btnStop);
-        body.append(ta, selLabel, btns, status);
+        // キーフレームの音源 T/A: OFF = T(テキスト) / ON = A(選択中の音声)。状態はエディタ側に持つので行を作り直しても戻らない
+        const keyLabel = el("label", {
+            style: "display:flex;align-items:center;gap:5px;font-size:11px;color:#ccc;cursor:pointer;user-select:none;",
+        });
+        keyLabel.title = "Lip トラックのキーフレーム追加の音源。OFF=T（Lip Sync 欄のテキスト）/ ON=A（選択中の音声。音量で口の開きを決める）";
+        const keyCheck = el("input", { type: "checkbox" });
+        keyCheck.checked = !!state.keyAudio;
+        const keyText = el("span", {});
+        const renderKey = () => {
+            keyText.textContent = keyCheck.checked ? "キーフレーム T/A: A（選択中の音声）" : "キーフレーム T/A: T（テキスト）";
+        };
+        renderKey();
+        keyCheck.addEventListener("change", () => { editor.setLipKeyAudio?.(keyCheck.checked); renderKey(); });
+        keyLabel.append(keyCheck, keyText);
+        body.append(ta, selLabel, btns, keyLabel, status);
         wrap.append(title, body);
         return wrap;
     }
