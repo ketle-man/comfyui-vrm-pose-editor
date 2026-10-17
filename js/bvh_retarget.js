@@ -37,6 +37,36 @@ function qArc(from, to) {
     }
     return qNorm([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0], 1 + d]);
 }
+const vCross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const vDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+// 回転行列(列ベクトル x,y,z の3本)→ クォータニオン
+function qFromBasis(x, y, z) {
+    const m00 = x[0], m10 = x[1], m20 = x[2], m01 = y[0], m11 = y[1], m21 = y[2], m02 = z[0], m12 = z[1], m22 = z[2];
+    const tr = m00 + m11 + m22;
+    let q;
+    if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; q = [(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, s / 4]; }
+    else if (m00 > m11 && m00 > m22) { const s = Math.sqrt(1 + m00 - m11 - m22) * 2; q = [s / 4, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s]; }
+    else if (m11 > m22) { const s = Math.sqrt(1 + m11 - m00 - m22) * 2; q = [(m01 + m10) / s, s / 4, (m12 + m21) / s, (m02 - m20) / s]; }
+    else { const s = Math.sqrt(1 + m22 - m00 - m11) * 2; q = [(m02 + m20) / s, (m12 + m21) / s, s / 4, (m10 - m01) / s]; }
+    return qNorm(q);
+}
+// 主ベクトル(t1→b1)を厳密に、副ベクトル(t2→b2)を主ベクトルに直交する成分で合わせる回転(ひねりまで合わせる)
+function qFrameAlign(t1, t2, b1, b2) {
+    const frame = (a, c) => {
+        const x = vNorm(a);
+        const cp = vDot(c, x);
+        const y = vNorm([c[0] - x[0] * cp, c[1] - x[1] * cp, c[2] - x[2] * cp]);
+        return [x, y, vCross(x, y)];
+    };
+    const T = frame(t1, t2), B = frame(b1, b2);
+    // R = B * T^T の各列(T の基底ベクトル → B の基底ベクトル)
+    const col = (e) => { // R * e (e は標準基底)
+        let r = [0, 0, 0];
+        for (let i = 0; i < 3; i++) { const k = vDot(T[i], e); r = [r[0] + B[i][0] * k, r[1] + B[i][1] * k, r[2] + B[i][2] * k]; }
+        return r;
+    };
+    return qFromBasis(col([1, 0, 0]), col([0, 1, 0]), col([0, 0, 1]));
+}
 // BVH の Zrotation Xrotation Yrotation(度) → R = Rz * Rx * Ry
 const eulerZXY = (zDeg, xDeg, yDeg) => qMul(qMul(qAxis([0, 0, 1], zDeg), qAxis([1, 0, 0], xDeg)), qAxis([0, 1, 0], yDeg));
 
@@ -79,6 +109,9 @@ export function parseBvh(text) {
 
 // ---- MHR → VRM 対応表 ----
 // j: MHR 関節(そのワールド回転を使う) / to: ボーン方向を決める子関節(バインド上) / T: VRM の T ポーズでのボーン方向
+// ref: ひねり(ボーン軸まわりの回転)も合わせたいボーンの第2ベクトル。{ from, to, T } = MHR バインド上の from→to の向きを
+//      VRM の T ポーズでの向き T に合わせる(腕: 小指の付け根→人差し指の付け根 = T ポーズでは +Z=手のひらを下にして親指側が前)。
+//      上腕・前腕・手の3つに同じ基準を使い、手首・肘で補正のひねりが溜まらないようにする
 // VRM1 正準: +Z が正面、キャラクターの左が +X
 const UP = [0, 1, 0], DOWN = [0, -1, 0], FWD = [0, 0, 1];
 const LX = [1, 0, 0], RX = [-1, 0, 0];
@@ -90,13 +123,13 @@ export const VRM_BONE_MAP = {
     neck:          { j: 110, to: 113,  T: UP, parent: 'upperChest' },
     head:          { j: 113, to: 126,  T: UP, parent: 'neck' },
     leftShoulder:  { j: 74,  to: 75,   T: LX, parent: 'upperChest' },
-    leftUpperArm:  { j: 75,  to: 76,   T: LX, parent: 'leftShoulder' },
-    leftLowerArm:  { j: 76,  to: 77,   T: LX, parent: 'leftUpperArm' },
-    leftHand:      { j: 78,  to: 88,   T: LX, parent: 'leftLowerArm' },
+    leftUpperArm:  { j: 75,  to: 76,   T: LX, parent: 'leftShoulder', ref: { from: 79, to: 92, T: FWD } },
+    leftLowerArm:  { j: 76,  to: 77,   T: LX, parent: 'leftUpperArm', ref: { from: 79, to: 92, T: FWD } },
+    leftHand:      { j: 78,  to: 88,   T: LX, parent: 'leftLowerArm', ref: { from: 79, to: 92, T: FWD } },
     rightShoulder: { j: 38,  to: 39,   T: RX, parent: 'upperChest' },
-    rightUpperArm: { j: 39,  to: 40,   T: RX, parent: 'rightShoulder' },
-    rightLowerArm: { j: 40,  to: 41,   T: RX, parent: 'rightUpperArm' },
-    rightHand:     { j: 42,  to: 52,   T: RX, parent: 'rightLowerArm' },
+    rightUpperArm: { j: 39,  to: 40,   T: RX, parent: 'rightShoulder', ref: { from: 43, to: 56, T: FWD } },
+    rightLowerArm: { j: 40,  to: 41,   T: RX, parent: 'rightUpperArm', ref: { from: 43, to: 56, T: FWD } },
+    rightHand:     { j: 42,  to: 52,   T: RX, parent: 'rightLowerArm', ref: { from: 43, to: 56, T: FWD } },
     leftUpperLeg:  { j: 2,   to: 3,    T: DOWN, parent: 'hips' },
     leftLowerLeg:  { j: 3,   to: 4,    T: DOWN, parent: 'leftUpperLeg' },
     leftFoot:      { j: 4,   to: 7,    T: FWD, parent: 'leftLowerLeg' },
@@ -112,7 +145,9 @@ const BONE_ORDER = Object.keys(VRM_BONE_MAP); // 親が先に並んでいる
 const _C = {};
 for (const [name, d] of Object.entries(VRM_BONE_MAP)) {
     if (d.to == null) { _C[name] = [0, 0, 0, 1]; continue; }
-    _C[name] = qArc(d.T, vSub(MHR_BIND[d.to].p, MHR_BIND[d.j].p));
+    const bDir = vSub(MHR_BIND[d.to].p, MHR_BIND[d.j].p);
+    _C[name] = d.ref ? qFrameAlign(d.T, d.ref.T, bDir, vSub(MHR_BIND[d.ref.to].p, MHR_BIND[d.ref.from].p))
+                     : qArc(d.T, bDir);
 }
 
 // ---- リターゲット本体 ----
