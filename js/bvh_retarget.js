@@ -384,7 +384,16 @@ function retargetNamedBvh(bvh, opts = {}) {
         const from = P[byName.get(NAMED_BONES[b])];
         const spec = NAMED_TO[b];
         const to = spec ? toPoint(spec) : null;
-        C[b] = to ? qArc(T, vSub(to, from)) : [0, 0, 0, 1];
+        const bDir = to ? vSub(to, from) : null;
+        // 腕・手首は手のひらの向き(小指の付け根→人差し指の付け根)も合わせて、ひねりを含めた補正にする。
+        // 上腕・前腕・手で同じ基準を使い、手首・肘に補正のひねりが溜まらないようにする(SAM3DBody の経路と同じ考え方)
+        const side = b.startsWith('left') ? 'l' : b.startsWith('right') ? 'r' : null;
+        const pk = side && /(UpperArm|LowerArm|Hand)$/.test(b) ? toPoint(`${side}Pinky1`) : null;
+        const ix = pk ? toPoint(`${side}Index1`) : null;
+        const palm = pk && ix ? vSub(ix, pk) : null;
+        C[b] = !to ? [0, 0, 0, 1]
+            : palm && Math.abs(vDot(vNorm(palm), vNorm(bDir))) < 0.9 ? qFrameAlign(T, FWD, bDir, palm)
+            : qArc(T, bDir);
     }
 
     // 腰高(バインドの腰から足裏まで)で位置の倍率を決める。単位に依らない比にする
