@@ -189,6 +189,9 @@ const _C0 = buildCorrection(null);
 // opts.restDirs: ボーン名 → その VRM のレスト方向(VRM1 正準空間)。指など T ポーズでも向きがモデルごとに違うボーン用
 // opts.rootYawDeg: 全体を Y 軸まわりに回す角度(度)。映像内で人物がカメラを向くとき VRM を +Z 向きにそろえる補正
 // opts.hipsScale: Hips 移動量の倍率(VRM の腰高 / BVH 被写体の腰高)。省略時 1(メートル相当)
+// opts.legRest: 脚ボーンのレスト時の親からのオフセット {leftUpperLeg:[x,y,z], ...}(VRM1 正準空間, メートル)。あれば接地補正をかける
+// opts.groundSnap: [吸着する高さ, 補正が 0 になる高さ] メートル(既定 [0.15, 0.35])
+// opts.groundFeet: false で接地補正を無効化(既定 true)。最初のフレームの姿勢に依らず足が床に着くよう、腰の高さを足の位置から合わせる
 // opts.hipsMotion: false で Hips の移動を出力しない。配列 [x,y,z] で軸ごとの倍率(例 [1,1,0] = 奥行きを無視)
 // 戻り値: { fps, duration, frames, keyframes:[{time, bones:{name:{qx,qy,qz,qw}}}], hips:[[x,y,z]...] (最初のフレーム基準の移動量[m]) }
 // hips の移動量は keyframes[].bones.hips の px,py,pz(レストからの移動量[m])にも入る(exportVrma が腰の位置トラックにする)
@@ -215,6 +218,7 @@ export function retargetBvh(bvh, opts = {}) {
 
     const keyframes = [];
     const hips = [];
+    const legW = []; // フレームごとの脚チェーンのワールド回転(接地補正用)
     let p0 = null;
     const G = new Array(joints.length);
     for (let f = 0; f < bvh.frames; f++) {
@@ -237,6 +241,7 @@ export function retargetBvh(bvh, opts = {}) {
             bones[b] = { qx: l[0], qy: l[1], qz: l[2], qw: l[3] };
         }
         keyframes.push({ time: f * bvh.frameTime, bones });
+        legW.push(W);
 
         const rj = joints[0];
         const pos = [row[rj.chOffset], row[rj.chOffset + 1], row[rj.chOffset + 2]].map(v => v * 0.01); // cm → m
@@ -245,7 +250,61 @@ export function retargetBvh(bvh, opts = {}) {
         hips.push(dlt);
         if (hm && bones.hips) Object.assign(bones.hips, { px: dlt[0] * hm[0], py: dlt[1] * hm[1], pz: dlt[2] * hm[2] });
     }
+    if (hm && opts.legRest && opts.groundFeet !== false) groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap);
     return { fps: bvh.fps, duration: (bvh.frames - 1) * bvh.frameTime, frames: bvh.frames, keyframes, hips };
+}
+
+// ---- 接地補正 ----
+// 単眼動画から出る腰の高さは、最初のフレームを基準にした相対値(最初のフレームが開脚・しゃがみでも立ち姿の腰高になる)ため、
+// 足がまとめて浮く/沈む。脚チェーンを VRM のレスト寸法で FK して足の最下点の高さを求め、
+//   1) 全体オフセット: 最下点の下位 5% が床に着くように腰を上下する
+//   2) フレームごと: 床から snap[0](15cm)以内は床に吸着、snap[1](35cm)まで補正を弱める(それ以上浮くジャンプは残す)。軽く平滑化
+//      推定誤差で数 cm〜十数 cm 浮くことが多く、本当の跳躍(30cm 超)は少ないため広めに取る
+// 横方向の足の滑りは補正しない(接地中の水平速度は中央値 0.1m/s 程度で小さい)
+function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
+    const chains = [['leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'leftToes'], ['rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'rightToes']];
+    if (!chains.every(c => rest[c[0]] && rest[c[1]] && rest[c[2]])) return;
+    // 腰を原点にした足の最下点の高さ(y)。toes が無ければ foot のみ
+    const lowest = (W) => {
+        let m = Infinity;
+        for (const c of chains) {
+            let pos = [0, 0, 0];
+            let parentRot = W.hips ?? [0, 0, 0, 1];
+            for (const b of c) {
+                if (!rest[b]) break;
+                const off = qRotVec(parentRot, rest[b]);
+                pos = [pos[0] + off[0], pos[1] + off[1], pos[2] + off[2]];
+                if (b.endsWith('Foot') || b.endsWith('Toes')) m = Math.min(m, pos[1]);
+                parentRot = W[b] ?? parentRot;
+            }
+        }
+        return m;
+    };
+    const ID = {};
+    for (const c of chains) for (const b of c) ID[b] = [0, 0, 0, 1];
+    ID.hips = [0, 0, 0, 1];
+    const restLow = lowest(ID); // レスト(立ち姿・足は床に接地)の最下点
+    const n = keyframes.length;
+    // 腰の高さ(レストの腰位置 + 移動量)を含む足の最下点の、レストからの高さ
+    const h = keyframes.map((_, f) => hips[f][1] + lowest(legW[f]) - restLow);
+    const sorted = [...h].sort((a, b) => a - b);
+    const g = -sorted[Math.floor(0.05 * (n - 1))]; // 下位 5% が床に着くオフセット
+    const raw = h.map(v => v + g);
+    // 床から近いフレームは吸着、離れるほど補正を弱める
+    const corr = raw.map(v => {
+        const a = Math.abs(v);
+        const w = a <= snap[0] ? 1 : a >= snap[1] ? 0 : 1 - (a - snap[0]) / (snap[1] - snap[0]);
+        return -v * w;
+    });
+    // 3 点ガウス平滑(2 回)
+    let c = corr;
+    for (let k = 0; k < 2; k++) c = c.map((v, i) => 0.25 * (c[Math.max(0, i - 1)] + c[Math.min(n - 1, i + 1)]) + 0.5 * v);
+    for (let f = 0; f < n; f++) {
+        const dy = g + c[f];
+        hips[f][1] += dy;
+        const hb = keyframes[f].bones.hips;
+        if (hb && hb.py !== undefined) hb.py = hips[f][1] * hm[1];
+    }
 }
 
 // VRM1 正準空間のキーフレームを VRM0 モデル用(exportVrma が x,z を反転して正準化する前提)に変換する
@@ -272,7 +331,8 @@ export async function bvhTextToVrmaBuffer(editor, text, opts = {}) {
     const subjectHipsY = bvh.joints[0].offset[1] * 0.01;
     const hipsScale = restHips && subjectHipsY > 0.1 ? restHips[1] / subjectHipsY : 1;
     const restDirs = restFingerDirs(editor.getVRM?.());
-    const result = retargetBvh(bvh, { availableBones, hipsScale, restDirs, ...opts });
+    const legRest = restLegOffsets(editor.getVRM?.());
+    const result = retargetBvh(bvh, { availableBones, hipsScale, restDirs, legRest, ...opts });
     const isVrm0 = editor.getVRM?.()?.meta?.metaVersion === '0';
     const kfs = isVrm0 ? keyframesToVrm0(result.keyframes) : result.keyframes;
     return editor.exportVrma(kfs);
@@ -295,4 +355,21 @@ function restFingerDirs(vrm) {
         if (Math.hypot(...v) > 1e-6) dirs[name] = vNorm(v);
     }
     return dirs;
+}
+
+// 脚ボーンのレスト時の親からのオフセット(VRM1 正準空間。VRM0 は X,Z 反転)。接地補正の FK 用
+function restLegOffsets(vrm) {
+    const hum = vrm?.humanoid;
+    if (!hum) return null;
+    const flip = vrm.meta?.metaVersion === '0';
+    const out = {};
+    for (const side of ['left', 'right']) {
+        for (const b of ['UpperLeg', 'LowerLeg', 'Foot', 'Toes']) {
+            const node = hum.getNormalizedBoneNode(side + b);
+            if (!node) continue;
+            const p = node.position;
+            out[side + b] = [flip ? -p.x : p.x, p.y, flip ? -p.z : p.z];
+        }
+    }
+    return out;
 }
