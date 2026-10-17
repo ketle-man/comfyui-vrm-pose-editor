@@ -67,8 +67,11 @@ function qFrameAlign(t1, t2, b1, b2) {
     };
     return qFromBasis(col([1, 0, 0]), col([0, 1, 0]), col([0, 0, 1]));
 }
-// BVH の Zrotation Xrotation Yrotation(度) → R = Rz * Rx * Ry
-const eulerZXY = (zDeg, xDeg, yDeg) => qMul(qMul(qAxis([0, 0, 1], zDeg), qAxis([1, 0, 0], xDeg)), qAxis([0, 1, 0], yDeg));
+// BVH の回転チャンネル(度)。チャンネルの並び順に R = R1 * R2 * R3(例: Zrotation Xrotation Yrotation → Rz * Rx * Ry)
+const AXES = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
+const eulerByOrder = (order, a, b, c) =>
+    qMul(qMul(qAxis(AXES[order[0]], a), qAxis(AXES[order[1]], b)), qAxis(AXES[order[2]], c));
+const rotOrder = (channels) => channels.slice(-3).map(n => n[0].toUpperCase());
 
 // ---- BVH パーサ ----
 export function parseBvh(text) {
@@ -82,13 +85,17 @@ export function parseBvh(text) {
         let m;
         if ((m = /^(ROOT|JOINT)\s+(\S+)/.exec(s))) {
             const parent = stack.length ? stack[stack.length - 1] : -1;
-            cur = { name: m[2], parent, channels: [], chOffset: 0, mhr: null, offset: [0, 0, 0] };
+            cur = { name: m[2], parent, channels: [], chOffset: 0, mhr: null, offset: [0, 0, 0], endOffset: null };
             joints.push(cur);
             stack.push(joints.length - 1);
             m = /^joint_(\d+)$/.exec(cur.name);
             cur.mhr = m ? parseInt(m[1], 10) : (parent < 0 ? 1 : null);
         } else if (s.startsWith('End Site')) {
             stack.push(-2);
+        } else if (s.startsWith('OFFSET') && stack[stack.length - 1] === -2) {
+            // End Site のオフセット(葉の骨の向き・長さ)。親関節に最初の1つだけ記録する
+            const owner = stack[stack.length - 2];
+            if (owner >= 0 && !joints[owner].endOffset) joints[owner].endOffset = s.split(/\s+/).slice(1, 4).map(Number);
         } else if (s.startsWith('OFFSET') && stack[stack.length - 1] >= 0) {
             joints[stack[stack.length - 1]].offset = s.split(/\s+/).slice(1, 4).map(Number);
         } else if ((m = /^CHANNELS\s+(\d+)\s+(.*)$/.exec(s))) {
@@ -104,7 +111,18 @@ export function parseBvh(text) {
     const frameTime = parseFloat(/Frame Time:\s*([\d.eE+-]+)/.exec(lines[1])[1]);
     const data = [];
     for (let i = 0; i < frames; i++) data.push(lines[2 + i].trim().split(/\s+/).map(Number));
-    return { joints, frames, frameTime, fps: 1 / frameTime, channelCount: off, data };
+    // 種類: SAM3DBody(ルート Hips + joint_NNN)か、名前つきの一般的な BVH(CMU/Daz など)か
+    const kind = joints.length > 1 && joints.slice(1).every(j => /^joint_\d+$/.test(j.name)) ? 'sam3d' : 'named';
+    return { joints, frames, frameTime, fps: 1 / frameTime, channelCount: off, data, kind };
+}
+
+// ヘッダだけを読んで BVH の概要を返す(ダイアログの表示用。全フレームのパースはしない)
+export function peekBvh(text) {
+    const frames = parseInt(/Frames:\s*(\d+)/.exec(text)?.[1] ?? '0', 10);
+    const frameTime = parseFloat(/Frame Time:\s*([\d.eE+-]+)/.exec(text)?.[1] ?? '0');
+    const names = [...text.slice(0, text.search(/\bMOTION\b/) >>> 0 || undefined).matchAll(/(?:ROOT|JOINT)\s+(\S+)/g)].map(m => m[1]);
+    const kind = names.length > 1 && names.slice(1).every(n => /^joint_\d+$/.test(n)) ? 'sam3d' : 'named';
+    return { kind, frames, fps: frameTime > 0 ? 1 / frameTime : 0, durationSec: frames * frameTime };
 }
 
 // ---- MHR → VRM 対応表 ----
@@ -197,6 +215,7 @@ const _C0 = buildCorrection(null);
 // 戻り値: { fps, duration, frames, keyframes:[{time, bones:{name:{qx,qy,qz,qw}}}], hips:[[x,y,z]...] (最初のフレーム基準の移動量[m]) }
 // hips の移動量は keyframes[].bones.hips の px,py,pz(レストからの移動量[m])にも入る(exportVrma が腰の位置トラックにする)
 export function retargetBvh(bvh, opts = {}) {
+    if (bvh.kind === 'named') return retargetNamedBvh(bvh, opts);
     const avail = opts.availableBones ?? null;
     const _C = opts.restDirs ? buildCorrection(opts.restDirs) : _C0;
     const yaw = qAxis([0, 1, 0], opts.rootYawDeg ?? 0);
@@ -222,13 +241,14 @@ export function retargetBvh(bvh, opts = {}) {
     const legW = []; // フレームごとの脚チェーンのワールド回転(接地補正用)
     let p0 = null;
     const G = new Array(joints.length);
-    for (let f = 0; f < bvh.frames; f++) {
+    const frameIdx = selectFrames(bvh, opts);
+    for (const f of frameIdx) {
         const row = bvh.data[f];
         for (let i = 0; i < joints.length; i++) {
             const jt = joints[i];
             const ch = jt.channels;
-            const o = jt.chOffset + (ch.length - 3); // 末尾3つが回転(Z,X,Y の順)
-            const r = eulerZXY(row[o], row[o + 1], row[o + 2]);
+            const o = jt.chOffset + (ch.length - 3); // 末尾3つが回転(順序はチャンネル名から)
+            const r = eulerByOrder(rotOrder(ch), row[o], row[o + 1], row[o + 2]);
             G[i] = jt.parent >= 0 ? qMul(G[jt.parent], r) : r;
         }
         const W = {};
@@ -241,7 +261,7 @@ export function retargetBvh(bvh, opts = {}) {
             const l = qNorm(p ? qMul(qInv(W[p]), W[b]) : W[b]);
             bones[b] = { qx: l[0], qy: l[1], qz: l[2], qw: l[3] };
         }
-        keyframes.push({ time: f * bvh.frameTime, bones });
+        keyframes.push({ time: (f - frameIdx[0]) * bvh.frameTime, bones });
         legW.push(W);
 
         const rj = joints[0];
@@ -251,12 +271,180 @@ export function retargetBvh(bvh, opts = {}) {
         hips.push(dlt);
         if (hm && bones.hips) Object.assign(bones.hips, { px: dlt[0] * hm[0], py: dlt[1] * hm[1], pz: dlt[2] * hm[2] });
     }
+    postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has);
+    return { fps: bvh.fps, duration: (frameIdx[frameIdx.length - 1] - frameIdx[0]) * bvh.frameTime, frames: keyframes.length, keyframes, hips };
+}
+
+// 取り込む範囲の選択: opts.startSec / durationSec(0 または未指定 = 最後まで)で切り出し、
+// opts.maxFps(既定 30)を超えるフレームレートは等間隔に間引く(CMU の 120fps → 30fps など)。戻り値は元のフレーム番号の配列
+function selectFrames(bvh, opts) {
+    const ft = bvh.frameTime;
+    const start = Math.min(bvh.frames - 1, Math.max(0, Math.round((opts.startSec ?? 0) / ft)));
+    const dur = opts.durationSec ?? 0;
+    const end = dur > 0 ? Math.min(bvh.frames, start + Math.max(1, Math.round(dur / ft))) : bvh.frames;
+    const stride = Math.max(1, Math.round(bvh.fps / (opts.maxFps ?? 30)));
+    const idx = [];
+    for (let f = start; f < end; f += stride) idx.push(f);
+    if (!idx.length) idx.push(start);
+    return idx;
+}
+
+// 接地補正 → 足の水平化(骨格の種類に依らない共通の後処理)
+function postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has) {
     if (hm && opts.legRest && opts.groundFeet !== false) {
         const heights = groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap);
         if (heights && opts.flattenFeet !== false) flattenFeet(keyframes, legW, heights, parentOf, has);
     }
-    return { fps: bvh.fps, duration: (bvh.frames - 1) * bvh.frameTime, frames: bvh.frames, keyframes, hips };
 }
+
+// ---- 名前つき骨格(CMU / Daz など。回転ゼロが T ポーズで各軸が世界座標にそろった標準的な BVH) ----
+// 関節名 → VRM ボーン。r/l はキャラクターの右/左(正面 +Z のとき右が -X)。指は 2 関節(Distal は中節から合成)
+const NAMED_BONES = {
+    hips: 'hip', spine: 'abdomen', chest: 'chest', neck: 'neck', head: 'head',
+    leftShoulder: 'lCollar', leftUpperArm: 'lShldr', leftLowerArm: 'lForeArm', leftHand: 'lHand',
+    rightShoulder: 'rCollar', rightUpperArm: 'rShldr', rightLowerArm: 'rForeArm', rightHand: 'rHand',
+    leftUpperLeg: 'lThigh', leftLowerLeg: 'lShin', leftFoot: 'lFoot',
+    rightUpperLeg: 'rThigh', rightLowerLeg: 'rShin', rightFoot: 'rFoot',
+};
+// ボーンの向きを決める子(null = 補正なし)。'end:' は End Site の向き
+const NAMED_TO = {
+    hips: null, spine: 'chest', chest: 'neck', neck: 'head', head: null,
+    leftShoulder: 'lShldr', leftUpperArm: 'lForeArm', leftLowerArm: 'lHand', leftHand: 'lMid1',
+    rightShoulder: 'rShldr', rightUpperArm: 'rForeArm', rightLowerArm: 'rHand', rightHand: 'rMid1',
+    leftUpperLeg: 'lShin', leftLowerLeg: 'lFoot', leftFoot: 'end:lFoot',
+    rightUpperLeg: 'rShin', rightLowerLeg: 'rFoot', rightFoot: 'end:rFoot',
+};
+for (const [side, pre] of [['left', 'l'], ['right', 'r']]) {
+    Object.assign(NAMED_BONES, {
+        [`${side}ThumbProximal`]: `${pre}Thumb1`, [`${side}ThumbDistal`]: `${pre}Thumb2`,
+        [`${side}IndexProximal`]: `${pre}Index1`, [`${side}IndexIntermediate`]: `${pre}Index2`,
+        [`${side}MiddleProximal`]: `${pre}Mid1`, [`${side}MiddleIntermediate`]: `${pre}Mid2`,
+        [`${side}RingProximal`]: `${pre}Ring1`, [`${side}RingIntermediate`]: `${pre}Ring2`,
+        [`${side}LittleProximal`]: `${pre}Pinky1`, [`${side}LittleIntermediate`]: `${pre}Pinky2`,
+    });
+    Object.assign(NAMED_TO, {
+        [`${side}ThumbProximal`]: `${pre}Thumb2`, [`${side}ThumbDistal`]: `end:${pre}Thumb2`,
+        [`${side}IndexProximal`]: `${pre}Index2`, [`${side}IndexIntermediate`]: `end:${pre}Index2`,
+        [`${side}MiddleProximal`]: `${pre}Mid2`, [`${side}MiddleIntermediate`]: `end:${pre}Mid2`,
+        [`${side}RingProximal`]: `${pre}Ring2`, [`${side}RingIntermediate`]: `end:${pre}Ring2`,
+        [`${side}LittleProximal`]: `${pre}Pinky2`, [`${side}LittleIntermediate`]: `end:${pre}Pinky2`,
+    });
+}
+// この経路には upperChest が無い(neck と肩の親は chest)。親子関係は VRM_BONE_MAP と同じで、これだけ付け替える
+const NAMED_PARENT = { neck: 'chest', leftShoulder: 'chest', rightShoulder: 'chest' };
+// 指の先端(Distal)は中節の回転を 2/3 コピーして合成する(関節が 2 つしか無いため)
+const FINGER_DISTAL_SYNTH = 0.66;
+
+function retargetNamedBvh(bvh, opts = {}) {
+    const avail = opts.availableBones ?? null;
+    const yaw = qAxis([0, 1, 0], opts.rootYawDeg ?? 0);
+    const hm = opts.hipsMotion === false ? null : (Array.isArray(opts.hipsMotion) ? opts.hipsMotion : [1, 1, 1]);
+    const has = (b) => !avail || avail.has(b);
+    // 親は「このスケルトンから回転を作れるボーン」までさかのぼる(例: 指の Metacarpal は駆動しないのでレスト扱いで飛ばす)
+    let driven = null;
+    const parentOf = (b) => {
+        let p = NAMED_PARENT[b] ?? VRM_BONE_MAP[b].parent;
+        while (p && !(driven ? driven.has(p) : has(p))) p = NAMED_PARENT[p] ?? VRM_BONE_MAP[p].parent;
+        return p;
+    };
+    const joints = bvh.joints;
+    const byName = new Map(joints.map((j, i) => [j.name, i]));
+    const isSynthDistal = (b) => /^(left|right)(Index|Middle|Ring|Little)Distal$/.test(b);
+
+    // バインド(回転ゼロ)の関節位置 = オフセットの累積(世界座標にそろった T ポーズ)
+    const P = [];
+    joints.forEach((j, i) => {
+        const pp = j.parent >= 0 ? P[j.parent] : [0, 0, 0];
+        P[i] = [pp[0] + j.offset[0], pp[1] + j.offset[1], pp[2] + j.offset[2]];
+    });
+    const toPoint = (spec) => {
+        if (spec.startsWith('end:')) {
+            const i = byName.get(spec.slice(4));
+            const e = i != null ? joints[i].endOffset : null;
+            return i != null && e ? [P[i][0] + e[0], P[i][1] + e[1], P[i][2] + e[2]] : null;
+        }
+        const i = byName.get(spec);
+        return i != null ? P[i] : null;
+    };
+
+    const needed = BONE_ORDER.filter(b => has(b) && NAMED_BONES[b] && byName.has(NAMED_BONES[b]));
+    driven = new Set(needed);
+    for (const b of BONE_ORDER) if (isSynthDistal(b) && has(b) && driven.has(b.replace('Distal', 'Intermediate'))) driven.add(b);
+    if (!needed.includes('hips') || !needed.includes('leftUpperArm') || !needed.includes('leftUpperLeg')) {
+        throw new Error('Unsupported BVH skeleton: expected named joints like hip / lShldr / lThigh (CMU, Daz) or a SAM3DBody BVH.');
+    }
+    // VRM の T ポーズ方向(T)→ バインド方向への補正 C_b。バインドは世界軸にそろっているので、ワールド回転 G がそのまま差分になる
+    const C = {};
+    for (const b of needed) {
+        const T = opts.restDirs?.[b] ?? VRM_BONE_MAP[b].T;
+        const from = P[byName.get(NAMED_BONES[b])];
+        const spec = NAMED_TO[b];
+        const to = spec ? toPoint(spec) : null;
+        C[b] = to ? qArc(T, vSub(to, from)) : [0, 0, 0, 1];
+    }
+
+    // 腰高(バインドの腰から足裏まで)で位置の倍率を決める。単位に依らない比にする
+    const hipsI = byName.get(NAMED_BONES.hips);
+    const footEnd = byName.has('lFoot') ? toPoint('end:lFoot') : null;
+    const subjectHeight = footEnd ? P[hipsI][1] - footEnd[1] : P[hipsI][1];
+    const hipsScale = opts.hipsScale ?? (opts.vrmHipsHeight && subjectHeight > 0 ? opts.vrmHipsHeight / subjectHeight : 0.01);
+
+    const keyframes = [], hips = [], legW = [];
+    const G = new Array(joints.length);
+    const frameIdx = selectFrames(bvh, opts);
+    let p0 = null;
+    for (const f of frameIdx) {
+        const row = bvh.data[f];
+        for (let i = 0; i < joints.length; i++) {
+            const jt = joints[i];
+            const o = jt.chOffset + (jt.channels.length - 3);
+            const r = eulerByOrder(rotOrder(jt.channels), row[o], row[o + 1], row[o + 2]);
+            G[i] = jt.parent >= 0 ? qMul(G[jt.parent], r) : r;
+        }
+        const W = {}, bones = {};
+        for (const b of needed) {
+            const gi = byName.get(NAMED_BONES[b]);
+            W[b] = qNorm(qMul(yaw, qMul(G[gi], C[b])));
+            const p = parentOf(b);
+            const l = qNorm(p ? qMul(qInv(W[p]), W[b]) : W[b]);
+            bones[b] = { qx: l[0], qy: l[1], qz: l[2], qw: l[3] };
+        }
+        // 先端の指(Distal)は中節のローカル回転の一部をコピー。親(中節)の W に続けて W も更新する
+        for (const b of BONE_ORDER) {
+            if (!isSynthDistal(b) || !has(b)) continue;
+            const inter = b.replace('Distal', 'Intermediate');
+            const q = bones[inter];
+            if (!q) continue;
+            const part = qScaleRotation([q.qx, q.qy, q.qz, q.qw], FINGER_DISTAL_SYNTH);
+            bones[b] = { qx: part[0], qy: part[1], qz: part[2], qw: part[3] };
+            W[b] = qNorm(qMul(W[inter], part));
+        }
+        keyframes.push({ time: (f - frameIdx[0]) * bvh.frameTime, bones });
+        legW.push(W);
+
+        const rj = joints[0];
+        const pos = [row[rj.chOffset], row[rj.chOffset + 1], row[rj.chOffset + 2]];
+        if (!p0) p0 = pos;
+        const dlt = qRotVec(yaw, [pos[0] - p0[0], pos[1] - p0[1], pos[2] - p0[2]]).map(v => v * hipsScale);
+        hips.push(dlt);
+        if (hm && bones.hips) Object.assign(bones.hips, { px: dlt[0] * hm[0], py: dlt[1] * hm[1], pz: dlt[2] * hm[2] });
+    }
+    postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has);
+    return { fps: bvh.fps, duration: (frameIdx[frameIdx.length - 1] - frameIdx[0]) * bvh.frameTime, frames: keyframes.length, keyframes, hips };
+}
+
+// 回転 q の角度を t 倍にした回転(単位クォータニオンから q へ t だけ進める)
+function qScaleRotation(q, t) {
+    const w = Math.min(1, Math.max(-1, q[3]));
+    const ang = 2 * Math.acos(Math.abs(w));
+    const sinH = Math.sqrt(Math.max(0, 1 - w * w));
+    if (ang < 1e-6 || sinH < 1e-9) return [0, 0, 0, 1];
+    const sg = w < 0 ? -1 : 1;
+    const ax = [q[0] / sinH * sg, q[1] / sinH * sg, q[2] / sinH * sg];
+    const h = ang * t / 2;
+    return [ax[0] * Math.sin(h), ax[1] * Math.sin(h), ax[2] * Math.sin(h), Math.cos(h)];
+}
+
 
 // ---- 接地補正 ----
 // 単眼動画から出る腰の高さは、最初のフレームを基準にした相対値(最初のフレームが開脚・しゃがみでも立ち姿の腰高になる)ため、
@@ -381,9 +569,13 @@ export async function bvhTextToVrmaBuffer(editor, text, opts = {}) {
     const restHips = editor.getVRM?.()?.humanoid?.normalizedRestPose?.hips?.position;
     const subjectHipsY = bvh.joints[0].offset[1] * 0.01;
     const hipsScale = restHips && subjectHipsY > 0.1 ? restHips[1] / subjectHipsY : 1;
+    const named = bvh.kind === 'named'; // 名前つき骨格は単位に依らない比で倍率を決めるため、VRM の腰高だけ渡す
     const restDirs = restFingerDirs(editor.getVRM?.());
     const legRest = restLegOffsets(editor.getVRM?.());
-    const result = retargetBvh(bvh, { availableBones, hipsScale, restDirs, legRest, ...opts });
+    const result = retargetBvh(bvh, {
+        availableBones, restDirs, legRest, ...opts,
+        ...(named ? { vrmHipsHeight: restHips ? restHips[1] : null } : { hipsScale }),
+    });
     const isVrm0 = editor.getVRM?.()?.meta?.metaVersion === '0';
     const kfs = isVrm0 ? keyframesToVrm0(result.keyframes) : result.keyframes;
     return editor.exportVrma(kfs);

@@ -19,6 +19,13 @@ const STRINGS = {
         snapHint: 'Floating below this height is pressed to the floor. Use a smaller value to keep small hops.',
         flatten: 'Flatten grounded feet',
         flattenHint: 'Corrects the estimation error in foot roll (inward/outward tilt)',
+        secRange: 'Range',
+        clipInfo: 'Clip: {sec} s · {fps} fps · {kind}',
+        kindSam3d: 'SAM3DBody skeleton',
+        kindNamed: 'Named skeleton (CMU / Daz)',
+        rangeStart: 'Start',
+        rangeLength: 'Length',
+        rangeHint: 'Seconds to import (Length 0 = to the end). Long clips become many keyframes. Frame rates above 30 fps are thinned out.',
         cancel: 'Cancel',
         import: 'Import',
     },
@@ -35,6 +42,13 @@ const STRINGS = {
         snapHint: 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく',
         flatten: '接地中の足を水平にする',
         flattenHint: '足の内外の傾き(ロール)の推定誤差を補正',
+        secRange: '取り込む範囲',
+        clipInfo: 'クリップ: {sec} 秒 · {fps} fps · {kind}',
+        kindSam3d: 'SAM3DBody の骨格',
+        kindNamed: '名前つき骨格 (CMU / Daz)',
+        rangeStart: '開始',
+        rangeLength: '長さ',
+        rangeHint: '取り込む秒数(長さ 0 = 最後まで)。長いクリップはキーフレームが多くなる。30fps を超えるものは間引く',
         cancel: 'Cancel',
         import: 'Import',
     },
@@ -63,7 +77,8 @@ function el(tag, attrs = {}, text) {
 
 // 戻り値: Promise<null | { hipsMotion, groundFeet, flattenFeet, groundSnap }>(キャンセルは null)
 // lang: 表示言語の固定(省略時は ComfyUI の言語設定から自動判定)
-export function askBvhImportOptions(fileName = '', lang) {
+// info: peekBvh() の結果(クリップの長さ・fps・骨格の種類の表示と、長いクリップの既定の長さに使う)
+export function askBvhImportOptions(fileName = '', lang, info) {
     return new Promise(resolve => {
         const t = makeT(STRINGS, lang);
         const s = loadSettings();
@@ -74,7 +89,7 @@ export function askBvhImportOptions(fileName = '', lang) {
             style: 'background:#1e1e3a;border-radius:8px;padding:16px;width:330px;box-shadow:0 6px 24px rgba(0,0,0,0.7);' +
                    'font-family:sans-serif;color:#ccc;font-size:12px;',
         });
-        box.appendChild(el('div', { style: 'font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:4px;' }, '⬇ Import BVH (SAM3DBody)'));
+        box.appendChild(el('div', { style: 'font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:4px;' }, '⬇ Import BVH'));
         if (fileName) box.appendChild(el('div', { style: 'color:#889;margin-bottom:10px;word-break:break-all;' }, fileName));
 
         const checks = {};
@@ -104,7 +119,9 @@ export function askBvhImportOptions(fileName = '', lang) {
             axisRow.appendChild(l);
         }
         box.appendChild(axisRow);
-        box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('axisHint')));
+        if (info?.kind !== 'named') { // 奥行きのずれは単眼推定(SAM3DBody)の話。モーキャプには当てはまらない
+            box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('axisHint')));
+        }
 
         heading(t('secFeet'));
         mkCheck('ground', t('ground'), t('groundHint'));
@@ -119,6 +136,29 @@ export function askBvhImportOptions(fileName = '', lang) {
         box.appendChild(snapRow);
         box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('snapHint')));
         mkCheck('flatten', t('flatten'), t('flattenHint'));
+
+        heading(t('secRange'));
+        const numInput = (value, max) => {
+            const i = el('input', {
+                type: 'number', min: '0', max: String(max), step: '0.5', value: String(value),
+                style: 'width:64px;background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+            });
+            i.addEventListener('keydown', e => e.stopPropagation());
+            return i;
+        };
+        const dur = info?.durationSec > 0 ? info.durationSec : 0;
+        if (dur > 0) {
+            box.appendChild(el('div', { style: 'color:#9ab;margin:2px 0 4px;' }, t('clipInfo', {
+                sec: dur.toFixed(1), fps: Math.round(info.fps), kind: info.kind === 'sam3d' ? t('kindSam3d') : t('kindNamed'),
+            })));
+        }
+        const rangeRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:2px 0;color:#ddd;' });
+        const startIn = numInput(0, 100000);
+        const lenIn = numInput(dur > 30 ? 30 : 0, 100000); // 30 秒を超えるクリップは既定で先頭 30 秒
+        const span = (txt, ml = 0) => el('span', { style: `margin-left:${ml}px;` }, txt);
+        rangeRow.append(span(t('rangeStart')), startIn, span('s'), span(t('rangeLength'), 12), lenIn, span('s'));
+        box.appendChild(rangeRow);
+        box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('rangeHint')));
 
         // 依存関係: 腰の移動(Y 軸)が無いと接地補正は効かない。接地補正が無いと足の水平化は効かない
         const sync = () => {
@@ -154,6 +194,8 @@ export function askBvhImportOptions(fileName = '', lang) {
                 groundFeet: groundOn,
                 flattenFeet: groundOn && next.flatten,
                 groundSnap: [snapCm / 100, snapCm / 100 + 0.20], // 吸着から 20cm かけて補正を弱める
+                startSec: Math.max(0, parseFloat(startIn.value) || 0),
+                durationSec: Math.max(0, parseFloat(lenIn.value) || 0),
             });
         };
         const onKey = (e) => {

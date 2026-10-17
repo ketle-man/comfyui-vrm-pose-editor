@@ -11,7 +11,7 @@
  */
 
 import { openPoseLibrary } from './pose_library.js';
-import { bvhTextToVrmaBuffer } from './bvh_retarget.js';
+import { bvhTextToVrmaBuffer, peekBvh } from './bvh_retarget.js';
 import { askBvhImportOptions } from './bvh_import_dialog.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
@@ -921,7 +921,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             if (isBvh) {
                 // SAM3DBody の BVH → VRM ボーン回転へリターゲットして .vrma 化(bvh_retarget.js)
                 try {
-                    const bvhOpts = await askBvhImportOptions(file.name);
+                    const bvhOpts = await askBvhImportOptions(file.name, undefined, peekBvh(buffer));
                     if (!bvhOpts) return; // キャンセル
                     buffer = await bvhTextToVrmaBuffer(editor, buffer, bvhOpts);
                 } catch (err) { alert("BVH import error: " + (err?.message ?? err)); return; }
