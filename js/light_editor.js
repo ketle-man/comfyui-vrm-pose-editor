@@ -11,6 +11,7 @@
  */
 
 import { openPoseLibrary } from './pose_library.js';
+import { bvhTextToVrmaBuffer } from './bvh_retarget.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
 import { buildAudioTab, buildSettingsTab, generateSpeech, fetchAudioFile, getSelectedAudio, setSelectedAudio, onSelectedAudioChange } from './audio_panel.js';
@@ -901,8 +902,8 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // VRMAボタンのキーフレーム読み込み版。選んだ.vrmaをそのままロードせず、この場でキーフレーム
     // タイムライン(Poseトラック)へサンプリング読み込みする(モーダル内なのでkeyframePanelを直接呼べる)
     const poseVrmaKeyBtn = mkBtn("VRMA (KEY)", "#444");
-    poseVrmaKeyBtn.title = "Load .vrma as pose keyframes";
-    const poseVrmaKeyInput = mkFileInput(".vrma");
+    poseVrmaKeyBtn.title = "Load .vrma / SAM3DBody .bvh as pose keyframes";
+    const poseVrmaKeyInput = mkFileInput(".vrma,.bvh");
     poseVrmaKeyBtn.onclick = () => poseVrmaKeyInput.click();
     poseVrmaKeyInput.addEventListener("change", e => {
         const file = e.target.files[0];
@@ -912,11 +913,18 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             poseVrmaKeyInput.value = "";
             return;
         }
+        const isBvh = /\.bvh$/i.test(file.name);
         const reader = new FileReader();
-        reader.onload = ev => {
-            keyframePanel.importVrmaAsKeyframes(ev.target.result, file.name.replace(/\.vrma$/i, ""));
+        reader.onload = async ev => {
+            let buffer = ev.target.result;
+            if (isBvh) {
+                // SAM3DBody の BVH → VRM ボーン回転へリターゲットして .vrma 化(bvh_retarget.js)
+                try { buffer = await bvhTextToVrmaBuffer(editor, buffer); }
+                catch (err) { alert("BVH import error: " + (err?.message ?? err)); return; }
+            }
+            keyframePanel.importVrmaAsKeyframes(buffer, file.name.replace(/\.(vrma|bvh)$/i, ""));
         };
-        reader.readAsArrayBuffer(file);
+        if (isBvh) reader.readAsText(file); else reader.readAsArrayBuffer(file);
         poseVrmaKeyInput.value = "";
     });
 
