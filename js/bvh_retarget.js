@@ -139,19 +139,54 @@ export const VRM_BONE_MAP = {
     rightFoot:     { j: 20,  to: 23,   T: FWD, parent: 'rightLowerLeg' },
     rightToes:     { j: 23,  to: 24,   T: FWD, parent: 'rightFoot' },
 };
+// ---- 指 ----
+// MHR の指は 4 関節(付け根 MCP→PIP→DIP→先端)が人差し指・中指・薬指、5 関節が小指(手首側の中手骨 CMC が先頭)と
+// 親指(先頭は手首側の補助関節、次が CMC)。区間長(cm)で確認済み。VRM は Proximal/Intermediate/Distal の 3 骨
+// (親指は Metacarpal/Proximal/Distal)。j は骨の始点の関節、to は骨の終点(次の関節)
+const THUMB_T = vNorm([0.6, -0.3, 0.74]); // VRM T ポーズでの親指の向きの既定値。実モデルの値があれば restDirs で上書きされる
+function addFingers(side, base, TX) {
+    // base: 手首(hand)の MHR 関節番号の次の指の先頭(左 79 / 右 43)
+    const pinky = base, ring = base + 5, middle = base + 9, index = base + 13, thumb = base + 17;
+    const hand = `${side}Hand`;
+    const chain = (finger, joints, names) => {
+        names.forEach((n, i) => {
+            VRM_BONE_MAP[`${side}${finger}${n}`] = {
+                j: joints[i], to: joints[i + 1], T: TX,
+                parent: i === 0 ? hand : `${side}${finger}${names[i - 1]}`,
+            };
+        });
+    };
+    const P3 = ['Proximal', 'Intermediate', 'Distal'];
+    chain('Index', [index, index + 1, index + 2, index + 3], P3);
+    chain('Middle', [middle, middle + 1, middle + 2, middle + 3], P3);
+    chain('Ring', [ring, ring + 1, ring + 2, ring + 3], P3);
+    chain('Little', [pinky + 1, pinky + 2, pinky + 3, pinky + 4], P3);
+    chain('Thumb', [thumb + 1, thumb + 2, thumb + 3, thumb + 4], ['Metacarpal', 'Proximal', 'Distal']);
+    VRM_BONE_MAP[`${side}ThumbMetacarpal`].T = side === 'left' ? THUMB_T : [-THUMB_T[0], THUMB_T[1], THUMB_T[2]];
+    for (const n of ['Proximal', 'Distal']) VRM_BONE_MAP[`${side}Thumb${n}`].T = VRM_BONE_MAP[`${side}ThumbMetacarpal`].T;
+}
+addFingers('left', 79, LX);
+addFingers('right', 43, RX);
+
 const BONE_ORDER = Object.keys(VRM_BONE_MAP); // 親が先に並んでいる
 
-// VRM の T ポーズ → MHR バインドの補正回転 C_b を作る(一度だけ)
+// VRM の T ポーズ → MHR バインドの補正回転 C_b を作る。restDirs(ボーン名→VRM1 正準空間でのレスト方向)があれば T を上書きする
+function buildCorrection(restDirs) {
 const _C = {};
-for (const [name, d] of Object.entries(VRM_BONE_MAP)) {
+for (const [name, d0] of Object.entries(VRM_BONE_MAP)) {
+    const d = restDirs?.[name] ? { ...d0, T: restDirs[name] } : d0;
     if (d.to == null) { _C[name] = [0, 0, 0, 1]; continue; }
     const bDir = vSub(MHR_BIND[d.to].p, MHR_BIND[d.j].p);
     _C[name] = d.ref ? qFrameAlign(d.T, d.ref.T, bDir, vSub(MHR_BIND[d.ref.to].p, MHR_BIND[d.ref.from].p))
                      : qArc(d.T, bDir);
 }
+return _C;
+}
+const _C0 = buildCorrection(null);
 
 // ---- リターゲット本体 ----
 // opts.availableBones: 読み込み中モデルが持つボーン名の Set(省略時は全ボーン)。upperChest 等が無い VRM では親を付け替える。
+// opts.restDirs: ボーン名 → その VRM のレスト方向(VRM1 正準空間)。指など T ポーズでも向きがモデルごとに違うボーン用
 // opts.rootYawDeg: 全体を Y 軸まわりに回す角度(度)。映像内で人物がカメラを向くとき VRM を +Z 向きにそろえる補正
 // opts.hipsScale: Hips 移動量の倍率(VRM の腰高 / BVH 被写体の腰高)。省略時 1(メートル相当)
 // opts.hipsMotion: false で Hips の移動を出力しない。配列 [x,y,z] で軸ごとの倍率(例 [1,1,0] = 奥行きを無視)
@@ -159,6 +194,7 @@ for (const [name, d] of Object.entries(VRM_BONE_MAP)) {
 // hips の移動量は keyframes[].bones.hips の px,py,pz(レストからの移動量[m])にも入る(exportVrma が腰の位置トラックにする)
 export function retargetBvh(bvh, opts = {}) {
     const avail = opts.availableBones ?? null;
+    const _C = opts.restDirs ? buildCorrection(opts.restDirs) : _C0;
     const yaw = qAxis([0, 1, 0], opts.rootYawDeg ?? 0);
     const hipsScale = opts.hipsScale ?? 1;
     const hm = opts.hipsMotion === false ? null : (Array.isArray(opts.hipsMotion) ? opts.hipsMotion : [1, 1, 1]);
@@ -235,8 +271,28 @@ export async function bvhTextToVrmaBuffer(editor, text, opts = {}) {
     const restHips = editor.getVRM?.()?.humanoid?.normalizedRestPose?.hips?.position;
     const subjectHipsY = bvh.joints[0].offset[1] * 0.01;
     const hipsScale = restHips && subjectHipsY > 0.1 ? restHips[1] / subjectHipsY : 1;
-    const result = retargetBvh(bvh, { availableBones, hipsScale, ...opts });
+    const restDirs = restFingerDirs(editor.getVRM?.());
+    const result = retargetBvh(bvh, { availableBones, hipsScale, restDirs, ...opts });
     const isVrm0 = editor.getVRM?.()?.meta?.metaVersion === '0';
     const kfs = isVrm0 ? keyframesToVrm0(result.keyframes) : result.keyframes;
     return editor.exportVrma(kfs);
+}
+
+// 指ボーンのレスト方向 = その子ボーンのローカル位置(正規化ボーンはレストで回転が単位なので親フレーム=ワールド)。
+// 子が無い Distal は自身の親からのオフセット(中節と同じ向き)。VRM0 は X,Z を反転して VRM1 正準空間にそろえる
+function restFingerDirs(vrm) {
+    const hum = vrm?.humanoid;
+    if (!hum) return null;
+    const flip = vrm.meta?.metaVersion === '0';
+    const dirs = {};
+    for (const [name, d] of Object.entries(VRM_BONE_MAP)) {
+        if (!/(Thumb|Index|Middle|Ring|Little)/.test(name)) continue;
+        const node = hum.getNormalizedBoneNode(name);
+        if (!node) continue;
+        const child = Object.keys(VRM_BONE_MAP).find(n => VRM_BONE_MAP[n].parent === name && /(Thumb|Index|Middle|Ring|Little)/.test(n));
+        const src = (child && hum.getNormalizedBoneNode(child)?.position) ?? node.position;
+        const v = [flip ? -src.x : src.x, src.y, flip ? -src.z : src.z];
+        if (Math.hypot(...v) > 1e-6) dirs[name] = vNorm(v);
+    }
+    return dirs;
 }
