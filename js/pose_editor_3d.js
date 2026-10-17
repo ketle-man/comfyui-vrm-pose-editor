@@ -3,6 +3,7 @@ import { initPoseEditor3D } from './pose_editor_core.js';
 import { openLightPoseEditor, importVrmaAsKeyframesFromNode } from './light_editor.js';
 import { resolveDefaultModel } from './default_model.js';
 import { bvhTextToVrmaBuffer } from './bvh_retarget.js';
+import { askBvhImportOptions } from './bvh_import_dialog.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -731,7 +732,9 @@ app.registerExtension({
                     if (isBvh) {
                         // SAM3DBody の BVH(ComfyUI BuildPoseFile) → VRM ボーン回転へリターゲットして .vrma 化
                         try {
-                            buffer = await bvhTextToVrmaBuffer(editor, buffer);
+                            const bvhOpts = await askBvhImportOptions(file.name);
+                            if (!bvhOpts) return; // キャンセル
+                            buffer = await bvhTextToVrmaBuffer(editor, buffer, bvhOpts);
                         } catch (err) {
                             alert("BVH import error: " + (err?.message ?? err));
                             return;

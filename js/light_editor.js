@@ -12,6 +12,7 @@
 
 import { openPoseLibrary } from './pose_library.js';
 import { bvhTextToVrmaBuffer } from './bvh_retarget.js';
+import { askBvhImportOptions } from './bvh_import_dialog.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
 import { buildAudioTab, buildSettingsTab, generateSpeech, fetchAudioFile, getSelectedAudio, setSelectedAudio, onSelectedAudioChange } from './audio_panel.js';
@@ -919,8 +920,11 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             let buffer = ev.target.result;
             if (isBvh) {
                 // SAM3DBody の BVH → VRM ボーン回転へリターゲットして .vrma 化(bvh_retarget.js)
-                try { buffer = await bvhTextToVrmaBuffer(editor, buffer); }
-                catch (err) { alert("BVH import error: " + (err?.message ?? err)); return; }
+                try {
+                    const bvhOpts = await askBvhImportOptions(file.name);
+                    if (!bvhOpts) return; // キャンセル
+                    buffer = await bvhTextToVrmaBuffer(editor, buffer, bvhOpts);
+                } catch (err) { alert("BVH import error: " + (err?.message ?? err)); return; }
             }
             keyframePanel.importVrmaAsKeyframes(buffer, file.name.replace(/\.(vrma|bvh)$/i, ""));
         };
