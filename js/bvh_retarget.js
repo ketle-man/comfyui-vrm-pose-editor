@@ -52,13 +52,15 @@ export function parseBvh(text) {
         let m;
         if ((m = /^(ROOT|JOINT)\s+(\S+)/.exec(s))) {
             const parent = stack.length ? stack[stack.length - 1] : -1;
-            cur = { name: m[2], parent, channels: [], chOffset: 0, mhr: null };
+            cur = { name: m[2], parent, channels: [], chOffset: 0, mhr: null, offset: [0, 0, 0] };
             joints.push(cur);
             stack.push(joints.length - 1);
             m = /^joint_(\d+)$/.exec(cur.name);
             cur.mhr = m ? parseInt(m[1], 10) : (parent < 0 ? 1 : null);
         } else if (s.startsWith('End Site')) {
             stack.push(-2);
+        } else if (s.startsWith('OFFSET') && stack[stack.length - 1] >= 0) {
+            joints[stack[stack.length - 1]].offset = s.split(/\s+/).slice(1, 4).map(Number);
         } else if ((m = /^CHANNELS\s+(\d+)\s+(.*)$/.exec(s))) {
             cur.channels = m[2].trim().split(/\s+/);
         } else if (s === '}') {
@@ -116,12 +118,15 @@ for (const [name, d] of Object.entries(VRM_BONE_MAP)) {
 // ---- リターゲット本体 ----
 // opts.availableBones: 読み込み中モデルが持つボーン名の Set(省略時は全ボーン)。upperChest 等が無い VRM では親を付け替える。
 // opts.rootYawDeg: 全体を Y 軸まわりに回す角度(度)。映像内で人物がカメラを向くとき VRM を +Z 向きにそろえる補正
-// opts.hipsScale: Hips 位置の倍率(VRM の腰高 / MHR の腰高 0.924 など)。省略時 1(メートル相当)
+// opts.hipsScale: Hips 移動量の倍率(VRM の腰高 / BVH 被写体の腰高)。省略時 1(メートル相当)
+// opts.hipsMotion: false で Hips の移動を出力しない。配列 [x,y,z] で軸ごとの倍率(例 [1,1,0] = 奥行きを無視)
 // 戻り値: { fps, duration, frames, keyframes:[{time, bones:{name:{qx,qy,qz,qw}}}], hips:[[x,y,z]...] (最初のフレーム基準の移動量[m]) }
+// hips の移動量は keyframes[].bones.hips の px,py,pz(レストからの移動量[m])にも入る(exportVrma が腰の位置トラックにする)
 export function retargetBvh(bvh, opts = {}) {
     const avail = opts.availableBones ?? null;
     const yaw = qAxis([0, 1, 0], opts.rootYawDeg ?? 0);
     const hipsScale = opts.hipsScale ?? 1;
+    const hm = opts.hipsMotion === false ? null : (Array.isArray(opts.hipsMotion) ? opts.hipsMotion : [1, 1, 1]);
     const has = (b) => !avail || avail.has(b);
     const parentOf = (b) => { // 存在するボーンまで親をさかのぼる
         let p = VRM_BONE_MAP[b].parent;
@@ -167,6 +172,7 @@ export function retargetBvh(bvh, opts = {}) {
         if (!p0) p0 = pos;
         const dlt = qRotVec(yaw, [pos[0] - p0[0], pos[1] - p0[1], pos[2] - p0[2]]).map(v => v * hipsScale);
         hips.push(dlt);
+        if (hm && bones.hips) Object.assign(bones.hips, { px: dlt[0] * hm[0], py: dlt[1] * hm[1], pz: dlt[2] * hm[2] });
     }
     return { fps: bvh.fps, duration: (bvh.frames - 1) * bvh.frameTime, frames: bvh.frames, keyframes, hips };
 }
@@ -175,7 +181,10 @@ export function retargetBvh(bvh, opts = {}) {
 export function keyframesToVrm0(keyframes) {
     return keyframes.map(k => {
         const bones = {};
-        for (const [n, q] of Object.entries(k.bones)) bones[n] = { qx: -q.qx, qy: q.qy, qz: -q.qz, qw: q.qw };
+        for (const [n, q] of Object.entries(k.bones)) {
+            bones[n] = { qx: -q.qx, qy: q.qy, qz: -q.qz, qw: q.qw };
+            if (q.px !== undefined) Object.assign(bones[n], { px: -q.px, py: q.py, pz: -q.pz });
+        }
         return { time: k.time, bones };
     });
 }
@@ -186,7 +195,12 @@ export async function bvhTextToVrmaBuffer(editor, text, opts = {}) {
     const poseJson = editor.exportPose();
     if (!poseJson) throw new Error('Load a VRM model before importing a BVH.');
     const availableBones = new Set(Object.keys(JSON.parse(poseJson).bones));
-    const result = retargetBvh(parseBvh(text), { availableBones, ...opts });
+    const bvh = parseBvh(text);
+    // Hips 移動量の倍率 = VRM のレスト腰高 / BVH 被写体の腰高(ルートの OFFSET の Y を cm→m)
+    const restHips = editor.getVRM?.()?.humanoid?.normalizedRestPose?.hips?.position;
+    const subjectHipsY = bvh.joints[0].offset[1] * 0.01;
+    const hipsScale = restHips && subjectHipsY > 0.1 ? restHips[1] / subjectHipsY : 1;
+    const result = retargetBvh(bvh, { availableBones, hipsScale, ...opts });
     const isVrm0 = editor.getVRM?.()?.meta?.metaVersion === '0';
     const kfs = isVrm0 ? keyframesToVrm0(result.keyframes) : result.keyframes;
     return editor.exportVrma(kfs);
