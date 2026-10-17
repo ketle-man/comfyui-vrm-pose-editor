@@ -290,10 +290,14 @@ function selectFrames(bvh, opts) {
 }
 
 // 接地補正 → 足の水平化(骨格の種類に依らない共通の後処理)
-function postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has) {
+function postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has, targetHeights = null) {
     if (hm && opts.legRest && opts.groundFeet !== false) {
-        const heights = groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap);
-        if (heights && opts.flattenFeet !== false) flattenFeet(keyframes, legW, heights, parentOf, has);
+        const heights = groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap, targetHeights, opts.restHipsY ?? null);
+        if (heights && opts.flattenFeet !== false) {
+            flattenFeet(keyframes, legW, heights, parentOf, has);
+            // 足を水平にすると足裏の点が数 cm 動いて床に沈むことがあるため、正解の高さに合わせる場合はもう一度合わせ直す
+            if (targetHeights) groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap, targetHeights, opts.restHipsY ?? null);
+        }
     }
 }
 
@@ -429,8 +433,61 @@ function retargetNamedBvh(bvh, opts = {}) {
         hips.push(dlt);
         if (hm && bones.hips) Object.assign(bones.hips, { px: dlt[0] * hm[0], py: dlt[1] * hm[1], pz: dlt[2] * hm[2] });
     }
-    postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has);
+    // モーキャプは足の位置が正確なので、BVH 自身の足の最下点の高さ(クリップ全体で一番低い所を床とする)を正解にして
+    // VRM の足の高さをそれに合わせる。床から離れるジャンプ・側転・逆立ちをそのまま保つ(推定用の吸着は使わない)
+    let target = null;
+    if (hm && opts.groundMode !== 'estimate' && opts.restHipsY != null) {
+        const low = footLowestHeights(bvh, joints, byName, frameIdx, P, 0.035 * subjectHeight); // 帯の幅は腰高の 3.5%(約 3cm)
+        // 床より下には沈めない(モーキャプのノイズで足が床の推定より大きく下がるフレームがある)
+        if (low) target = low.heights.map(v => Math.max(0, (v - low.floor) * hipsScale));
+    }
+    postProcessFeet(keyframes, hips, legW, opts, hm, parentOf, has, target);
     return { fps: bvh.fps, duration: (frameIdx[frameIdx.length - 1] - frameIdx[0]) * bvh.frameTime, frames: keyframes.length, keyframes, hips };
+}
+
+// BVH の FK で、両足(足首と End Site)の最下点の高さ(BVH の単位)を返す。floor はクリップ全体の最小値
+// 足裏の 2 点(かかと・つま先)で測る。バインドは足裏が床にある T ポーズ前提で、足首の高さ・End Site の高さが足裏までの距離
+function footLowestHeights(bvh, joints, byName, frameIdx, P, band) {
+    const feet = ['lFoot', 'rFoot'].map(n => byName.get(n)).filter(i => i != null);
+    if (!feet.length || feet.some(i => !joints[i].endOffset)) return null;
+    // 根から各足までの祖先の列
+    const chains = feet.map(fi => { const c = []; for (let i = fi; i >= 0; i = joints[i].parent) c.unshift(i); return c; });
+    const lowestAt = (row) => {
+        let m = Infinity;
+        for (const chain of chains) {
+            let G = null, pos = null;
+            for (const i of chain) {
+                const jt = joints[i];
+                const o = jt.chOffset + jt.channels.length - 3;
+                const r = eulerByOrder(rotOrder(jt.channels), row[o], row[o + 1], row[o + 2]);
+                if (G) { const off = qRotVec(G, jt.offset); pos = [pos[0] + off[0], pos[1] + off[1], pos[2] + off[2]]; G = qMul(G, r); }
+                else { pos = [row[jt.chOffset], row[jt.chOffset + 1], row[jt.chOffset + 2]]; G = r; }
+            }
+            const fi = chain[chain.length - 1], fj = joints[fi];
+            const heelDrop = P[fi][1];                    // バインドの足首の高さ = かかとの足裏までの距離
+            const toeDrop = P[fi][1] + fj.endOffset[1];   // バインドの End Site の高さ = つま先の足裏までの距離
+            m = Math.min(m, pos[1] + qRotVec(G, [0, -heelDrop, 0])[1]);
+            m = Math.min(m, pos[1] + qRotVec(G, [fj.endOffset[0], fj.endOffset[1] - toeDrop, fj.endOffset[2]])[1]);
+        }
+        return m;
+    };
+    const all = [];
+    for (let f = 0; f < bvh.frames; f++) all.push(lowestAt(bvh.data[f]));
+    return { floor: estimateFloor(all, band), heights: frameIdx.map(f => all[f]) };
+}
+
+// 床の高さの推定: 足裏の最下点の高さのうち、band 以内に全体の 8%(最低 3 フレーム)以上が集まる最も低い帯の下端。
+// モーキャプは床の高さがクリップごとにずれていたり、最初の T ポーズや 1 フレームの外れ値で最小値が低すぎたりするため、最小値は使わない
+function estimateFloor(lows, band) {
+    const sorted = [...lows].sort((a, b) => a - b);
+    const need = Math.max(3, Math.ceil(0.08 * sorted.length));
+    let j = 0;
+    for (let i = 0; i < sorted.length; i++) {
+        if (j < i) j = i;
+        while (j + 1 < sorted.length && sorted[j + 1] <= sorted[i] + band) j++;
+        if (j - i + 1 >= need) return sorted[i];
+    }
+    return sorted[0];
 }
 
 // 回転 q の角度を t 倍にした回転(単位クォータニオンから q へ t だけ進める)
@@ -453,9 +510,28 @@ function qScaleRotation(q, t) {
 //   2) フレームごと: 床から snap[0](15cm)以内は床に吸着、snap[1](35cm)まで補正を弱める(それ以上浮くジャンプは残す)。軽く平滑化
 //      推定誤差で数 cm〜十数 cm 浮くことが多く、本当の跳躍(30cm 超)は少ないため広めに取る
 // 横方向の足の滑りは補正しない(接地中の水平速度は中央値 0.1m/s 程度で小さい)
-function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
+// target(フレームごとの正解の足の最下点の高さ[m]、モーキャプ用)があれば、推定用の吸着はせず、その高さに合わせる
+// (ジャンプ・側転など床から離れる動きもそのまま残る)
+function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35], target = null, restHipsY = null) {
     const chains = [['leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'leftToes'], ['rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'rightToes']];
     if (!chains.every(c => rest[c[0]] && rest[c[1]] && rest[c[2]])) return;
+    // 足裏の 2 点(かかと・つま先)で測るモード(target あり + レストの腰高が分かるとき)。足首・つま先の関節だけで測ると、
+    // つま先立ちなどで足の向きが変わったときに最下点の定義がずれて、床の基準が数 cm ずれる。
+    // 関節の真下の足裏までの距離は、レスト(足裏が床 y=0)の関節の高さ。
+    let soleDrop = null;
+    if (target && restHipsY != null) {
+        soleDrop = chains.map(c => {
+            let y = restHipsY;
+            const out = {};
+            for (const b of c) {
+                if (!rest[b]) break;
+                y += rest[b][1];
+                if (b.endsWith('Foot')) out.heel = y;
+                if (b.endsWith('Toes')) out.toe = y;
+            }
+            return out;
+        });
+    }
     // 腰を原点にした足の最下点の高さ(y)。toes が無ければ foot のみ。chainIdx 指定でその脚だけ
     const lowest = (W, chainIdx = -1) => {
         let m = Infinity;
@@ -467,7 +543,14 @@ function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
                 if (!rest[b]) break;
                 const off = qRotVec(parentRot, rest[b]);
                 pos = [pos[0] + off[0], pos[1] + off[1], pos[2] + off[2]];
-                if (b.endsWith('Foot') || b.endsWith('Toes')) m = Math.min(m, pos[1]);
+                if (soleDrop) {
+                    // この関節の向きで、関節の真下(足裏)の点の高さ。toes が駆動されない骨格では足の向きに従う
+                    const rotHere = W[b] ?? parentRot;
+                    if (b.endsWith('Foot') && soleDrop[ci].heel != null) m = Math.min(m, pos[1] + qRotVec(rotHere, [0, -soleDrop[ci].heel, 0])[1]);
+                    if (b.endsWith('Toes') && soleDrop[ci].toe != null) m = Math.min(m, pos[1] + qRotVec(rotHere, [0, -soleDrop[ci].toe, 0])[1]);
+                } else if (b.endsWith('Foot') || b.endsWith('Toes')) {
+                    m = Math.min(m, pos[1]);
+                }
                 parentRot = W[b] ?? parentRot;
             }
         }
@@ -481,18 +564,23 @@ function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
     const n = keyframes.length;
     // 腰の高さ(レストの腰位置 + 移動量)を含む足の最下点の、レストからの高さ
     const h = keyframes.map((_, f) => hips[f][1] + lowest(legW[f]) - restLow);
-    const sorted = [...h].sort((a, b) => a - b);
-    const g = -sorted[Math.floor(0.05 * (n - 1))]; // 下位 5% が床に着くオフセット
-    const raw = h.map(v => v + g);
-    // 床から近いフレームは吸着、離れるほど補正を弱める
-    const corr = raw.map(v => {
-        const a = Math.abs(v);
-        const w = a <= snap[0] ? 1 : a >= snap[1] ? 0 : 1 - (a - snap[0]) / (snap[1] - snap[0]);
-        return -v * w;
-    });
-    // 3 点ガウス平滑(2 回)
-    let c = corr;
-    for (let k = 0; k < 2; k++) c = c.map((v, i) => 0.25 * (c[Math.max(0, i - 1)] + c[Math.min(n - 1, i + 1)]) + 0.5 * v);
+    let g = 0, c;
+    if (target) {
+        c = h.map((v, i) => target[i] - v); // 足の最下点を正解の高さに合わせる補正量
+    } else {
+        const sorted = [...h].sort((a, b) => a - b);
+        g = -sorted[Math.floor(0.05 * (n - 1))]; // 下位 5% が床に着くオフセット
+        const raw = h.map(v => v + g);
+        // 床から近いフレームは吸着、離れるほど補正を弱める
+        const corr = raw.map(v => {
+            const a = Math.abs(v);
+            const w = a <= snap[0] ? 1 : a >= snap[1] ? 0 : 1 - (a - snap[0]) / (snap[1] - snap[0]);
+            return -v * w;
+        });
+        // 3 点ガウス平滑(2 回)
+        c = corr;
+        for (let k = 0; k < 2; k++) c = c.map((v, i) => 0.25 * (c[Math.max(0, i - 1)] + c[Math.min(n - 1, i + 1)]) + 0.5 * v);
+    }
     const heights = [[], []]; // 補正後の脚ごとの最下点の床からの高さ(足の水平化の接地判定用)
     for (let f = 0; f < n; f++) {
         const dy = g + c[f];
@@ -573,7 +661,7 @@ export async function bvhTextToVrmaBuffer(editor, text, opts = {}) {
     const restDirs = restFingerDirs(editor.getVRM?.());
     const legRest = restLegOffsets(editor.getVRM?.());
     const result = retargetBvh(bvh, {
-        availableBones, restDirs, legRest, ...opts,
+        availableBones, restDirs, legRest, restHipsY: restHips ? restHips[1] : null, ...opts,
         ...(named ? { vrmHipsHeight: restHips ? restHips[1] : null } : { hipsScale }),
     });
     const isVrm0 = editor.getVRM?.()?.meta?.metaVersion === '0';

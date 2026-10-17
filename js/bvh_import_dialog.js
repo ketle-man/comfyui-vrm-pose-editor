@@ -15,6 +15,7 @@ const STRINGS = {
         secFeet: 'Feet',
         ground: 'Foot grounding',
         groundHint: 'Automatically adjusts hip height so the feet touch the floor',
+        groundHintNamed: "Matches the mocap's own foot heights (jumps and cartwheels are kept, feet never sink below the floor)",
         snapLabel: 'Snap-to-floor height',
         snapHint: 'Floating below this height is pressed to the floor. Use a smaller value to keep small hops.',
         flatten: 'Flatten grounded feet',
@@ -38,6 +39,7 @@ const STRINGS = {
         secFeet: '足',
         ground: '接地補正',
         groundHint: '足が床に着くよう腰の高さを自動調整',
+        groundHintNamed: 'モーキャプ自身の足の高さに合わせる(ジャンプ・側転はそのまま残り、床には沈まない)',
         snapLabel: '床に吸着する高さ',
         snapHint: 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく',
         flatten: '接地中の足を水平にする',
@@ -124,7 +126,8 @@ export function askBvhImportOptions(fileName = '', lang, info) {
         }
 
         heading(t('secFeet'));
-        mkCheck('ground', t('ground'), t('groundHint'));
+        const named = info?.kind === 'named'; // モーキャプは足の高さが正確なので、推定誤差用の「吸着する高さ」は使わない
+        mkCheck('ground', t('ground'), t(named ? 'groundHintNamed' : 'groundHint'));
         const snapRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:2px 0 2px 22px;color:#ddd;' });
         snapRow.appendChild(document.createTextNode(t('snapLabel')));
         const snap = el('input', {
@@ -133,8 +136,8 @@ export function askBvhImportOptions(fileName = '', lang, info) {
         });
         snap.addEventListener('keydown', e => e.stopPropagation());
         snapRow.append(snap, document.createTextNode('cm'));
-        box.appendChild(snapRow);
-        box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('snapHint')));
+        const snapHintEl = el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('snapHint'));
+        if (!named) { box.appendChild(snapRow); box.appendChild(snapHintEl); }
         mkCheck('flatten', t('flatten'), t('flattenHint'));
 
         heading(t('secRange'));
@@ -171,6 +174,7 @@ export function askBvhImportOptions(fileName = '', lang, info) {
             const dim = (e, d) => { e.closest('label')?.style.setProperty('opacity', d ? '0.45' : '1'); };
             for (const k of ['axisX', 'axisY', 'axisZ', 'ground', 'flatten']) dim(checks[k], checks[k].disabled);
             snapRow.style.opacity = snap.disabled ? '0.45' : '1';
+            snapHintEl.style.opacity = snap.disabled ? '0.45' : '1';
         };
         for (const k of ['hips', 'axisY', 'ground']) checks[k].addEventListener('change', sync);
         sync();
