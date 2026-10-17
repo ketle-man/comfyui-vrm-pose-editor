@@ -1,6 +1,44 @@
 // SAM3DBody の BVH を取り込むときの設定ダイアログ(腰の移動・接地補正・足の水平化・軸の選択)。
 // 選んだ値は retargetBvh / bvhTextToVrmaBuffer の opts としてそのまま渡せる形で返す。設定は localStorage に保存する。
+import { makeT } from './i18n.js';
+
 const STORAGE_KEY = 'vrmPoseEditor_bvhImport';
+
+// 文言。en が基準(辞書に無い言語は en にフォールバック)。言語を増やすときはここにコードを足す
+const STRINGS = {
+    en: {
+        secHips: 'Hips motion',
+        hipsOn: 'Import hips movement',
+        hipsOnHint: 'When off, only rotations are applied (the character stays in place)',
+        axisX: 'X left/right', axisY: 'Y up/down', axisZ: 'Z depth',
+        axisHint: 'Depth (Z) tends to drift in single-camera estimation. Turn it off for in-place motion.',
+        secFeet: 'Feet',
+        ground: 'Foot grounding',
+        groundHint: 'Automatically adjusts hip height so the feet touch the floor',
+        snapLabel: 'Snap-to-floor height',
+        snapHint: 'Floating below this height is pressed to the floor. Use a smaller value to keep small hops.',
+        flatten: 'Flatten grounded feet',
+        flattenHint: 'Corrects the estimation error in foot roll (inward/outward tilt)',
+        cancel: 'Cancel',
+        import: 'Import',
+    },
+    ja: {
+        secHips: '腰の移動 (Hips)',
+        hipsOn: '腰の移動を取り込む',
+        hipsOnHint: 'オフにすると回転のみ(その場で動く)',
+        axisX: 'X 左右', axisY: 'Y 上下', axisZ: 'Z 奥行き',
+        axisHint: '奥行き(Z)は単眼の推定でずれやすい。その場の動きならオフ推奨',
+        secFeet: '足',
+        ground: '接地補正',
+        groundHint: '足が床に着くよう腰の高さを自動調整',
+        snapLabel: '床に吸着する高さ',
+        snapHint: 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく',
+        flatten: '接地中の足を水平にする',
+        flattenHint: '足の内外の傾き(ロール)の推定誤差を補正',
+        cancel: 'Cancel',
+        import: 'Import',
+    },
+};
 const DEFAULTS = { hips: true, axisX: true, axisY: true, axisZ: true, ground: true, flatten: true, snapCm: 15 };
 
 function loadSettings() {
@@ -24,8 +62,10 @@ function el(tag, attrs = {}, text) {
 }
 
 // 戻り値: Promise<null | { hipsMotion, groundFeet, flattenFeet, groundSnap }>(キャンセルは null)
-export function askBvhImportOptions(fileName = '') {
+// lang: 表示言語の固定(省略時は ComfyUI の言語設定から自動判定)
+export function askBvhImportOptions(fileName = '', lang) {
     return new Promise(resolve => {
+        const t = makeT(STRINGS, lang);
         const s = loadSettings();
         const dlg = el('div', {
             style: 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;display:flex;align-items:center;justify-content:center;',
@@ -52,10 +92,10 @@ export function askBvhImportOptions(fileName = '') {
         };
         const heading = (t) => box.appendChild(el('div', { style: 'color:#9ab;font-size:11px;font-weight:bold;margin:10px 0 2px;border-bottom:1px solid #334;padding-bottom:2px;' }, t));
 
-        heading('腰の移動 (Hips)');
-        mkCheck('hips', '腰の移動を取り込む', 'オフにすると回転のみ(その場で動く)');
+        heading(t('secHips'));
+        mkCheck('hips', t('hipsOn'), t('hipsOnHint'));
         const axisRow = el('div', { style: 'display:flex;gap:12px;margin:2px 0 2px 22px;' });
-        for (const [key, label] of [['axisX', 'X 左右'], ['axisY', 'Y 上下'], ['axisZ', 'Z 奥行き']]) {
+        for (const [key, label] of [['axisX', t('axisX')], ['axisY', t('axisY')], ['axisZ', t('axisZ')]]) {
             const l = el('label', { style: 'display:flex;align-items:center;gap:4px;cursor:pointer;color:#ddd;' });
             const cb = el('input', { type: 'checkbox' });
             cb.checked = !!s[key];
@@ -64,12 +104,12 @@ export function askBvhImportOptions(fileName = '') {
             axisRow.appendChild(l);
         }
         box.appendChild(axisRow);
-        box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, '奥行き(Z)は単眼の推定でずれやすい。その場の動きならオフ推奨'));
+        box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('axisHint')));
 
-        heading('足');
-        mkCheck('ground', '接地補正', '足が床に着くよう腰の高さを自動調整');
+        heading(t('secFeet'));
+        mkCheck('ground', t('ground'), t('groundHint'));
         const snapRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:2px 0 2px 22px;color:#ddd;' });
-        snapRow.appendChild(document.createTextNode('床に吸着する高さ'));
+        snapRow.appendChild(document.createTextNode(t('snapLabel')));
         const snap = el('input', {
             type: 'number', min: '0', max: '50', step: '1', value: String(s.snapCm),
             style: 'width:52px;background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
@@ -77,8 +117,8 @@ export function askBvhImportOptions(fileName = '') {
         snap.addEventListener('keydown', e => e.stopPropagation());
         snapRow.append(snap, document.createTextNode('cm'));
         box.appendChild(snapRow);
-        box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく'));
-        mkCheck('flatten', '接地中の足を水平にする', '足の内外の傾き(ロール)の推定誤差を補正');
+        box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('snapHint')));
+        mkCheck('flatten', t('flatten'), t('flattenHint'));
 
         // 依存関係: 腰の移動(Y 軸)が無いと接地補正は効かない。接地補正が無いと足の水平化は効かない
         const sync = () => {
@@ -96,8 +136,8 @@ export function askBvhImportOptions(fileName = '') {
         sync();
 
         const btnRow = el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;margin-top:14px;' });
-        const cancelBtn = el('button', { style: 'padding:5px 12px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;' }, 'Cancel');
-        const okBtn = el('button', { style: 'padding:5px 12px;background:#2a5a8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;' }, 'Import');
+        const cancelBtn = el('button', { style: 'padding:5px 12px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;' }, t('cancel'));
+        const okBtn = el('button', { style: 'padding:5px 12px;background:#2a5a8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;' }, t('import'));
         const close = (v) => { document.removeEventListener('keydown', onKey, true); dlg.remove(); resolve(v); };
         const ok = () => {
             const snapCm = Math.min(50, Math.max(0, parseFloat(snap.value) || 0));
