@@ -191,6 +191,7 @@ const _C0 = buildCorrection(null);
 // opts.hipsScale: Hips 移動量の倍率(VRM の腰高 / BVH 被写体の腰高)。省略時 1(メートル相当)
 // opts.legRest: 脚ボーンのレスト時の親からのオフセット {leftUpperLeg:[x,y,z], ...}(VRM1 正準空間, メートル)。あれば接地補正をかける
 // opts.groundSnap: [吸着する高さ, 補正が 0 になる高さ] メートル(既定 [0.15, 0.35])
+// opts.flattenFeet: false で接地中の足の水平化を無効化(既定 true。接地補正が有効なときだけ働く)
 // opts.groundFeet: false で接地補正を無効化(既定 true)。最初のフレームの姿勢に依らず足が床に着くよう、腰の高さを足の位置から合わせる
 // opts.hipsMotion: false で Hips の移動を出力しない。配列 [x,y,z] で軸ごとの倍率(例 [1,1,0] = 奥行きを無視)
 // 戻り値: { fps, duration, frames, keyframes:[{time, bones:{name:{qx,qy,qz,qw}}}], hips:[[x,y,z]...] (最初のフレーム基準の移動量[m]) }
@@ -250,7 +251,10 @@ export function retargetBvh(bvh, opts = {}) {
         hips.push(dlt);
         if (hm && bones.hips) Object.assign(bones.hips, { px: dlt[0] * hm[0], py: dlt[1] * hm[1], pz: dlt[2] * hm[2] });
     }
-    if (hm && opts.legRest && opts.groundFeet !== false) groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap);
+    if (hm && opts.legRest && opts.groundFeet !== false) {
+        const heights = groundFeet(keyframes, hips, legW, opts.legRest, hm, opts.groundSnap);
+        if (heights && opts.flattenFeet !== false) flattenFeet(keyframes, legW, heights, parentOf, has);
+    }
     return { fps: bvh.fps, duration: (bvh.frames - 1) * bvh.frameTime, frames: bvh.frames, keyframes, hips };
 }
 
@@ -264,10 +268,11 @@ export function retargetBvh(bvh, opts = {}) {
 function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
     const chains = [['leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'leftToes'], ['rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'rightToes']];
     if (!chains.every(c => rest[c[0]] && rest[c[1]] && rest[c[2]])) return;
-    // 腰を原点にした足の最下点の高さ(y)。toes が無ければ foot のみ
-    const lowest = (W) => {
+    // 腰を原点にした足の最下点の高さ(y)。toes が無ければ foot のみ。chainIdx 指定でその脚だけ
+    const lowest = (W, chainIdx = -1) => {
         let m = Infinity;
-        for (const c of chains) {
+        for (const [ci, c] of chains.entries()) {
+            if (chainIdx >= 0 && ci !== chainIdx) continue;
             let pos = [0, 0, 0];
             let parentRot = W.hips ?? [0, 0, 0, 1];
             for (const b of c) {
@@ -284,6 +289,7 @@ function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
     for (const c of chains) for (const b of c) ID[b] = [0, 0, 0, 1];
     ID.hips = [0, 0, 0, 1];
     const restLow = lowest(ID); // レスト(立ち姿・足は床に接地)の最下点
+    const restLowC = [lowest(ID, 0), lowest(ID, 1)];
     const n = keyframes.length;
     // 腰の高さ(レストの腰位置 + 移動量)を含む足の最下点の、レストからの高さ
     const h = keyframes.map((_, f) => hips[f][1] + lowest(legW[f]) - restLow);
@@ -299,11 +305,56 @@ function groundFeet(keyframes, hips, legW, rest, hm, snap = [0.15, 0.35]) {
     // 3 点ガウス平滑(2 回)
     let c = corr;
     for (let k = 0; k < 2; k++) c = c.map((v, i) => 0.25 * (c[Math.max(0, i - 1)] + c[Math.min(n - 1, i + 1)]) + 0.5 * v);
+    const heights = [[], []]; // 補正後の脚ごとの最下点の床からの高さ(足の水平化の接地判定用)
     for (let f = 0; f < n; f++) {
         const dy = g + c[f];
+        for (let ci = 0; ci < 2; ci++) heights[ci].push(hips[f][1] + lowest(legW[f], ci) - restLowC[ci] + dy);
         hips[f][1] += dy;
         const hb = keyframes[f].bones.hips;
         if (hb && hb.py !== undefined) hb.py = hips[f][1] * hm[1];
+    }
+    return heights;
+}
+
+// ---- 足の水平化 ----
+// SAM3DBody の足の向きは単眼では内外のロールが定まらず、広い立ち位置などで両足が 20° 前後傾く(床に平らに着いているのに)。
+// MHR の足には左右方向の基準になる関節が無く(基準姿勢では足は平ら)、手のような 2 ベクトルの姿勢合わせでは直せないため、
+// 接地中(床から 3cm 以内で全適用、10cm で 0)の足は、前方軸まわりに回して左右軸を水平にする。つま先(Toes)も同じ回転で追従。
+function flattenFeet(keyframes, legW, heights, parentOf, has) {
+    const sides = [['left', [1, 0, 0], 1], ['right', [-1, 0, 0], -1]];
+    for (const [ci, [side, latAxis, sgn]] of sides.entries()) {
+        const foot = side + 'Foot', toes = side + 'Toes';
+        if (!has(foot)) continue;
+        for (let f = 0; f < keyframes.length; f++) {
+            const hgt = heights[ci][f];
+            const w = hgt <= 0.03 ? 1 : hgt >= 0.10 ? 0 : 1 - (hgt - 0.03) / 0.07;
+            if (w <= 0) continue;
+            const W = legW[f];
+            const fwd = qRotVec(W[foot], [0, 0, 1]);
+            if (Math.abs(fwd[1]) > 0.9) continue; // つま先がほぼ真上/真下のときは向きが定まらない
+            const lat = qRotVec(W[foot], latAxis);
+            const latT = vNorm(vCross([0, 1, 0], fwd)).map(v => v * sgn);
+            let d = qArc(lat, latT);
+            // 補正角は ±40° に制限し、接地の度合いで弱める(軸角→スケール)
+            const ang = 2 * Math.acos(Math.min(1, Math.abs(d[3])));
+            if (ang < 1e-4) continue;
+            const k = Math.min(1, (40 * Math.PI / 180) / ang) * w;
+            const sinH = Math.sqrt(1 - d[3] * d[3]) || 1;
+            const half = ang * k / 2, sgnW = d[3] < 0 ? -1 : 1;
+            const ax = [d[0] / sinH * sgnW, d[1] / sinH * sgnW, d[2] / sinH * sgnW];
+            const dq = [ax[0] * Math.sin(half), ax[1] * Math.sin(half), ax[2] * Math.sin(half), Math.cos(half)];
+            W[foot] = qNorm(qMul(dq, W[foot]));
+            if (W[toes]) W[toes] = qNorm(qMul(dq, W[toes]));
+            // ローカル回転を更新(足 = 下腿の逆 * 足、つま先 = 足の逆 * つま先)
+            const bones = keyframes[f].bones;
+            const setLocal = (b) => {
+                const p = parentOf(b);
+                const l = qNorm(p ? qMul(qInv(W[p]), W[b]) : W[b]);
+                bones[b] = { ...bones[b], qx: l[0], qy: l[1], qz: l[2], qw: l[3] };
+            };
+            setLocal(foot);
+            if (W[toes]) setLocal(toes);
+        }
     }
 }
 
