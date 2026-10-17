@@ -339,6 +339,38 @@ const NAMED_PARENT = { neck: 'chest', leftShoulder: 'chest', rightShoulder: 'che
 // 指の先端(Distal)は中節の回転を 2/3 コピーして合成する(関節が 2 つしか無いため)
 const FINGER_DISTAL_SYNTH = 0.66;
 
+// 骨盤の幅の違いを脚の開きで補う。リターゲットは回転だけを写すので、被写体より VRM の股関節の間隔が狭いと、
+// 足の左右の間隔も同じだけ狭くなる(正面から見ると足が交差して見える)。脚全体を骨盤の左右方向に、股関節の間隔の差(+ extra)の
+// 半分だけ足首がずれる角度で開く(足首の向きは変えない)。W は更新し、親からのローカル回転を返す
+function widenStance(W, bones, legRest, dHalf, parentOf, has) {
+    if (!legRest || !W.hips || Math.abs(dHalf) < 1e-5) return;
+    for (const [side, sign] of [['left', 1], ['right', -1]]) {
+        const chain = ['UpperLeg', 'LowerLeg', 'Foot'].map(n => side + n);
+        if (!chain.every(b => W[b] && legRest[b])) continue;
+        // 股関節 → 足首のベクトル(腰を原点にしたワールド座標)
+        const hipPos = qRotVec(W.hips, legRest[chain[0]]);
+        const knee = qRotVec(W[chain[0]], legRest[chain[1]]);
+        const ankle = qRotVec(W[chain[1]], legRest[chain[2]]);
+        const v = [knee[0] + ankle[0], knee[1] + ankle[1], knee[2] + ankle[2]];
+        const side3 = qRotVec(W.hips, [sign, 0, 0]);               // 骨盤の外向き
+        const v2 = [v[0] + side3[0] * dHalf, v[1] + side3[1] * dHalf, v[2] + side3[2] * dHalf];
+        const R = qArc(v, v2);
+        const footW = W[chain[2]];
+        W[chain[0]] = qNorm(qMul(R, W[chain[0]]));
+        W[chain[1]] = qNorm(qMul(R, W[chain[1]]));
+        for (const b of [chain[0], chain[2]]) {
+            const p = parentOf(b);
+            const l = qNorm(p ? qMul(qInv(W[p]), W[b]) : W[b]);
+            bones[b] = { qx: l[0], qy: l[1], qz: l[2], qw: l[3] };
+        }
+        W[chain[2]] = footW;
+        // 足首のローカル回転は足首のワールド回転を保つ向きで再計算(親が回ったぶん打ち消す)
+        const pf = parentOf(chain[2]);
+        const lf = qNorm(qMul(qInv(W[pf]), footW));
+        bones[chain[2]] = { qx: lf[0], qy: lf[1], qz: lf[2], qw: lf[3] };
+    }
+}
+
 function retargetNamedBvh(bvh, opts = {}) {
     const avail = opts.availableBones ?? null;
     const yaw = qAxis([0, 1, 0], opts.rootYawDeg ?? 0);
@@ -402,6 +434,15 @@ function retargetNamedBvh(bvh, opts = {}) {
     const subjectHeight = footEnd ? P[hipsI][1] - footEnd[1] : P[hipsI][1];
     const hipsScale = opts.hipsScale ?? (opts.vrmHipsHeight && subjectHeight > 0 ? opts.vrmHipsHeight / subjectHeight : 0.01);
 
+    // 骨盤の幅の差(被写体を VRM のスケールに直した値 - VRM)の半分 + 利用者指定の追加ぶん(m)。片側に足す量
+    let halfWiden = 0;
+    if (opts.legRest && opts.hipWidthFix !== false && byName.has('lThigh') && byName.has('rThigh') && opts.legRest.leftUpperLeg && opts.legRest.rightUpperLeg) {
+        const subjW = Math.abs(P[byName.get('lThigh')][0] - P[byName.get('rThigh')][0]) * hipsScale;
+        const vrmW = Math.abs(opts.legRest.leftUpperLeg[0] - opts.legRest.rightUpperLeg[0]);
+        halfWiden = (subjW - vrmW) / 2;
+    }
+    halfWiden += (opts.stanceExtra ?? 0) / 2;
+
     const keyframes = [], hips = [], legW = [];
     const G = new Array(joints.length);
     const frameIdx = selectFrames(bvh, opts);
@@ -422,6 +463,7 @@ function retargetNamedBvh(bvh, opts = {}) {
             const l = qNorm(p ? qMul(qInv(W[p]), W[b]) : W[b]);
             bones[b] = { qx: l[0], qy: l[1], qz: l[2], qw: l[3] };
         }
+        if (halfWiden) widenStance(W, bones, opts.legRest, halfWiden, parentOf, has);
         // 先端の指(Distal)は中節のローカル回転の一部をコピー。親(中節)の W に続けて W も更新する
         for (const b of BONE_ORDER) {
             if (!isSynthDistal(b) || !has(b)) continue;

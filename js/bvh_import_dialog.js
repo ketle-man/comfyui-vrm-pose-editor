@@ -15,6 +15,8 @@ const STRINGS = {
         secFeet: 'Feet',
         ground: 'Foot grounding',
         groundHint: 'Automatically adjusts hip height so the feet touch the floor',
+        stanceLabel: 'Extra stance width',
+        stanceHint: "Spreads the feet apart (the retarget already matches the pelvis width). Raise it if the walk looks cross-legged from the front",
         groundHintNamed: "Matches the mocap's own foot heights (jumps and cartwheels are kept, feet never sink below the floor)",
         snapLabel: 'Snap-to-floor height',
         snapHint: 'Floating below this height is pressed to the floor. Use a smaller value to keep small hops.',
@@ -39,6 +41,8 @@ const STRINGS = {
         secFeet: '足',
         ground: '接地補正',
         groundHint: '足が床に着くよう腰の高さを自動調整',
+        stanceLabel: '足の幅の追加',
+        stanceHint: '足を左右に広げる(骨盤の幅は自動で合わせ済み)。正面から見て足が交差して見えるときに上げる',
         groundHintNamed: 'モーキャプ自身の足の高さに合わせる(ジャンプ・側転はそのまま残り、床には沈まない)',
         snapLabel: '床に吸着する高さ',
         snapHint: 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく',
@@ -55,7 +59,7 @@ const STRINGS = {
         import: 'Import',
     },
 };
-const DEFAULTS = { hips: true, axisX: true, axisY: true, axisZ: true, ground: true, flatten: true, snapCm: 15 };
+const DEFAULTS = { hips: true, axisX: true, axisY: true, axisZ: true, ground: true, flatten: true, snapCm: 15, stanceCm: 0 };
 
 function loadSettings() {
     try {
@@ -139,6 +143,17 @@ export function askBvhImportOptions(fileName = '', lang, info) {
         const snapHintEl = el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('snapHint'));
         if (!named) { box.appendChild(snapRow); box.appendChild(snapHintEl); }
         mkCheck('flatten', t('flatten'), t('flattenHint'));
+        const stanceIn = el('input', {
+            type: 'number', min: '0', max: '30', step: '1', value: String(s.stanceCm ?? 0),
+            style: 'width:56px;background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+        });
+        stanceIn.addEventListener('keydown', e => e.stopPropagation());
+        if (named) { // 骨盤の幅の差はモーキャプの経路で自動補正。さらに広げたいときの追加ぶん
+            const stanceRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0 2px;color:#ddd;' });
+            stanceRow.append(document.createTextNode(t('stanceLabel')), stanceIn, document.createTextNode('cm'));
+            box.appendChild(stanceRow);
+            box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('stanceHint')));
+        }
 
         heading(t('secRange'));
         const numInput = (value, max) => {
@@ -188,6 +203,7 @@ export function askBvhImportOptions(fileName = '', lang, info) {
             const next = {
                 hips: checks.hips.checked, axisX: checks.axisX.checked, axisY: checks.axisY.checked, axisZ: checks.axisZ.checked,
                 ground: checks.ground.checked, flatten: checks.flatten.checked, snapCm,
+                stanceCm: Math.min(30, Math.max(0, parseFloat(stanceIn.value) || 0)),
             };
             saveSettings(next);
             const anyAxis = next.axisX || next.axisY || next.axisZ;
@@ -198,6 +214,7 @@ export function askBvhImportOptions(fileName = '', lang, info) {
                 groundFeet: groundOn,
                 flattenFeet: groundOn && next.flatten,
                 groundSnap: [snapCm / 100, snapCm / 100 + 0.20], // 吸着から 20cm かけて補正を弱める
+                stanceExtra: next.stanceCm / 100,
                 startSec: Math.max(0, parseFloat(startIn.value) || 0),
                 durationSec: Math.max(0, parseFloat(lenIn.value) || 0),
             });
