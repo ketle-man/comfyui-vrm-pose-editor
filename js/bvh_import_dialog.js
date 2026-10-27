@@ -1,0 +1,266 @@
+// SAM3DBody の BVH を取り込むときの設定ダイアログ(腰の移動・接地補正・足の水平化・軸の選択)。
+// 選んだ値は retargetBvh / bvhTextToVrmaBuffer の opts としてそのまま渡せる形で返す。設定は localStorage に保存する。
+import { makeT } from './i18n.js';
+
+const STORAGE_KEY = 'vrmPoseEditor_bvhImport';
+
+// 文言。en が基準(辞書に無い言語は en にフォールバック)。言語を増やすときはここにコードを足す
+const STRINGS = {
+    en: {
+        secHips: 'Hips motion',
+        hipsOn: 'Import hips movement',
+        hipsOnHint: 'When off, only rotations are applied (the character stays in place)',
+        axisX: 'X left/right', axisY: 'Y up/down', axisZ: 'Z depth',
+        axisHint: 'Depth (Z) tends to drift in single-camera estimation. Turn it off for in-place motion.',
+        secFeet: 'Feet',
+        ground: 'Foot grounding',
+        groundHint: 'Automatically adjusts hip height so the feet touch the floor',
+        stanceLabel: 'Extra stance width',
+        stanceHint: "Spreads the feet apart (the retarget already matches the pelvis width). Raise it if the walk looks cross-legged from the front",
+        groundHintNamed: "Matches the mocap's own foot heights (jumps and cartwheels are kept, feet never sink below the floor)",
+        snapLabel: 'Snap-to-floor height',
+        snapHint: 'Floating below this height is pressed to the floor. Use a smaller value to keep small hops.',
+        flatten: 'Flatten grounded feet',
+        flattenHint: 'Corrects the estimation error in foot roll (inward/outward tilt)',
+        secSmooth: 'Smoothing',
+        despike: 'Remove glitches',
+        despikeHint: 'Replaces 1–2 frame jumps (a limb or the hips suddenly flipping) with the surrounding motion',
+        smoothLabel: 'Jitter smoothing',
+        smoothOff: 'Off', smoothWeak: 'Weak (8 Hz)', smoothMid: 'Medium (6 Hz)', smoothStrong: 'Strong (4 Hz)',
+        smoothHint: 'Removes the frame-to-frame shake of video estimation without delaying the motion. Stronger also softens fast moves.',
+        secRange: 'Range',
+        clipInfo: 'Clip: {sec} s · {fps} fps · {kind}',
+        kindSam3d: 'SAM3DBody skeleton',
+        kindNamed: 'Named skeleton (CMU / Daz)',
+        rangeStart: 'Start',
+        rangeLength: 'Length',
+        rangeHint: 'Seconds to import (Length 0 = to the end). Long clips become many keyframes. Frame rates above 30 fps are thinned out.',
+        cancel: 'Cancel',
+        import: 'Import',
+    },
+    ja: {
+        secHips: '腰の移動 (Hips)',
+        hipsOn: '腰の移動を取り込む',
+        hipsOnHint: 'オフにすると回転のみ(その場で動く)',
+        axisX: 'X 左右', axisY: 'Y 上下', axisZ: 'Z 奥行き',
+        axisHint: '奥行き(Z)は単眼の推定でずれやすい。その場の動きならオフ推奨',
+        secFeet: '足',
+        ground: '接地補正',
+        groundHint: '足が床に着くよう腰の高さを自動調整',
+        stanceLabel: '足の幅の追加',
+        stanceHint: '足を左右に広げる(骨盤の幅は自動で合わせ済み)。正面から見て足が交差して見えるときに上げる',
+        groundHintNamed: 'モーキャプ自身の足の高さに合わせる(ジャンプ・側転はそのまま残り、床には沈まない)',
+        snapLabel: '床に吸着する高さ',
+        snapHint: 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく',
+        flatten: '接地中の足を水平にする',
+        flattenHint: '足の内外の傾き(ロール)の推定誤差を補正',
+        secSmooth: '平滑化',
+        despike: '飛びを取り除く',
+        despikeHint: '手足や腰が 1〜2 フレームだけ急に跳ねる推定ミスを、前後の動きで置き換える',
+        smoothLabel: '揺れの平滑化',
+        smoothOff: 'なし', smoothWeak: '弱 (8 Hz)', smoothMid: '中 (6 Hz)', smoothStrong: '強 (4 Hz)',
+        smoothHint: '動画の推定に出るフレームごとの細かな揺れを、動きを遅らせずに取り除く。強いほど速い動きも丸くなる',
+        secRange: '取り込む範囲',
+        clipInfo: 'クリップ: {sec} 秒 · {fps} fps · {kind}',
+        kindSam3d: 'SAM3DBody の骨格',
+        kindNamed: '名前つき骨格 (CMU / Daz)',
+        rangeStart: '開始',
+        rangeLength: '長さ',
+        rangeHint: '取り込む秒数(長さ 0 = 最後まで)。長いクリップはキーフレームが多くなる。30fps を超えるものは間引く',
+        cancel: 'Cancel',
+        import: 'Import',
+    },
+};
+const DEFAULTS = { hips: true, axisX: true, axisY: true, axisZ: true, ground: true, flatten: true, snapCm: 15, stanceCm: 0, despike: true, smoothHz: 6 };
+const SMOOTH_CHOICES = [[0, 'smoothOff'], [8, 'smoothWeak'], [6, 'smoothMid'], [4, 'smoothStrong']];
+
+function loadSettings() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+    } catch { /* localStorage が使えない環境(プライベートウィンドウ等)は既定値 */ }
+    return { ...DEFAULTS };
+}
+function saveSettings(s) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch { /* 保存できなくても動作に影響しない */ }
+}
+
+function el(tag, attrs = {}, text) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+        if (k === 'style') e.style.cssText = v; else e.setAttribute(k, v);
+    }
+    if (text !== undefined) e.textContent = text;
+    return e;
+}
+
+// 戻り値: Promise<null | { hipsMotion, groundFeet, flattenFeet, groundSnap }>(キャンセルは null)
+// lang: 表示言語の固定(省略時は ComfyUI の言語設定から自動判定)
+// info: peekBvh() の結果(クリップの長さ・fps・骨格の種類の表示と、長いクリップの既定の長さに使う)
+export function askBvhImportOptions(fileName = '', lang, info) {
+    return new Promise(resolve => {
+        const t = makeT(STRINGS, lang);
+        const s = loadSettings();
+        const dlg = el('div', {
+            style: 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;display:flex;align-items:center;justify-content:center;',
+        });
+        const box = el('div', {
+            style: 'background:#1e1e3a;border-radius:8px;padding:16px;width:330px;box-shadow:0 6px 24px rgba(0,0,0,0.7);' +
+                   'font-family:sans-serif;color:#ccc;font-size:12px;',
+        });
+        box.appendChild(el('div', { style: 'font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:4px;' }, '⬇ Import BVH'));
+        if (fileName) box.appendChild(el('div', { style: 'color:#889;margin-bottom:10px;word-break:break-all;' }, fileName));
+
+        const checks = {};
+        const mkCheck = (key, label, hint, indent = 0) => {
+            const row = el('label', { style: `display:flex;align-items:flex-start;gap:6px;margin:5px 0 5px ${indent}px;cursor:pointer;` });
+            const cb = el('input', { type: 'checkbox' });
+            cb.checked = !!s[key];
+            checks[key] = cb;
+            const col = el('div');
+            col.appendChild(el('div', { style: 'color:#ddd;' }, label));
+            if (hint) col.appendChild(el('div', { style: 'color:#889;font-size:11px;margin-top:1px;' }, hint));
+            row.append(cb, col);
+            box.appendChild(row);
+            return row;
+        };
+        const heading = (t) => box.appendChild(el('div', { style: 'color:#9ab;font-size:11px;font-weight:bold;margin:10px 0 2px;border-bottom:1px solid #334;padding-bottom:2px;' }, t));
+
+        heading(t('secHips'));
+        mkCheck('hips', t('hipsOn'), t('hipsOnHint'));
+        const axisRow = el('div', { style: 'display:flex;gap:12px;margin:2px 0 2px 22px;' });
+        for (const [key, label] of [['axisX', t('axisX')], ['axisY', t('axisY')], ['axisZ', t('axisZ')]]) {
+            const l = el('label', { style: 'display:flex;align-items:center;gap:4px;cursor:pointer;color:#ddd;' });
+            const cb = el('input', { type: 'checkbox' });
+            cb.checked = !!s[key];
+            checks[key] = cb;
+            l.append(cb, document.createTextNode(label));
+            axisRow.appendChild(l);
+        }
+        box.appendChild(axisRow);
+        if (info?.kind !== 'named') { // 奥行きのずれは単眼推定(SAM3DBody)の話。モーキャプには当てはまらない
+            box.appendChild(el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('axisHint')));
+        }
+
+        heading(t('secFeet'));
+        const named = info?.kind === 'named'; // モーキャプは足の高さが正確なので、推定誤差用の「吸着する高さ」は使わない
+        mkCheck('ground', t('ground'), t(named ? 'groundHintNamed' : 'groundHint'));
+        const snapRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:2px 0 2px 22px;color:#ddd;' });
+        snapRow.appendChild(document.createTextNode(t('snapLabel')));
+        const snap = el('input', {
+            type: 'number', min: '0', max: '50', step: '1', value: String(s.snapCm),
+            style: 'width:52px;background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+        });
+        snap.addEventListener('keydown', e => e.stopPropagation());
+        snapRow.append(snap, document.createTextNode('cm'));
+        const snapHintEl = el('div', { style: 'color:#889;font-size:11px;margin:0 0 0 22px;' }, t('snapHint'));
+        if (!named) { box.appendChild(snapRow); box.appendChild(snapHintEl); }
+        mkCheck('flatten', t('flatten'), t('flattenHint'));
+        const stanceIn = el('input', {
+            type: 'number', min: '0', max: '30', step: '1', value: String(s.stanceCm ?? 0),
+            style: 'width:56px;background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+        });
+        stanceIn.addEventListener('keydown', e => e.stopPropagation());
+        if (named) { // 骨盤の幅の差はモーキャプの経路で自動補正。さらに広げたいときの追加ぶん
+            const stanceRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0 2px;color:#ddd;' });
+            stanceRow.append(document.createTextNode(t('stanceLabel')), stanceIn, document.createTextNode('cm'));
+            box.appendChild(stanceRow);
+            box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('stanceHint')));
+        }
+
+        // 平滑化は単眼推定(SAM3DBody)の揺れ・飛び向け。モーキャプは元から滑らかなので出さない
+        const smoothSel = el('select', {
+            style: 'background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+        });
+        for (const [hz, key] of SMOOTH_CHOICES) smoothSel.appendChild(el('option', { value: String(hz) }, t(key)));
+        smoothSel.value = String(SMOOTH_CHOICES.some(([hz]) => hz === s.smoothHz) ? s.smoothHz : DEFAULTS.smoothHz);
+        if (!named) {
+            heading(t('secSmooth'));
+            mkCheck('despike', t('despike'), t('despikeHint'));
+            const smoothRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0 2px;color:#ddd;' });
+            smoothRow.append(document.createTextNode(t('smoothLabel')), smoothSel);
+            box.appendChild(smoothRow);
+            box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('smoothHint')));
+        }
+
+        heading(t('secRange'));
+        const numInput = (value, max) => {
+            const i = el('input', {
+                type: 'number', min: '0', max: String(max), step: '0.5', value: String(value),
+                style: 'width:64px;background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+            });
+            i.addEventListener('keydown', e => e.stopPropagation());
+            return i;
+        };
+        const dur = info?.durationSec > 0 ? info.durationSec : 0;
+        if (dur > 0) {
+            box.appendChild(el('div', { style: 'color:#9ab;margin:2px 0 4px;' }, t('clipInfo', {
+                sec: dur.toFixed(1), fps: Math.round(info.fps), kind: info.kind === 'sam3d' ? t('kindSam3d') : t('kindNamed'),
+            })));
+        }
+        const rangeRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:2px 0;color:#ddd;' });
+        const startIn = numInput(0, 100000);
+        const lenIn = numInput(dur > 30 ? 30 : 0, 100000); // 30 秒を超えるクリップは既定で先頭 30 秒
+        const span = (txt, ml = 0) => el('span', { style: `margin-left:${ml}px;` }, txt);
+        rangeRow.append(span(t('rangeStart')), startIn, span('s'), span(t('rangeLength'), 12), lenIn, span('s'));
+        box.appendChild(rangeRow);
+        box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('rangeHint')));
+
+        // 依存関係: 腰の移動(Y 軸)が無いと接地補正は効かない。接地補正が無いと足の水平化は効かない
+        const sync = () => {
+            const hipsOn = checks.hips.checked;
+            for (const k of ['axisX', 'axisY', 'axisZ']) checks[k].disabled = !hipsOn;
+            const groundOk = hipsOn && checks.axisY.checked;
+            checks.ground.disabled = !groundOk;
+            snap.disabled = !groundOk || !checks.ground.checked;
+            checks.flatten.disabled = !groundOk || !checks.ground.checked;
+            const dim = (e, d) => { e.closest('label')?.style.setProperty('opacity', d ? '0.45' : '1'); };
+            for (const k of ['axisX', 'axisY', 'axisZ', 'ground', 'flatten']) dim(checks[k], checks[k].disabled);
+            snapRow.style.opacity = snap.disabled ? '0.45' : '1';
+            snapHintEl.style.opacity = snap.disabled ? '0.45' : '1';
+        };
+        for (const k of ['hips', 'axisY', 'ground']) checks[k].addEventListener('change', sync);
+        sync();
+
+        const btnRow = el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;margin-top:14px;' });
+        const cancelBtn = el('button', { style: 'padding:5px 12px;background:#444;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;' }, t('cancel'));
+        const okBtn = el('button', { style: 'padding:5px 12px;background:#2a5a8a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:bold;' }, t('import'));
+        const close = (v) => { document.removeEventListener('keydown', onKey, true); dlg.remove(); resolve(v); };
+        const ok = () => {
+            const snapCm = Math.min(50, Math.max(0, parseFloat(snap.value) || 0));
+            const next = {
+                hips: checks.hips.checked, axisX: checks.axisX.checked, axisY: checks.axisY.checked, axisZ: checks.axisZ.checked,
+                ground: checks.ground.checked, flatten: checks.flatten.checked, snapCm,
+                stanceCm: Math.min(30, Math.max(0, parseFloat(stanceIn.value) || 0)),
+                despike: named ? s.despike : !!checks.despike?.checked, smoothHz: parseFloat(smoothSel.value) || 0,
+            };
+            saveSettings(next);
+            const anyAxis = next.axisX || next.axisY || next.axisZ;
+            const hipsOn = next.hips && anyAxis;
+            const groundOn = hipsOn && next.axisY && next.ground;
+            close({
+                hipsMotion: hipsOn ? [next.axisX ? 1 : 0, next.axisY ? 1 : 0, next.axisZ ? 1 : 0] : false,
+                groundFeet: groundOn,
+                flattenFeet: groundOn && next.flatten,
+                groundSnap: [snapCm / 100, snapCm / 100 + 0.20], // 吸着から 20cm かけて補正を弱める
+                stanceExtra: next.stanceCm / 100,
+                despike: next.despike, smoothHz: next.smoothHz, // 名前つき骨格の経路では使われない
+                startSec: Math.max(0, parseFloat(startIn.value) || 0),
+                durationSec: Math.max(0, parseFloat(lenIn.value) || 0),
+            });
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.stopPropagation(); close(null); }
+            else if (e.key === 'Enter' && e.target?.tagName !== 'BUTTON') { e.stopPropagation(); ok(); }
+        };
+        document.addEventListener('keydown', onKey, true);
+        cancelBtn.onclick = () => close(null);
+        okBtn.onclick = ok;
+        btnRow.append(cancelBtn, okBtn);
+        box.appendChild(btnRow);
+        dlg.appendChild(box);
+        dlg.addEventListener('click', e => { if (e.target === dlg) close(null); });
+        document.body.appendChild(dlg);
+        setTimeout(() => okBtn.focus(), 0);
+    });
+}

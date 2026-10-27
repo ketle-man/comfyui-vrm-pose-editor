@@ -2,6 +2,8 @@ import { app } from "../../scripts/app.js";
 import { initPoseEditor3D } from './pose_editor_core.js';
 import { openLightPoseEditor, importVrmaAsKeyframesFromNode } from './light_editor.js';
 import { resolveDefaultModel } from './default_model.js';
+import { bvhTextToVrmaBuffer, peekBvh } from './bvh_retarget.js';
+import { askBvhImportOptions } from './bvh_import_dialog.js';
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -74,10 +76,10 @@ app.registerExtension({
 
             // VRMAボタンのキーフレーム読み込み版。選んだ.vrmaをそのまま流すのではなく、
             // Light & Pose Editorのキーフレームタイムライン(Poseトラック)へサンプリング読み込みする
-            const vrmaKeyBtn = makeSmallButton("VRMA (KEY)", "#3a7a9a", "Load .vrma as pose keyframes (Light & Pose Editor)");
+            const vrmaKeyBtn = makeSmallButton("VRMA (KEY)", "#3a7a9a", "Load .vrma / SAM3DBody .bvh as pose keyframes (Light & Pose Editor)");
             const vrmaKeyInput = document.createElement("input");
             vrmaKeyInput.type = "file";
-            vrmaKeyInput.accept = ".vrma";
+            vrmaKeyInput.accept = ".vrma,.bvh";
             vrmaKeyInput.style.display = "none";
             vrmaKeyBtn.onclick = () => vrmaKeyInput.click();
 
@@ -722,16 +724,29 @@ app.registerExtension({
             vrmaKeyInput.addEventListener("change", (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
+                const isBvh = /\.bvh$/i.test(file.name);
                 const reader = new FileReader();
-                reader.onload = (ev) => {
+                reader.onload = async (ev) => {
                     syncLipTextToEditor();
+                    let buffer = ev.target.result;
+                    if (isBvh) {
+                        // SAM3DBody の BVH(ComfyUI BuildPoseFile) → VRM ボーン回転へリターゲットして .vrma 化
+                        try {
+                            const bvhOpts = await askBvhImportOptions(file.name, undefined, peekBvh(buffer));
+                            if (!bvhOpts) return; // キャンセル
+                            buffer = await bvhTextToVrmaBuffer(editor, buffer, bvhOpts);
+                        } catch (err) {
+                            alert("BVH import error: " + (err?.message ?? err));
+                            return;
+                        }
+                    }
                     importVrmaAsKeyframesFromNode(
                         editor, cvsWrapper, _currentVrmBuffer, () => currentMorphKeys,
                         onLightPoseEditorClosed, nodeActions,
-                        ev.target.result, file.name.replace(/\.vrma$/i, ""),
+                        buffer, file.name.replace(/\.(vrma|bvh)$/i, ""),
                     );
                 };
-                reader.readAsArrayBuffer(file);
+                if (isBvh) reader.readAsText(file); else reader.readAsArrayBuffer(file);
                 vrmaKeyInput.value = "";
             });
 

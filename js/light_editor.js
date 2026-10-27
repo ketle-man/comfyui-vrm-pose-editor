@@ -11,6 +11,8 @@
  */
 
 import { openPoseLibrary } from './pose_library.js';
+import { bvhTextToVrmaBuffer, peekBvh } from './bvh_retarget.js';
+import { askBvhImportOptions } from './bvh_import_dialog.js';
 import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
 import { buildAudioTab, buildSettingsTab, generateSpeech, fetchAudioFile, getSelectedAudio, setSelectedAudio, onSelectedAudioChange } from './audio_panel.js';
@@ -901,8 +903,8 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     // VRMAボタンのキーフレーム読み込み版。選んだ.vrmaをそのままロードせず、この場でキーフレーム
     // タイムライン(Poseトラック)へサンプリング読み込みする(モーダル内なのでkeyframePanelを直接呼べる)
     const poseVrmaKeyBtn = mkBtn("VRMA (KEY)", "#444");
-    poseVrmaKeyBtn.title = "Load .vrma as pose keyframes";
-    const poseVrmaKeyInput = mkFileInput(".vrma");
+    poseVrmaKeyBtn.title = "Load .vrma / SAM3DBody .bvh as pose keyframes";
+    const poseVrmaKeyInput = mkFileInput(".vrma,.bvh");
     poseVrmaKeyBtn.onclick = () => poseVrmaKeyInput.click();
     poseVrmaKeyInput.addEventListener("change", e => {
         const file = e.target.files[0];
@@ -912,11 +914,21 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             poseVrmaKeyInput.value = "";
             return;
         }
+        const isBvh = /\.bvh$/i.test(file.name);
         const reader = new FileReader();
-        reader.onload = ev => {
-            keyframePanel.importVrmaAsKeyframes(ev.target.result, file.name.replace(/\.vrma$/i, ""));
+        reader.onload = async ev => {
+            let buffer = ev.target.result;
+            if (isBvh) {
+                // SAM3DBody の BVH → VRM ボーン回転へリターゲットして .vrma 化(bvh_retarget.js)
+                try {
+                    const bvhOpts = await askBvhImportOptions(file.name, undefined, peekBvh(buffer));
+                    if (!bvhOpts) return; // キャンセル
+                    buffer = await bvhTextToVrmaBuffer(editor, buffer, bvhOpts);
+                } catch (err) { alert("BVH import error: " + (err?.message ?? err)); return; }
+            }
+            keyframePanel.importVrmaAsKeyframes(buffer, file.name.replace(/\.(vrma|bvh)$/i, ""));
         };
-        reader.readAsArrayBuffer(file);
+        if (isBvh) reader.readAsText(file); else reader.readAsArrayBuffer(file);
         poseVrmaKeyInput.value = "";
     });
 
@@ -1043,7 +1055,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     libPanel.style.display = "none";
 
     // ---- Image タブ: 左ペイン(画像) / 右ペイン(SAM3D 実行・オプション)。幅は Light/Pose と同じ 270px / 280px ----
-    const imagePanel = buildImagePosePanel(editor);
+    // 動画から作ったモーションは、このモーダルのキーフレームパネルへ取り込む
+    const imagePanel = buildImagePosePanel(editor, {
+        importKeyframes: (buf, name) => keyframePanel.importVrmaAsKeyframes(buf, name),
+    });
 
     body.append(lightLeftWrap, poseLeftWrap, imagePanel.leftEl, previewPanel, propPanel, posePropPanel, imagePanel.propEl, libPanel);
     dialog.append(header, body, keyframePanel.el);

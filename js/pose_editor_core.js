@@ -1758,7 +1758,9 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
     // keyframeList: [{ time: number, bones: {boneName: {qx,qy,qz,qw}} }, ...]
     // (bonesの中身はexportPose()が返すJSONのbonesフィールドと同じ形式)
-    function _buildVrmaAnimationClip(keyframeList, boneNameMap) {
+    // restHips: 正規化ヒューマノイドのレスト姿勢の腰位置 [x,y,z]。keyframeList の bones.hips に px/py/pz
+    // (レストからの移動量[m]、読込中モデルの座標系)があれば、腰の位置トラックを追加する
+    function _buildVrmaAnimationClip(keyframeList, boneNameMap, restHips) {
         const sorted = [...keyframeList].sort((a, b) => a.time - b.time);
         for (let i = 1; i < sorted.length; i++) {
             if (sorted[i].time <= sorted[i - 1].time) sorted[i].time = sorted[i - 1].time + 0.0001;
@@ -1783,6 +1785,18 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
             });
             tracks.push(new THREE.QuaternionKeyframeTrack(`${node.name}.quaternion`, times, values, THREE.InterpolateLinear));
         }
+
+        const hipsNode = boneNameMap.get("hips");
+        if (hipsNode && restHips && sorted.some(k => k.bones.hips && k.bones.hips.px !== undefined)) {
+            const pv = new Float32Array(sorted.length * 3);
+            sorted.forEach((k, i) => {
+                const h = k.bones.hips;
+                let x = restHips[0] + (h?.px ?? 0), y = restHips[1] + (h?.py ?? 0), z = restHips[2] + (h?.pz ?? 0);
+                if (isSourceVrm0) { x = -x; z = -z; } // 回転と同じくVRM1正準空間で保存する
+                pv.set([x, y, z], i * 3);
+            });
+            tracks.push(new THREE.VectorKeyframeTrack(`${hipsNode.name}.position`, times, pv, THREE.InterpolateLinear));
+        }
         return new THREE.AnimationClip("VRMAExport", duration, tracks);
     }
 
@@ -1795,7 +1809,8 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         }
 
         const boneNameMap = _boneNameMap();
-        const clip = _buildVrmaAnimationClip(keyframeList, boneNameMap);
+        const restHips = currentVRM.humanoid.normalizedRestPose?.hips?.position ?? null;
+        const clip = _buildVrmaAnimationClip(keyframeList, boneNameMap, restHips);
 
         // Tポーズへ退避(VRMAの参照スケルトンはレスト姿勢である必要がある)＋
         // ヒットボックスメッシュを一時非表示化(エクスポート結果への混入防止)
@@ -2374,6 +2389,13 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 const q = bone.quaternion;
                 data[key] = { qx: q.x, qy: q.y, qz: q.z, qw: q.w };
             });
+            // 腰の位置がレストからずれているときだけ移動量を付ける(px,py,pz[m]。モーション取り込み・VRMA書き出し用)
+            const restHipsPos = currentVRM?.humanoid?.normalizedRestPose?.hips?.position;
+            const hipsNode = currentVRM?.humanoid?.getNormalizedBoneNode('hips');
+            if (restHipsPos && hipsNode && data.hips) {
+                const dx = hipsNode.position.x - restHipsPos[0], dy = hipsNode.position.y - restHipsPos[1], dz = hipsNode.position.z - restHipsPos[2];
+                if (Math.hypot(dx, dy, dz) > 1e-6) Object.assign(data.hips, { px: dx, py: dy, pz: dz });
+            }
             const vrmVer = currentVRM?.meta?.metaVersion ?? null;
             return JSON.stringify({ version: 2, vrmVersion: vrmVer, bones: data }, null, 2);
         },
@@ -2559,6 +2581,14 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                         q.set(q.x, -q.y, q.z, -q.w).normalize();
                     }
                     bone.quaternion.copy(q);
+                    if (key === 'hips' && bd.px !== undefined && currentVRM) {
+                        const rest = currentVRM.humanoid.normalizedRestPose?.hips?.position;
+                        if (rest) {
+                            // VRM0↔VRM1 間は X,Z を反転
+                            const sx = needConvert ? -1 : 1;
+                            bone.position.set(rest[0] + bd.px * sx, rest[1] + bd.py, rest[2] + bd.pz * sx);
+                        }
+                    }
                 });
                 if (currentVRM) {
                     currentVRM.humanoid.update();
