@@ -221,6 +221,18 @@ Estimates the pose of a person in an image and applies it to the loaded VRM.
 - Requirements: ComfyUI **0.38+** (native SAM 3D Body nodes) and a SAM 3D Body model in `models/detection/` (e.g. `sam_3d_body_dinov3_bf16.safetensors`). Foot (ankle) rotation is not estimated.
 - **Licensing**: this node does **not** include any SAM 3D Body code or model weights. It only calls ComfyUI's own HTTP API and parses the resulting GLB files. The SAM 3D Body model is subject to its own license, which you accept when you download it.
 
+##### Video → Motion
+
+Load a **video** (mp4 / webm / mov) in the same place instead of an image to turn a person's movement into pose keyframes.
+
+1. Load the video (**Load Image** or drag & drop). The button changes to **▶ Run SAM3D (Video)**.
+2. Set the range to import (**Start** / **Length** in seconds; by default the first 10 seconds, Length 0 = to the end).
+3. Press **▶ Run SAM3D (Video)**. Every frame is estimated by SAM 3D Body (`LoadVideo` → `Video Slice` → `GetVideoComponents` → `SAM3DBody_Predict` → `BuildPoseFile` (bvh) → `SaveGLB`). The BVH is also kept in ComfyUI's `output/3d/`.
+4. The [BVH import dialog](#importing-a-bvh-motion-capture) opens. Press **Import** and the motion is added to the Pose track as keyframes.
+
+- Time grows with the number of frames (about 20 seconds for 3 seconds / 90 frames on an RTX 4070). Long videos also use a lot of RAM, because every frame is held as an image batch.
+- One person per video. If the hand refinement fails with a dtype error (fp16 environments), it is automatically re-run without hand refinement.
+
 ### Keyframe Timeline (Pose · Camera · Cam Switch · Light · Wind · Eyes · Blink)
 
 Docked at the bottom of the Light & Pose Editor (visible on both tabs), this panel lets you build a short animation by placing keyframes on a frame-based timeline, then preview it, save it, or render it out as `.vrma` / WebM / MP4 / GIF.
@@ -235,8 +247,9 @@ The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one *
 | ✚ Add/Update | Add a keyframe on the selected track at the current frame from whatever is currently set (or overwrite the one already there) |
 | − Delete | Delete the selected track's keyframe at the current frame |
 | 📚 + From Library | Pose track only. Pick a saved pose from the Pose Library and add it as a pose keyframe at the current frame |
-| 🔀 Move | While ON, drag a marker on the timeline to move it to a different frame (if that frame already has a keyframe on the same track, the drag stops there instead of overwriting it) |
+| 🔀 Move | While ON, drag a marker on the timeline to move it to a different frame (if that frame already has a keyframe on the same track, the drag stops there instead of overwriting it). Pose markers carry their shape keys and label with them |
 | 🗑 Delete Mode | While ON, click or drag across markers on the selected track to erase them like an eraser; mutually exclusive with 🔀 Move |
+| ⏱ Stretch | Speeds up or slows down a range of keyframes — see [Time Stretch](#time-stretch-) below |
 | ⏮ ❮ *frame* / *total* ❯ | Jump to frame 0 / step back one frame / current frame and total length / step forward one frame |
 | Active-camera label | Read-only — shows the icon and name of whichever camera is currently active, or "🖥 Monitor" while the free view is on. Selecting a camera is done from the [C sub-tab](#camera-management-) list; this label just reflects it |
 | 🖥 Monitor | Toggles the free third-person view described in [Camera Management](#camera-management-) above — ON detaches the preview from the timeline's camera tracks, OFF hands control back to a real camera |
@@ -252,6 +265,21 @@ The track dropdown next to the "🎬 Keyframes" title holds **🕺 Pose**, one *
 | 📸 Capture | Same as the node's own 📸 Capture button — sends the current frame to the node's output |
 
 > **💾 Save .vrma**, **🎬 WebM**, **🎥 MP4**, and **🎞️ GIF** used to live in this panel too — they've moved to the Pose tab's **K** sub-tab Properties (Pose Data / Output sections) to keep this toolbar from getting overcrowded. See [Pose tab](#pose-tab) above.
+
+#### Time Stretch (⏱)
+
+**⏱ Stretch** changes the spacing of the keyframes in a range, making the motion slower or faster.
+
+| Setting | Description |
+|---|---|
+| Target | All tracks, or only the selected track |
+| Range | Start – end frame (default: 0 – the last keyframe; **全体** resets it) |
+| New length | In frames or %, linked to each other (presets 50 / 75 / 150 / 200%). Above 100% is slower, below is faster |
+| Shift later keys too | On (default): keys after the range move by the added/removed length, and the timeline's total length is stretched too. Off: later keys stay; a length that would overtake them can't be applied |
+
+- When shrinking, several keys can land on the same frame (e.g. a motion imported from a video has a key on every frame). The key closest to its stretched position is kept and the others are dropped. The dialog shows how many keys will move and how many will be dropped before you apply.
+- **↶ 直前のストレッチを戻す** in the dialog undoes the last stretch, as long as nothing else was edited afterwards.
+- Lip audio and Auto Blink run in real time, so only their start positions move (speech speed does not change).
 
 #### Pose track — Shape Keys
 
@@ -295,6 +323,24 @@ Instead of playing a `.vrma` back as a single clip (see [VRMA Animation Playback
 - The clip is sampled once per frame at the timeline's current **FPS** (`frame = 0 … round(duration × fps)`), each frame captured as a full pose keyframe — nothing is thinned out. `totalFrames` is extended automatically if the clip is longer than the current timeline.
 - If the Pose track already has keyframes, a confirmation dialog appears first (camera/light/wind keyframes are never touched by this).
 - **VRMA (KEY)** works even if the Light & Pose Editor isn't open yet — it opens on the Pose tab automatically and imports right after.
+
+#### Importing a `.bvh` (motion capture)
+
+**VRMA (KEY)** also accepts `.bvh` files and retargets them to the loaded VRM as Pose keyframes. Two kinds of skeletons are supported:
+
+- **SAM 3D Body** BVH (ComfyUI's `BuildPoseFile` → bvh, joints named `joint_NNN`) — including the ones made by the [Video → Motion](#video--motion) mode. Both the current ComfyUI output and the corrected format proposed in ComfyUI PR #17005 are detected automatically.
+- **Named skeletons** such as CMU / Daz mocap (`hip`, `lShldr`, `lThigh`, …).
+
+A dialog opens before importing:
+
+| Option | Description |
+|---|---|
+| Hips motion (X / Y / Z) | Import the hips movement per axis. Depth (Z) tends to drift in single-camera estimation |
+| Foot grounding | Adjusts the hip height so the feet touch the floor. SAM 3D Body: snaps small floating to the floor (**Snap-to-floor height**). Mocap: matches the BVH's own foot heights, so jumps and cartwheels are kept |
+| Flatten grounded feet | Corrects the estimated foot roll while the foot is on the floor |
+| Extra stance width | Named skeletons only. Spreads the feet if the walk looks cross-legged from the front |
+| Smoothing | SAM 3D Body only. **Remove glitches** replaces 1–2 frame jumps; **Jitter smoothing** (Off / 8 / 6 / 4 Hz) removes frame-to-frame shake without delaying the motion (zero-phase filter) |
+| Range | Start / length in seconds. Clips above 30 fps are thinned to 30 fps; clips over 30 s import the first 30 s by default |
 
 WebM export uses `MediaRecorder` + `canvas.captureStream()`; GIF export uses a small self-contained encoder (`js/gif_encoder.js`, NeuQuant color quantization + LZW, no external dependencies) and encodes one frame at a time so the browser tab stays responsive even on longer timelines — a GIF with many frames will still take a while to encode (color quantization is the slow part), the button label shows `Encode n/total` progress while it works. **MP4 export** generates the same WebM first, then sends it to a server-side `ffmpeg` endpoint for conversion to H.264 (browsers' `MediaRecorder` doesn't reliably support `video/mp4`) — this requires `ffmpeg` to be available (either on `PATH` or via the bundled `imageio-ffmpeg` dependency).
 
@@ -688,6 +734,18 @@ Monitorを**OFF**にすると、実際のカメラへ操作を戻します: 現�
 - 必要環境: ComfyUI **0.38 以降**（ネイティブ SAM 3D Body ノード）と、`models/detection/` に SAM 3D Body のモデル（例: `sam_3d_body_dinov3_bf16.safetensors`）。足首（足先）の回転は推定しません。
 - **ライセンス**: このノードには SAM 3D Body のコード・モデル重みを**一切含みません**。ComfyUI 本体の HTTP API を呼び、出力された GLB を解析するだけです。SAM 3D Body のモデルはそれぞれのライセンスに従い、ユーザーが各自導入してください。
 
+##### 動画 → モーション
+
+画像の代わりに**動画**（mp4 / webm / mov）を同じ場所に読み込むと、人物の動きをポーズのキーフレームにできます。
+
+1. 動画を読み込みます（**Load Image** またはドラッグ＆ドロップ）。ボタンが **▶ Run SAM3D (Video)** に変わります。
+2. 取り込む範囲を決めます（**Start** / **Length**、秒。既定は先頭 10 秒、Length 0 = 最後まで）。
+3. **▶ Run SAM3D (Video)** を押すと、全フレームを SAM 3D Body で推定します（`LoadVideo` → `Video Slice` → `GetVideoComponents` → `SAM3DBody_Predict` → `BuildPoseFile`（bvh）→ `SaveGLB`）。BVH は ComfyUI の `output/3d/` にも保存されます。
+4. [BVH の取り込みダイアログ](#bvhモーションキャプチャを取り込む)が開きます。**Import** を押すと、動きが Pose トラックのキーフレームとして入ります。
+
+- 時間はフレーム数に比例します（RTX 4070 で 3 秒・90 フレームが約 20 秒）。全フレームを画像として持つため、長い動画はメモリも多く使います。
+- 1 本の動画につき 1 人です。手の補正が dtype エラー（fp16 の環境）で失敗したときは、手の補正をオフにして自動でやり直します。
+
 ### キーフレームタイムライン（ポーズ・カメラ・カメラ切替・ライト・Wind・Eyes・Blink）
 
 Light & Pose Editor下部（両タブ共通）に常設されたパネルで、フレームベースのタイムライン上にキーフレームを配置して短いアニメーションを作成し、プレビュー・保存・`.vrma`/WebM/MP4/GIFとして書き出せます。
@@ -702,8 +760,9 @@ Light & Pose Editor下部（両タブ共通）に常設されたパネルで、�
 | ✚ Add/Update | 選択中トラックの現在フレームに、今の設定をキーフレームとして追加（既にあれば上書き） |
 | − Delete | 選択中トラックの現在フレームのキーフレームを削除 |
 | 📚 + From Library | Poseトラック専用。ポーズライブラリから選んで現在フレームにポーズKFとして追加 |
-| 🔀 Move | ONの間はタイムライン上のマーカーをドラッグして別フレームへ移動（移動先に同じトラックのKFが既にある場合は上書きせず、そこで止まる） |
+| 🔀 Move | ONの間はタイムライン上のマーカーをドラッグして別フレームへ移動（移動先に同じトラックのKFが既にある場合は上書きせず、そこで止まる）。ポーズのマーカーはシェイプキーとラベルも一緒に移動する |
 | 🗑 Delete Mode | ONの間は選択中トラックのマーカーをクリック／ドラッグして消しゴムのように削除できる。🔀 Moveとは排他 |
+| ⏱ Stretch | 範囲内のキーフレームの間隔を伸縮して、動きを速く／遅くする — 後述の[タイムストレッチ](#タイムストレッチ)を参照 |
 | ⏮ ❮ *フレーム* / *合計* ❯ | フレーム0へ／1フレーム戻る／現在フレームと総フレーム数／1フレーム進む |
 | アクティブカメラ表示 | 読み取り専用 — 現在アクティブなカメラのアイコン・名前、または自由視点中は「🖥 Monitor」を表示するだけ。カメラの選択(切替)は[Cサブタブ](#カメラ管理)のリストで行う |
 | 🖥 Monitor | 上記[カメラ管理](#カメラ管理)で説明した自由な第三者視点をON/OFFする。ONにするとタイムラインのカメラ関連トラックの適用対象から外れ、OFFにすると実際のカメラへ操作が戻る |
@@ -719,6 +778,21 @@ Light & Pose Editor下部（両タブ共通）に常設されたパネルで、�
 | 📸 Capture | ノード自身の📸 Captureボタンと同じ機能 — 現在フレームをノード出力へ送信 |
 
 > **💾 Save .vrma**・**🎬 WebM**・**🎥 MP4**・**🎞️ GIF**は以前このパネルにありましたが、ツールバーが手狭になってきたためPoseタブの**K**サブタブ Properties（Pose Data／Outputセクション）へ移設しました。詳細は前述の[Poseタブ](#poseタブ)を参照してください。
+
+#### タイムストレッチ（⏱）
+
+**⏱ Stretch** は、範囲内のキーフレームの間隔を伸縮して、動きを遅く／速くします。
+
+| 設定 | 内容 |
+|---|---|
+| 対象 | すべてのトラック、または選択中のトラックのみ |
+| 範囲 | 開始〜終了フレーム（既定は 0〜最後のキーフレーム。**全体** で戻せる） |
+| 新しい長さ | フレーム数と % のどちらでも指定でき、連動する（50 / 75 / 150 / 200% のボタンあり）。100% より大きいとゆっくり、小さいと速くなる |
+| 範囲より後ろのキーも一緒にずらす | オン（既定）: 後ろのキーは伸縮で増減した長さだけずれ、タイムラインの全体の長さも伸縮する。オフ: 後ろのキーは動かさず、それを追い越す長さは適用できない |
+
+- 縮めると、複数のキーが同じフレームに重なることがあります（動画から取り込んだ毎フレームのキーなど）。伸縮後の位置に一番近いキーを残し、ほかは間引きます。動くキーと間引くキーの数は、適用前にダイアログに表示されます。
+- ダイアログの **↶ 直前のストレッチを戻す** で、直前のストレッチを取り消せます（その後に別の編集をしていない場合のみ）。
+- Lip の音声と自動瞬きは実時間で動くため、開始位置だけが動きます（話す速さは変わりません）。
 
 #### Poseトラック — Shape Keys
 
@@ -762,6 +836,24 @@ Poseタブの Shape Keys 一覧の先頭にある **😑 Auto Blink** で、VRM 
 - クリップはタイムラインの現在の**FPS**設定で1フレームずつサンプリングされ（`frame = 0 … round(duration × fps)`）、間引かずすべてのフレームがポーズKFとして記録されます。クリップの方が長ければ`totalFrames`も自動的に拡張されます。
 - Poseトラックに既にKFがある場合は確認ダイアログが表示されます（カメラ・ライト・WindのKFはこの操作では変更されません）。
 - **VRMA (KEY)**はLight & Pose Editorが未オープンでも動作します — 自動的にPoseタブで開いてからインポートされます。
+
+#### `.bvh`（モーションキャプチャ）を取り込む
+
+**VRMA (KEY)** は `.bvh` も受け付け、読み込み中の VRM にリターゲットして Pose キーフレームにします。対応する骨格は 2 種類です。
+
+- **SAM 3D Body** の BVH（ComfyUI の `BuildPoseFile` → bvh、関節名が `joint_NNN`）。[動画 → モーション](#動画--モーション)で作ったものも含みます。現在の ComfyUI の出力と、ComfyUI の PR #17005 で提案されている修正後の書式のどちらも自動で判定します。
+- CMU / Daz のモーキャプなどの**名前つき骨格**（`hip`、`lShldr`、`lThigh` など）。
+
+取り込む前にダイアログが開きます。
+
+| 項目 | 内容 |
+|---|---|
+| 腰の移動（X / Y / Z） | 腰の移動を軸ごとに取り込む。奥行き（Z）は単眼の推定でずれやすい |
+| 接地補正 | 足が床に着くよう腰の高さを合わせる。SAM 3D Body: 小さな浮きを床に吸着（**床に吸着する高さ**）。モーキャプ: BVH 自身の足の高さに合わせるので、ジャンプや側転はそのまま残る |
+| 接地中の足を水平にする | 床に着いている足の傾き（ロール）の推定誤差を補正 |
+| 足の幅の追加 | 名前つき骨格のみ。正面から見て足が交差して見えるときに広げる |
+| 平滑化 | SAM 3D Body のみ。**飛びを取り除く** で 1〜2 フレームの跳ねを置き換え、**揺れの平滑化**（なし / 8 / 6 / 4 Hz）でフレームごとの細かな揺れを、動きを遅らせずに取り除く（ゼロ位相のフィルタ） |
+| 取り込む範囲 | 開始・長さ（秒）。30 fps を超えるクリップは 30 fps に間引く。30 秒を超えるクリップは既定で先頭 30 秒 |
 
 WebM書き出しは`MediaRecorder`＋`canvas.captureStream()`、GIF書き出しは外部依存の無い自作エンコーダ（`js/gif_encoder.js`、NeuQuant色量子化＋LZW）を使用し、1フレームずつ非同期でエンコードすることでフレーム数が多いタイムラインでもブラウザタブが固まらないようにしています（それでも色量子化自体は重い処理のため、フレーム数が多いGIFはエンコードに時間がかかります。ボタンには`Encode n/total`の進捗が表示されます）。**MP4書き出し**は、まず同じ方式でWebMを生成し、それをサーバー側の`ffmpeg`エンドポイントへ送ってH.264へ変換します（ブラウザの`MediaRecorder`は`video/mp4`に確実に対応していないため）。動作には`ffmpeg`が利用可能である必要があります（システム`PATH`上、または同梱の`imageio-ffmpeg`依存経由のいずれか）。
 
@@ -1005,6 +1097,9 @@ A separate **Lip Sync Text** node (category *3D Pose*) passes a text input throu
 - **MP4 export**: generates a WebM via the same pipeline, then `POST`s it to `pose_library_server.py`'s `/pose_library/webm_to_mp4?fps=<fps>` endpoint. Server-side, `ffmpeg` is located via `shutil.which("ffmpeg")` then a fallback to the `imageio-ffmpeg`-bundled binary (same probing order as ComfyUI-VideoHelperSuite), and the H.264 encoder is chosen dynamically from `ffmpeg -encoders` output (`libx264` if present, else `libopenh264` — some redistributed ffmpeg builds, e.g. StabilityMatrix's, disable `libx264` for GPL-avoidance reasons). `-r <fps>` is applied on the *input* side (not the output) because the WebM's container timestamps come from wall-clock capture timing rather than the timeline's intended frame rate — reinterpreting the same frame count at the intended fps on read gives the correct duration.
 - **Pose Library preview**: when opened with a canvas reference, `pose_library.js` temporarily reparents the shared WebGL canvas into its own 280px-wide preview column using the same DOM-move + CSS-`transform: scale()` technique the Light & Pose Editor uses for its own preview panel, and restores the canvas's original position/style (plus, via an `onClose` callback, re-triggers the caller's own scale recalculation) when the library closes.
 - **Image → Pose (Image tab)**: `js/image_pose.js` uploads the image (`/upload/image`), queues a small API-format workflow with ComfyUI's native nodes (`SAM3DBody_Loader` → `SAM3DBody_Predict` → `BuildPoseFile` ×2 → `SaveGLB` ×2) via `/prompt`, polls `/history`, and downloads the two GLBs via `/view`. `js/image_pose_solver.js` (ported from a TypeScript prototype, no MediaPipe) reads the `openpose_*` joint markers from the `mesh_style=openpose` GLB and the MHR skeleton (`bone_042`/`bone_078` wrists + fingers) from the `mesh_style=body_mesh` GLB, solves VRM 1.0-convention local rotations for the normalized humanoid bones (limb twist from the bend direction, clavicle absorbs the residual shoulder line, hinge-constrained finger joints), flips `x/z` for VRM 0.x, optionally lifts the hips so the feet touch the floor, and applies everything through `editor.importPose()` (version 2 JSON). No SAM 3D Body code or weights are included.
+- **Video → Motion**: the same module queues `LoadVideo` → `Video Slice` → `GetVideoComponents` (its `fps` output is linked into `BuildPoseFile`) → `SAM3DBody_Predict` → `BuildPoseFile` (`format=bvh`, `camera_translation=centered`) → `SaveGLB`, downloads the `.bvh`, and hands it to the BVH importer below. A `dtype`/`Half` execution error (fp16 hand refinement, ComfyUI #16963) triggers one retry with `run_hand_refinement=false`.
+- **BVH retargeting**: `js/bvh_retarget.js`. SAM 3D Body BVHs (`joint_NNN`, MHR joint numbers) store parent-local OFFSETs and absolute MHR rotations, so the world rotation `G` from FK is converted as `D = G·inv(G_bind)`, `W = D·C` (`C` = VRM T-pose → MHR bind, `js/mhr_bind_data.js`), `local = inv(W_parent)·W`; arms use a two-vector alignment (bone direction + palm direction) so twist doesn't accumulate at the elbow/wrist. The bind-relative format proposed in ComfyUI PR #17005 is detected by comparing each OFFSET's direction with the world-space and parent-local bind offsets, and skips `inv(G_bind)`. Named skeletons (CMU / Daz) are world-aligned T-poses, so `G` is used directly. For SAM 3D Body, local rotations and the root position are despiked with a 5-frame Hampel filter and smoothed with a zero-phase 2nd-order Butterworth (`filtfilt`) before grounding. Hips motion is scaled by the hip-height ratio; grounding runs FK on the VRM's own leg rest offsets.
+- **Time Stretch**: `js/keyframe_stretch.js` (pure functions). Each target track's keys are remapped independently (`start + (f − start) × newLength / (end − start)`, later keys shifted); keys rounding onto the same frame keep the one with the smallest rounding error. Only the track's own value moves (the Pose track's value bundles `bones`, `shapeKeys`, and `label`), so other tracks at the same frames are untouched. A one-step undo is kept as long as `JSON.stringify(keyframes) + totalFrames` still matches the post-stretch state.
 - **Default model**: `default_model_server.py` lists `model/` (`GET /pose_editor/models`) and serves files from it (`GET /pose_editor/models/<path>`, restricted to `model/` after `resolve()`, path-style so a `.gltf`'s relative `.bin`/textures resolve). The choice is stored in ComfyUI user data (`/userdata/vrm_pose_editor_settings.json`). The node passes a `defaultModelProvider` to `initPoseEditor3D()`; `.vrm`/`.glb` are fetched once and the same buffer is used for display and Pose Library thumbnails. Without a provider (pages other than the node), the core still falls back to `js/model.{glb,vrm,gltf}`.
 - **Save to ComfyUI output**: `POST /pose_editor/save_output?ext=webm|mp4|gif` writes to `<output>/vrm_pose_editor/pose_YYYYmmdd_HHMMSS[_n].<ext>`. The server picks the file name, accepts only the three extensions, checks the leading bytes (EBML / `ftyp` / `GIF87a`·`GIF89a`), and caps the size at 1 GB.
 - **Auto Blink**: the core writes the `blink` expression weight right before `vrm.update()` in both the render loop and `renderClean()`. The weight is a pure function of time (`_blinkWeightAt(t, interval)`: blinks at `(k + 0.5 + jitter(k)) × interval`, close 0.06 s / hold 0.04 s / open 0.10 s, `jitter` a hash of `k`), so the keyframe panel only has to pass the timeline time (`setBlinkTime(frame / fps)`) during playback and export for every frame to match. While Auto Blink is on, the `blink` shape key reads/writes a separate user value so pose keyframes never record a mid-blink weight.
