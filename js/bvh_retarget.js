@@ -2,6 +2,7 @@
 //
 // この BVH は関節名が joint_NNN(MHR の関節番号、ルートだけ "Hips")で、OFFSET は各関節のローカル軸系の値。
 // ゼロ回転はバインドポーズではないため、汎用の BVH ローダー/リターゲッターでは扱えない。
+// (ComfyUI の修正後の書式では回転ゼロ = バインドになる。isBindRelativeSam3d で判定し、そのときは inv(Gbind) を掛けない)
 // 回転チャンネル(ZXY オイラー)を親から順に掛けると MHR の絶対ワールド回転 G(j,t) になるので、
 //   D_j(t) = G(j,t) * inv(Gbind(j))        … バインドからのワールド空間の回転差分
 //   W_b(t) = D_j(t) * C_b                   … VRM ボーンのワールド回転(C_b は VRM の T ポーズ→MHR バインドの最短回転)
@@ -113,7 +114,27 @@ export function parseBvh(text) {
     for (let i = 0; i < frames; i++) data.push(lines[2 + i].trim().split(/\s+/).map(Number));
     // 種類: SAM3DBody(ルート Hips + joint_NNN)か、名前つきの一般的な BVH(CMU/Daz など)か
     const kind = joints.length > 1 && joints.slice(1).every(j => /^joint_\d+$/.test(j.name)) ? 'sam3d' : 'named';
-    return { joints, frames, frameTime, fps: 1 / frameTime, channelCount: off, data, kind };
+    const bindRelative = kind === 'sam3d' && isBindRelativeSam3d(joints);
+    return { joints, frames, frameTime, fps: 1 / frameTime, channelCount: off, data, kind, bindRelative };
+}
+
+// SAM3DBody の BVH の書式の判定。ComfyUI の BVH 書き出しの修正(Comfy-Org/ComfyUI PR #17005)の前は、OFFSET が親関節の
+// ローカル軸系の値で回転は MHR の絶対回転(回転ゼロ ≠ バインド)。修正後は OFFSET がバインドのワールド軸での差分で、
+// 回転はバインドからの差分(回転ゼロ = バインド)。各 OFFSET の向きが、バインドのワールド差分と、それを親のバインド回転で
+// 戻したローカル値のどちらに近いかで見分ける(体型で長さは変わっても向きは変わらない)。true = 修正後の書式
+function isBindRelativeSam3d(joints) {
+    let world = 0, local = 0;
+    for (const jt of joints) {
+        if (jt.parent < 0 || jt.mhr == null) continue;
+        const a = MHR_BIND[jt.mhr], b = MHR_BIND[joints[jt.parent].mhr];
+        if (!a || !b || Math.hypot(...jt.offset) < 0.5) continue; // 0.5cm 未満は向きが不安定
+        const w = vSub(a.p, b.p);
+        if (Math.hypot(...w) < 0.005) continue;
+        const o = vNorm(jt.offset);
+        world += vDot(o, vNorm(w));
+        local += vDot(o, vNorm(qRotVec(qInv(b.q), w)));
+    }
+    return world > local;
 }
 
 // ヘッダだけを読んで BVH の概要を返す(ダイアログの表示用。全フレームのパースはしない)
@@ -212,6 +233,7 @@ const _C0 = buildCorrection(null);
 // opts.flattenFeet: false で接地中の足の水平化を無効化(既定 true。接地補正が有効なときだけ働く)
 // opts.groundFeet: false で接地補正を無効化(既定 true)。最初のフレームの姿勢に依らず足が床に着くよう、腰の高さを足の位置から合わせる
 // opts.hipsMotion: false で Hips の移動を出力しない。配列 [x,y,z] で軸ごとの倍率(例 [1,1,0] = 奥行きを無視)
+// opts.despike / smoothHz: 時間方向の外れ値の除去・平滑化(SAM3DBody のみ。smoothMotion を参照。既定はどちらもなし)
 // 戻り値: { fps, duration, frames, keyframes:[{time, bones:{name:{qx,qy,qz,qw}}}], hips:[[x,y,z]...] (最初のフレーム基準の移動量[m]) }
 // hips の移動量は keyframes[].bones.hips の px,py,pz(レストからの移動量[m])にも入る(exportVrma が腰の位置トラックにする)
 export function retargetBvh(bvh, opts = {}) {
@@ -242,20 +264,29 @@ export function retargetBvh(bvh, opts = {}) {
     let p0 = null;
     const G = new Array(joints.length);
     const frameIdx = selectFrames(bvh, opts);
-    for (const f of frameIdx) {
+    // フレームごとの各関節のローカル回転と腰の位置(cm)。時間方向の平滑化はここにかける
+    const local = frameIdx.map(f => {
         const row = bvh.data[f];
+        return joints.map(jt => {
+            const o = jt.chOffset + (jt.channels.length - 3); // 末尾3つが回転(順序はチャンネル名から)
+            return eulerByOrder(rotOrder(jt.channels), row[o], row[o + 1], row[o + 2]);
+        });
+    });
+    const rootPos = frameIdx.map(f => { const o = joints[0].chOffset; return bvh.data[f].slice(o, o + 3); });
+    const stepFps = frameIdx.length > 1 ? 1 / ((frameIdx[1] - frameIdx[0]) * bvh.frameTime) : bvh.fps;
+    smoothMotion(local, rootPos, stepFps, opts);
+    for (const [k, f] of frameIdx.entries()) {
         for (let i = 0; i < joints.length; i++) {
-            const jt = joints[i];
-            const ch = jt.channels;
-            const o = jt.chOffset + (ch.length - 3); // 末尾3つが回転(順序はチャンネル名から)
-            const r = eulerByOrder(rotOrder(ch), row[o], row[o + 1], row[o + 2]);
-            G[i] = jt.parent >= 0 ? qMul(G[jt.parent], r) : r;
+            const r = local[k][i];
+            G[i] = joints[i].parent >= 0 ? qMul(G[joints[i].parent], r) : r;
         }
         const W = {};
         const bones = {};
         for (const b of needed) {
             const d = VRM_BONE_MAP[b];
-            const D = qMul(yaw, qMul(G[byMhr.get(d.j)], qInv(MHR_BIND[d.j].q)));
+            // 修正後の書式(bindRelative)は FK の回転がそのままバインドからの差分
+            const Gj = G[byMhr.get(d.j)];
+            const D = qMul(yaw, bvh.bindRelative ? Gj : qMul(Gj, qInv(MHR_BIND[d.j].q)));
             W[b] = qNorm(qMul(D, _C[b]));
             const p = parentOf(b);
             const l = qNorm(p ? qMul(qInv(W[p]), W[b]) : W[b]);
@@ -264,8 +295,7 @@ export function retargetBvh(bvh, opts = {}) {
         keyframes.push({ time: (f - frameIdx[0]) * bvh.frameTime, bones });
         legW.push(W);
 
-        const rj = joints[0];
-        const pos = [row[rj.chOffset], row[rj.chOffset + 1], row[rj.chOffset + 2]].map(v => v * 0.01); // cm → m
+        const pos = rootPos[k].map(v => v * 0.01); // cm → m
         if (!p0) p0 = pos;
         const dlt = qRotVec(yaw, [pos[0] - p0[0], pos[1] - p0[1], pos[2] - p0[2]]).map(v => v * hipsScale);
         hips.push(dlt);
@@ -287,6 +317,82 @@ function selectFrames(bvh, opts) {
     for (let f = start; f < end; f += stride) idx.push(f);
     if (!idx.length) idx.push(start);
     return idx;
+}
+
+// ---- 時間方向の平滑化(SAM3DBody の経路) ----
+// 単眼推定はフレームごとに独立に解くため、関節の回転と腰の位置が細かく揺れ、ときどき 1〜2 フレームだけ大きく飛ぶ。
+//   1) 外れ値(opts.despike): 前後 2 フレームを含む 5 フレームの中央値から despikeDeg(既定 35°)/ despikeCm(既定 20cm)
+//      以上離れたフレームを中央値で置き換える(ハンペルフィルタ。2 フレーム続く飛びまで取れる)
+//   2) 平滑化(opts.smoothHz、0 = なし): 2 次 Butterworth ローパスを前向き・後ろ向きにかける(ゼロ位相なので動きが遅れない)
+// 回転はクォータニオンの符号を前のフレームにそろえてから成分ごとにかけ、正規化する。
+// SAM3DBody-cpp(AmmarkoV、MIT)の後処理(6Hz の Butterworth を filtfilt、速度のしきい値で外れ値を補間)を参考にした。
+// local[k][i]: フレーム k・関節 i のローカル回転、pos[k]: 腰の位置(cm)。どちらもその場で書き換える
+function smoothMotion(local, pos, fps, opts) {
+    const n = local.length;
+    const hz = opts.smoothHz ?? 0;
+    const smooth = hz > 0 && hz < 0.45 * fps; // ナイキスト付近の遮断周波数は平滑化にならないのでかけない
+    if (n < 5 || (!opts.despike && !smooth)) return;
+    const degThr = (opts.despikeDeg ?? 35) * Math.PI / 180, cmThr = opts.despikeCm ?? 20;
+    const coef = smooth ? butterworth2(hz, fps) : null;
+    for (let i = 0; i < local[0].length; i++) {
+        const seq = local.map(r => r[i]);
+        for (let k = 1; k < n; k++) if (vDot4(seq[k], seq[k - 1]) < 0) seq[k] = seq[k].map(v => -v);
+        let out = seq;
+        if (opts.despike) {
+            out = seq.map((q, k) => {
+                const m = qNorm(medianVec(seq, k, 4));
+                return 2 * Math.acos(Math.min(1, Math.abs(vDot4(q, m)))) > degThr ? m : q;
+            });
+        }
+        if (smooth) {
+            const cols = [0, 1, 2, 3].map(c => filtfilt(coef, out.map(q => q[c])));
+            out = out.map((_, k) => qNorm([cols[0][k], cols[1][k], cols[2][k], cols[3][k]]));
+        }
+        for (let k = 0; k < n; k++) local[k][i] = out[k];
+    }
+    let p = pos.map(v => [...v]);
+    if (opts.despike) {
+        p = p.map((v, k) => { const m = medianVec(pos, k, 3); return Math.hypot(...vSub(v, m)) > cmThr ? m : v; });
+    }
+    if (smooth) {
+        const cols = [0, 1, 2].map(c => filtfilt(coef, p.map(v => v[c])));
+        p = p.map((_, k) => [cols[0][k], cols[1][k], cols[2][k]]);
+    }
+    for (let k = 0; k < n; k++) pos[k] = p[k];
+}
+const vDot4 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+// seq[k-2..k+2](端は詰める)の成分ごとの中央値。dim は成分の数
+function medianVec(seq, k, dim) {
+    const win = seq.slice(Math.max(0, k - 2), Math.min(seq.length, k + 3));
+    return Array.from({ length: dim }, (_, c) => {
+        const s = win.map(v => v[c]).sort((a, b) => a - b);
+        return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    });
+}
+// 2 次 Butterworth ローパスの係数(双一次変換、Q = 1/√2)
+function butterworth2(hz, fps) {
+    const w0 = 2 * Math.PI * hz / fps, cs = Math.cos(w0), al = Math.sin(w0) / Math.SQRT2;
+    const a0 = 1 + al;
+    return { b: [(1 - cs) / 2 / a0, (1 - cs) / a0, (1 - cs) / 2 / a0], a: [-2 * cs / a0, (1 - al) / a0] };
+}
+// 前向き・後ろ向きにかけてゼロ位相にする。端の過渡応答を避けるため、両端を点対称に折り返して延長してからかける
+function filtfilt({ b, a }, x) {
+    const n = x.length, pad = Math.min(n - 1, 12);
+    const ext = [];
+    for (let k = pad; k >= 1; k--) ext.push(2 * x[0] - x[k]);
+    ext.push(...x);
+    for (let k = n - 2; k >= n - 1 - pad; k--) ext.push(2 * x[n - 1] - x[k]);
+    const run = (s) => {
+        const y = new Array(s.length);
+        let x1 = s[0], x2 = s[0], y1 = s[0], y2 = s[0]; // 初期状態は先頭の値で静止していたとみなす
+        for (let k = 0; k < s.length; k++) {
+            y[k] = b[0] * s[k] + b[1] * x1 + b[2] * x2 - a[0] * y1 - a[1] * y2;
+            x2 = x1; x1 = s[k]; y2 = y1; y1 = y[k];
+        }
+        return y;
+    };
+    const y = run(run(ext).reverse()).reverse();
+    return y.slice(pad, pad + n);
 }
 
 // 接地補正 → 足の水平化(骨格の種類に依らない共通の後処理)

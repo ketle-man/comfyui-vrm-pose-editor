@@ -22,6 +22,12 @@ const STRINGS = {
         snapHint: 'Floating below this height is pressed to the floor. Use a smaller value to keep small hops.',
         flatten: 'Flatten grounded feet',
         flattenHint: 'Corrects the estimation error in foot roll (inward/outward tilt)',
+        secSmooth: 'Smoothing',
+        despike: 'Remove glitches',
+        despikeHint: 'Replaces 1–2 frame jumps (a limb or the hips suddenly flipping) with the surrounding motion',
+        smoothLabel: 'Jitter smoothing',
+        smoothOff: 'Off', smoothWeak: 'Weak (8 Hz)', smoothMid: 'Medium (6 Hz)', smoothStrong: 'Strong (4 Hz)',
+        smoothHint: 'Removes the frame-to-frame shake of video estimation without delaying the motion. Stronger also softens fast moves.',
         secRange: 'Range',
         clipInfo: 'Clip: {sec} s · {fps} fps · {kind}',
         kindSam3d: 'SAM3DBody skeleton',
@@ -48,6 +54,12 @@ const STRINGS = {
         snapHint: 'これより低い浮きは床に押さえる。小さな跳ねを残すなら小さく',
         flatten: '接地中の足を水平にする',
         flattenHint: '足の内外の傾き(ロール)の推定誤差を補正',
+        secSmooth: '平滑化',
+        despike: '飛びを取り除く',
+        despikeHint: '手足や腰が 1〜2 フレームだけ急に跳ねる推定ミスを、前後の動きで置き換える',
+        smoothLabel: '揺れの平滑化',
+        smoothOff: 'なし', smoothWeak: '弱 (8 Hz)', smoothMid: '中 (6 Hz)', smoothStrong: '強 (4 Hz)',
+        smoothHint: '動画の推定に出るフレームごとの細かな揺れを、動きを遅らせずに取り除く。強いほど速い動きも丸くなる',
         secRange: '取り込む範囲',
         clipInfo: 'クリップ: {sec} 秒 · {fps} fps · {kind}',
         kindSam3d: 'SAM3DBody の骨格',
@@ -59,7 +71,8 @@ const STRINGS = {
         import: 'Import',
     },
 };
-const DEFAULTS = { hips: true, axisX: true, axisY: true, axisZ: true, ground: true, flatten: true, snapCm: 15, stanceCm: 0 };
+const DEFAULTS = { hips: true, axisX: true, axisY: true, axisZ: true, ground: true, flatten: true, snapCm: 15, stanceCm: 0, despike: true, smoothHz: 6 };
+const SMOOTH_CHOICES = [[0, 'smoothOff'], [8, 'smoothWeak'], [6, 'smoothMid'], [4, 'smoothStrong']];
 
 function loadSettings() {
     try {
@@ -155,6 +168,21 @@ export function askBvhImportOptions(fileName = '', lang, info) {
             box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('stanceHint')));
         }
 
+        // 平滑化は単眼推定(SAM3DBody)の揺れ・飛び向け。モーキャプは元から滑らかなので出さない
+        const smoothSel = el('select', {
+            style: 'background:#111;border:1px solid #555;color:#ddd;padding:2px 4px;border-radius:3px;font-size:12px;',
+        });
+        for (const [hz, key] of SMOOTH_CHOICES) smoothSel.appendChild(el('option', { value: String(hz) }, t(key)));
+        smoothSel.value = String(SMOOTH_CHOICES.some(([hz]) => hz === s.smoothHz) ? s.smoothHz : DEFAULTS.smoothHz);
+        if (!named) {
+            heading(t('secSmooth'));
+            mkCheck('despike', t('despike'), t('despikeHint'));
+            const smoothRow = el('div', { style: 'display:flex;align-items:center;gap:6px;margin:6px 0 2px;color:#ddd;' });
+            smoothRow.append(document.createTextNode(t('smoothLabel')), smoothSel);
+            box.appendChild(smoothRow);
+            box.appendChild(el('div', { style: 'color:#889;font-size:11px;' }, t('smoothHint')));
+        }
+
         heading(t('secRange'));
         const numInput = (value, max) => {
             const i = el('input', {
@@ -204,6 +232,7 @@ export function askBvhImportOptions(fileName = '', lang, info) {
                 hips: checks.hips.checked, axisX: checks.axisX.checked, axisY: checks.axisY.checked, axisZ: checks.axisZ.checked,
                 ground: checks.ground.checked, flatten: checks.flatten.checked, snapCm,
                 stanceCm: Math.min(30, Math.max(0, parseFloat(stanceIn.value) || 0)),
+                despike: named ? s.despike : !!checks.despike?.checked, smoothHz: parseFloat(smoothSel.value) || 0,
             };
             saveSettings(next);
             const anyAxis = next.axisX || next.axisY || next.axisZ;
@@ -215,6 +244,7 @@ export function askBvhImportOptions(fileName = '', lang, info) {
                 flattenFeet: groundOn && next.flatten,
                 groundSnap: [snapCm / 100, snapCm / 100 + 0.20], // 吸着から 20cm かけて補正を弱める
                 stanceExtra: next.stanceCm / 100,
+                despike: next.despike, smoothHz: next.smoothHz, // 名前つき骨格の経路では使われない
                 startSec: Math.max(0, parseFloat(startIn.value) || 0),
                 durationSec: Math.max(0, parseFloat(lenIn.value) || 0),
             });
