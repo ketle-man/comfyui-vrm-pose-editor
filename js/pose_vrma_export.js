@@ -2,6 +2,7 @@ import { loadEditorSettings, saveEditorSettings } from './default_model.js';
 import { fetchApi } from './comfy_api.js';
 import { fetchAudioFile, getSelectedAudio } from './audio_panel.js';
 import { analyzeAudioFile } from './lip_sync.js';
+import { planTrackStretch, stretchFrame } from './keyframe_stretch.js';
 
 /**
  * VRMA Keyframe Panel (フレームベース)
@@ -68,6 +69,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
     const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上の(選択中トラックの)マーカーをドラッグして移動できます");
     const deleteModeBtn = mkToggle("🗑 Delete Mode", "ONの間はタイムライン上の(選択中トラックの)マーカーをクリック/ドラッグして削除できます");
+    const stretchBtn = mkBtn("⏱ Stretch", "#333344","範囲内のキーフレームの間隔を伸縮して、動きを速く/遅くします(タイムストレッチ)");
 
     const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
     const prevBtn = mkBtn("❮", "#333344", "1フレーム戻る");
@@ -116,7 +118,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
     toolbar.append(
         titleEl, trackSelect, addBtn, delBtn, addFromLibBtn,
-        sep(), moveBtn, deleteModeBtn,
+        sep(), moveBtn, deleteModeBtn, stretchBtn,
         sep(), gotoStartBtn, prevBtn, frameInput, slashLbl, totalInput, nextBtn,
         sep(), activeCameraLabel, monitorBtn,
     );
@@ -593,7 +595,16 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     function buildTracks() {
         const tracks = {
             pose: {
-                ...fieldAccessors("bones"), color: "#ffdd44", optionLabel: "🕺 Pose",
+                // ポーズの値は bones と、それに束ねて保存する shapeKeys・label をひとまとめに扱う
+                // (bones だけを動かすと、Move やストレッチで表情とラベルが元のフレームに取り残されて消えてしまう)
+                hasData:    kf => kf.bones !== undefined,
+                getValue:   kf => ({ bones: kf.bones, shapeKeys: kf.shapeKeys, label: kf.label }),
+                setValue:   (kf, v) => {
+                    kf.bones = v.bones;
+                    for (const f of ["shapeKeys", "label"]) { if (v[f] !== undefined) kf[f] = v[f]; else delete kf[f]; }
+                },
+                clearValue: kf => { delete kf.bones; delete kf.shapeKeys; delete kf.label; },
+                color: "#ffdd44", optionLabel: "🕺 Pose",
                 addLabel: "✚ Add/Update", addColor: "#4a7a4a",
                 addTitle: "現在フレームに、今のポーズ(シェイプキー含む)をキーフレームとして追加/上書き",
                 delLabel: "− Delete",
@@ -1329,6 +1340,226 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         deleteModeBtn.style.background = deleteMode ? "#8a3a3a" : "#333344";
         canvas.style.cursor = deleteMode ? "crosshair" : (moveMode ? "grab" : "pointer");
     };
+
+    // ----------------------------------------------------------------
+    // タイムストレッチ: 範囲内のキーの間隔を伸縮する(計算は keyframe_stretch.js)
+    // - トラックごとに移動先を決め、そのトラックの値だけを移す(moveKeyframeFrame と同じく、他トラックの値は動かさない)
+    // - 縮めて同じフレームに重なったキーは、本来の位置に一番近いものを残して間引く
+    // - このパネルにはアンドゥが無いため、直前のストレッチだけは元に戻せるようにする
+    //   (ストレッチの後に別の編集をしていたら戻さない。afterSig で同じ状態のままか確かめる)
+    // ----------------------------------------------------------------
+    let lastStretch = null; // { before: {keyframes, totalFrames, currentFrame}, afterSig }
+    const timelineSig = () => JSON.stringify(keyframes) + "|" + totalFrames;
+
+    // 対象トラックのキーの一覧(フレーム番号)。trackKeys: TRACKS のキーの配列
+    const trackFrames = (key) => keyframes.filter(kf => TRACKS[key].hasData(kf)).map(kf => kf.frame);
+
+    // range: { start, end, newLength, shiftAfter }。戻り値: 間引いたキーの数
+    function applyStretch(range, trackKeys) {
+        const before = { keyframes: JSON.parse(JSON.stringify(keyframes)), totalFrames, currentFrame };
+        let dropped = 0;
+        for (const key of trackKeys) {
+            const track = TRACKS[key];
+            const src = keyframes.filter(kf => track.hasData(kf));
+            const plan = planTrackStretch(src.map(kf => kf.frame), range);
+            dropped += plan.dropped.length;
+            // いったん全部外してから移動先へ入れ直す(移動先が同じトラックの別のキーの元の位置でも上書きしないように)
+            const vals = src.map(kf => [kf.frame, track.getValue(kf)]);
+            src.forEach(kf => track.clearValue(kf));
+            keyframes = keyframes.filter(kf => !isEntryEmpty(kf));
+            for (const [from, val] of vals) {
+                if (!plan.moves.has(from)) continue;
+                const to = plan.moves.get(from);
+                let kf = keyframes.find(k => k.frame === to);
+                if (!kf) { kf = { frame: to }; keyframes.push(kf); }
+                track.setValue(kf, val);
+            }
+        }
+        keyframes.sort((a, b) => a.frame - b.frame);
+        // 全体の長さも一緒に伸縮する(後ろをずらすとき)。キーより短くはしない
+        if (range.shiftAfter && totalFrames >= range.end) {
+            totalFrames = Math.max(1, Math.round(stretchFrame(totalFrames, range)));
+        }
+        totalInput.value = String(totalFrames);
+        ensureTotalFrames();
+        lastStretch = { before, afterSig: timelineSig() };
+        updateStatus();
+        seekToFrame(Math.round(stretchFrame(currentFrame, range)));
+        schedulePreviewRefresh();
+        return dropped;
+    }
+
+    function undoStretch() {
+        if (!lastStretch || lastStretch.afterSig !== timelineSig()) return false;
+        const { before } = lastStretch;
+        lastStretch = null;
+        keyframes = before.keyframes;
+        totalFrames = before.totalFrames;
+        totalInput.value = String(totalFrames);
+        updateStatus();
+        seekToFrame(before.currentFrame);
+        schedulePreviewRefresh();
+        return true;
+    }
+
+    stretchBtn.onclick = openStretchDialog;
+    function openStretchDialog() {
+        stopPlayback();
+        const dlg = el("div", {
+            style: "position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100002;" +
+                   "display:flex;align-items:center;justify-content:center;",
+        });
+        const box = el("div", {
+            style: "background:#1e1e3a;border-radius:8px;padding:16px;width:330px;" +
+                   "box-shadow:0 6px 24px rgba(0,0,0,0.7);font-family:sans-serif;color:#ccc;font-size:12px;",
+        });
+        box.appendChild(el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:8px;" }, "⏱ Time Stretch"));
+        const heading = (t) => box.appendChild(el("div", {
+            style: "color:#9ab;font-size:11px;font-weight:bold;margin:10px 0 4px;border-bottom:1px solid #334;padding-bottom:2px;",
+        }, t));
+        const hint = (t) => box.appendChild(el("div", { style: "color:#889;font-size:11px;margin-top:3px;line-height:1.5;" }, t));
+        const rowOf = (...items) => {
+            const r = el("div", { style: "display:flex;align-items:center;gap:6px;margin:3px 0;flex-wrap:wrap;" });
+            r.append(...items.map(x => typeof x === "string" ? el("span", {}, x) : x));
+            box.appendChild(r);
+            return r;
+        };
+        const num = (value, step = 1) => {
+            const i = mkNumInput(0, 100000, step, value);
+            i.style.width = "58px";
+            return i;
+        };
+
+        // 対象
+        heading("対象");
+        const allRadio = el("input", { type: "radio", name: "kfStretchScope" });
+        const oneRadio = el("input", { type: "radio", name: "kfStretchScope" });
+        allRadio.checked = true;
+        const lbl = (input, text) => { const l = el("label", { style: "display:flex;align-items:center;gap:4px;cursor:pointer;color:#ddd;" }); l.append(input, text); return l; };
+        rowOf(lbl(allRadio, "すべてのトラック"), lbl(oneRadio, `選択中のトラックのみ(${TRACKS[selectedTrack].optionLabel})`));
+        const targetKeys = () => allRadio.checked ? Object.keys(TRACKS) : [selectedTrack];
+        const targetFrames = () => [...new Set(targetKeys().flatMap(trackFrames))].sort((a, b) => a - b);
+
+        // 範囲
+        heading("範囲(フレーム)");
+        const lastKey = () => { const f = targetFrames(); return f.length ? f[f.length - 1] : totalFrames; };
+        const startIn = num(0), endIn = num(lastKey());
+        const wholeBtn = mkBtn("全体", "#444", "0 〜 最後のキーフレーム");
+        wholeBtn.style.padding = "3px 8px";
+        rowOf("開始", startIn, "〜 終了", endIn, wholeBtn);
+
+        // 新しい長さ(フレーム数と倍率は連動)
+        heading("新しい長さ");
+        const lenIn = num(lastKey());
+        const pctIn = num(100);
+        rowOf("長さ", lenIn, "フレーム  =", pctIn, "%");
+        const presetRow = rowOf();
+        for (const p of [50, 75, 150, 200]) {
+            const b = mkBtn(`${p}%`, "#33334a");
+            b.style.padding = "3px 8px";
+            b.onclick = () => { pctIn.value = String(p); syncFromPct(); };
+            presetRow.appendChild(b);
+        }
+        hint("100% より大きいとゆっくり、小さいと速くなります。");
+
+        const shiftChk = el("input", { type: "checkbox" });
+        shiftChk.checked = true;
+        const shiftRow = el("label", { style: "display:flex;align-items:center;gap:6px;margin:10px 0 0;cursor:pointer;color:#ddd;" });
+        shiftRow.append(shiftChk, "範囲より後ろのキーも一緒にずらす");
+        box.appendChild(shiftRow);
+
+        const summary = el("div", { style: "margin-top:10px;padding:6px 8px;background:#151528;border-radius:4px;line-height:1.6;color:#bbc;" });
+        box.appendChild(summary);
+        hint("Lip の音声と自動瞬きは実時間で動くため、開始位置だけが動きます(話す速さは変わりません)。");
+
+        const readRange = () => {
+            const start = Math.max(0, parseInt(startIn.value, 10) || 0);
+            const end = Math.max(0, parseInt(endIn.value, 10) || 0);
+            const newLength = Math.max(1, parseInt(lenIn.value, 10) || 0);
+            return { start, end, newLength, shiftAfter: shiftChk.checked };
+        };
+        function syncFromLen() {
+            const r = readRange();
+            if (r.end > r.start) pctIn.value = String(Math.round(r.newLength / (r.end - r.start) * 1000) / 10);
+            refreshSummary();
+        }
+        function syncFromPct() {
+            const r = readRange();
+            const pct = Math.max(1, parseFloat(pctIn.value) || 100);
+            lenIn.value = String(Math.max(1, Math.round((r.end - r.start) * pct / 100)));
+            refreshSummary();
+        }
+        // 実行前に、動くキーと間引かれるキーの数を見せる
+        function refreshSummary() {
+            const r = readRange();
+            if (r.end <= r.start) {
+                summary.textContent = "終了は開始より後ろにしてください";
+                summary.style.color = "#e88";
+                okBtn.disabled = true; okBtn.style.opacity = "0.5";
+                return;
+            }
+            // 後ろをずらさないときは、伸ばした先が範囲の後ろのキーを追い越すと動きの順番が入れ替わるので止める
+            const next = r.shiftAfter ? undefined : targetFrames().find(f => f > r.end);
+            if (next !== undefined && r.start + r.newLength >= next) {
+                summary.textContent = `後ろのキー(フレーム ${next})を追い越します。長さを ${next - r.start - 1} 以下にするか、「後ろのキーも一緒にずらす」をオンにしてください`;
+                summary.style.color = "#e88";
+                okBtn.disabled = true; okBtn.style.opacity = "0.5";
+                return;
+            }
+            let inRange = 0, dropped = 0;
+            for (const key of targetKeys()) {
+                const fr = trackFrames(key);
+                inRange += fr.filter(f => f >= r.start && f <= r.end).length;
+                dropped += planTrackStretch(fr, r).dropped.length;
+            }
+            const newEnd = r.start + r.newLength;
+            summary.style.color = "#bbc";
+            summary.textContent = `範囲内のキー ${inRange} 個: ${r.start}〜${r.end} → ${r.start}〜${newEnd}` +
+                (dropped ? `\n縮めると同じフレームに重なるため ${dropped} 個を間引きます` : "");
+            summary.style.whiteSpace = "pre-line";
+            okBtn.disabled = false; okBtn.style.opacity = "1";
+        }
+        startIn.addEventListener("change", syncFromPct);
+        endIn.addEventListener("change", syncFromPct);
+        lenIn.addEventListener("change", syncFromLen);
+        pctIn.addEventListener("change", syncFromPct);
+        shiftChk.addEventListener("change", refreshSummary);
+        for (const r of [allRadio, oneRadio]) r.addEventListener("change", () => { endIn.value = String(lastKey()); syncFromPct(); });
+        wholeBtn.onclick = () => { startIn.value = "0"; endIn.value = String(lastKey()); syncFromPct(); };
+
+        const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;align-items:center;margin-top:14px;" });
+        const canUndo = !!lastStretch && lastStretch.afterSig === timelineSig();
+        const undoBtn = mkBtn("↶ 直前のストレッチを戻す", "#6a5a3a", "直前のストレッチの前の状態に戻す(その後に別の編集をしていない場合のみ)");
+        undoBtn.style.cssText += "font-size:11px;padding:5px 9px;margin-right:auto;";
+        undoBtn.style.display = canUndo ? "" : "none";
+        const cancelBtn = mkBtn("Cancel", "#444");
+        const okBtn = mkBtn("Apply", "#2a5a8a");
+        for (const b of [cancelBtn, okBtn]) { b.style.fontSize = "11px"; b.style.padding = "5px 12px"; }
+        const close = () => { document.removeEventListener("keydown", onKey, true); dlg.remove(); };
+        const onKey = (e) => {
+            if (e.key === "Escape") { e.stopPropagation(); close(); }
+        };
+        document.addEventListener("keydown", onKey, true);
+        cancelBtn.onclick = close;
+        undoBtn.onclick = () => {
+            close();
+            statusMsg.textContent = undoStretch() ? "ストレッチを元に戻しました" : "元に戻せません(ストレッチの後に編集されています)";
+        };
+        okBtn.onclick = () => {
+            const r = readRange();
+            if (okBtn.disabled || r.end <= r.start) return;
+            close();
+            const dropped = applyStretch(r, targetKeys());
+            updateStatus();
+            statusMsg.textContent += `  ⏱ ${r.start}〜${r.end} → ${r.start}〜${r.start + r.newLength}` + (dropped ? `(${dropped} 個を間引き)` : "");
+        };
+        btnRow.append(undoBtn, cancelBtn, okBtn);
+        box.appendChild(btnRow);
+        dlg.appendChild(box);
+        dlg.addEventListener("click", e => { if (e.target === dlg) close(); });
+        document.body.appendChild(dlg);
+        syncFromPct();
+    }
 
     // ----------------------------------------------------------------
     // フレーム移動(ボタン/数値入力)
