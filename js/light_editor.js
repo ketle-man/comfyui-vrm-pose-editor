@@ -1055,7 +1055,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     libPanel.style.display = "none";
 
     // ---- Image タブ: 左ペイン(画像) / 右ペイン(SAM3D 実行・オプション)。幅は Light/Pose と同じ 270px / 280px ----
-    const imagePanel = buildImagePosePanel(editor);
+    // 動画から作ったモーションは、このモーダルのキーフレームパネルへ取り込む
+    const imagePanel = buildImagePosePanel(editor, {
+        importKeyframes: (buf, name) => keyframePanel.importVrmaAsKeyframes(buf, name),
+    });
 
     body.append(lightLeftWrap, poseLeftWrap, imagePanel.leftEl, previewPanel, propPanel, posePropPanel, imagePanel.propEl, libPanel);
     dialog.append(header, body, keyframePanel.el);
