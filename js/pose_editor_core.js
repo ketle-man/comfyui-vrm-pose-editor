@@ -191,6 +191,25 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
 
     function _hexToColor(hex) { return new THREE.Color(hex); }
 
+    // three.js r160 + vendor/three-vrm.module.js(MToon のスポット影の変数名を vSpotLightCoord に修正済み)で
+    // 平行光・点光源・スポットライトが影を落とせる
+    function _applyShadow(light, on) {
+        light.castShadow = !!on;
+        if (!on || !light.shadow) return;
+        if (light.isDirectionalLight) {
+            light.shadow.mapSize.width = light.shadow.mapSize.height = 2048;
+            light.shadow.camera.near = 0.1; light.shadow.camera.far = 100;
+            light.shadow.camera.left = light.shadow.camera.bottom = -8;
+            light.shadow.camera.right = light.shadow.camera.top = 8;
+        } else {
+            light.shadow.mapSize.width = light.shadow.mapSize.height = 1024;
+            light.shadow.camera.near = 0.1;
+        }
+        light.shadow.bias = -0.0004;
+        light.shadow.normalBias = 0.02;
+        light.shadow.needsUpdate = true;
+    }
+
     function _createThreeLight(cfg) {
         let light;
         const col = _hexToColor(cfg.color);
@@ -200,25 +219,19 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
                 light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
                 light.target.position.set(cfg.target.x, cfg.target.y, cfg.target.z);
                 scene.add(light.target);
-                if (cfg.castShadow) {
-                    light.castShadow = true;
-                    light.shadow.mapSize.width = light.shadow.mapSize.height = 2048;
-                    light.shadow.camera.near = 0.1; light.shadow.camera.far = 100;
-                    light.shadow.camera.left = light.shadow.camera.bottom = -8;
-                    light.shadow.camera.right = light.shadow.camera.top = 8;
-                }
+                _applyShadow(light, cfg.castShadow);
                 break;
             case "point":
                 light = new THREE.PointLight(col, cfg.intensity, cfg.distance ?? 0, cfg.decay ?? 1);
                 light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
-                // PointLight/SpotLight castShadow not supported: VRM MToon shader lacks vPointShadowCoord/vSpotShadowCoord varyings
+                _applyShadow(light, cfg.castShadow);
                 break;
             case "spot":
                 light = new THREE.SpotLight(col, cfg.intensity, cfg.distance ?? 0, cfg.angle ?? Math.PI / 6, cfg.penumbra ?? 0.1, cfg.decay ?? 1);
                 light.position.set(cfg.position.x, cfg.position.y, cfg.position.z);
                 light.target.position.set(cfg.target.x, cfg.target.y, cfg.target.z);
                 scene.add(light.target);
-                // SpotLight castShadow not supported: VRM MToon shader lacks vSpotShadowCoord varying
+                _applyShadow(light, cfg.castShadow);
                 break;
             case "rect":
                 light = new THREE.RectAreaLight(col, cfg.intensity, cfg.width ?? 2, cfg.height ?? 2);
@@ -322,16 +335,8 @@ export function initPoseEditor3D(canvas, gizmoCanvas, baseUrl, onMorphKeysReady,
         if (changes.penumbra  !== undefined && tl.isSpotLight) tl.penumbra = cfg.penumbra;
         if (changes.decay     !== undefined && (tl.isSpotLight || tl.isPointLight)) tl.decay = cfg.decay;
         if (changes.distance  !== undefined && (tl.isSpotLight || tl.isPointLight)) tl.distance = cfg.distance;
-        if (changes.castShadow !== undefined && tl.isDirectionalLight) {
-            // Only DirectionalLight supports shadows with VRM MToon shader
-            tl.castShadow = cfg.castShadow;
-            if (cfg.castShadow && tl.shadow) {
-                tl.shadow.mapSize.width = tl.shadow.mapSize.height = 2048;
-                tl.shadow.camera.left = tl.shadow.camera.bottom = -8;
-                tl.shadow.camera.right = tl.shadow.camera.top = 8;
-                tl.shadow.camera.far = 100;
-                tl.shadow.needsUpdate = true;
-            }
+        if (changes.castShadow !== undefined && (tl.isDirectionalLight || tl.isSpotLight || tl.isPointLight)) {
+            _applyShadow(tl, cfg.castShadow);
         }
         if (changes.width  !== undefined && tl.isRectAreaLight) tl.width  = cfg.width;
         if (changes.height !== undefined && tl.isRectAreaLight) tl.height = cfg.height;

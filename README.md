@@ -108,7 +108,7 @@ The left pane has three sub-tabs:
 
 | Sub-tab | Contents |
 |---------|----------|
-| **L** — Lights | The light list (add/remove/rename lights) and, on the right, a **Properties** panel for the selected light: type (☀ Sun / 💡 Point / 🔦 Spot / ▭ Box RectArea / 🌐 Ambient), color, intensity, position XYZ, target XYZ (Directional/Spot), angle & penumbra (Spot), distance & decay (Point/Spot), shadow (Directional only) |
+| **L** — Lights | The light list (add/remove/rename lights) and, on the right, a **Properties** panel for the selected light: type (☀ Sun / 💡 Point / 🔦 Spot / ▭ Box RectArea / 🌐 Ambient), color, intensity, position XYZ, target XYZ (Directional/Spot), angle & penumbra (Spot), distance & decay (Point/Spot), shadow (Directional / Point / Spot) |
 | **E** — Environment | Ground plane, background wall, shadow quality, and the **🌬 Wind** controls described above |
 | **S** — Settings | 🖱 Ctrl+Right-drag zoom toggle (see [Camera Controls](#camera-controls)), 🖼 anti-aliasing enhancement (supersampling) toggle, and **Default Model** (which model in `model/` loads automatically — see [Default Model](#default-model)) |
 
@@ -621,7 +621,7 @@ VRM に定義された揺れボーン（髪・スカート等）の物理シミ�
 
 | サブタブ | 内容 |
 |---------|------|
-| **L** — Lights | ライト一覧（追加・削除・名前変更）と、右側の選択中ライトの**Properties**パネル: タイプ（☀ Sun / 💡 Point / 🔦 Spot / ▭ Box RectArea / 🌐 Ambient）、色、強度、位置XYZ、ターゲットXYZ（Directional/Spot）、角度＆ペナンブラ（Spot）、距離＆減衰（Point/Spot）、シャドウ（Directionalのみ） |
+| **L** — Lights | ライト一覧（追加・削除・名前変更）と、右側の選択中ライトの**Properties**パネル: タイプ（☀ Sun / 💡 Point / 🔦 Spot / ▭ Box RectArea / 🌐 Ambient）、色、強度、位置XYZ、ターゲットXYZ（Directional/Spot）、角度＆ペナンブラ（Spot）、距離＆減衰（Point/Spot）、シャドウ（Directional / Point / Spot） |
 | **E** — Environment | 地面・背景壁・シャドウ品質、および上述の**🌬 Wind**コントロール |
 | **S** — Settings | 🖱 Ctrl+右ドラッグでズームのトグル（[カメラ操作](#カメラ操作)参照）、🖼 アンチエイリアス強化（スーパーサンプリング）のトグル、**Default Model**（`model/` のどのモデルを自動で読み込むか — [デフォルトモデルの設定](#デフォルトモデルの設定)参照） |
 

@@ -1359,7 +1359,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
         // Shadows
         sec("Shadow");
-        if (cfg.type === "directional") {
+        if (cfg.type === "directional" || cfg.type === "spot" || cfg.type === "point") {
             const chk = document.createElement("input");
             chk.type = "checkbox"; chk.checked = cfg.castShadow ?? false;
             chk.addEventListener("change", () => editor.updateLight(id, { castShadow: chk.checked }));
@@ -1368,9 +1368,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             propBody.appendChild(lbl);
         } else {
             propBody.appendChild(el("div", { style: "font-size:11px;color:#556;padding:2px 0;" },
-                cfg.type === "ambient" || cfg.type === "rect"
-                    ? "このライトタイプはシャドウ非対応"
-                    : "VRM MToon制限: Point/Spotのシャドウは使用不可"));
+                "このライトタイプはシャドウ非対応"));
         }
     }
 
