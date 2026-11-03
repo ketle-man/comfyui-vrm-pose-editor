@@ -13,6 +13,128 @@ import {
 } from "./image_pose_solver.js";
 import { bvhTextToVrmaBuffer, peekBvh } from "./bvh_retarget.js";
 import { askBvhImportOptions } from "./bvh_import_dialog.js";
+import { makeT } from "./i18n.js";
+
+// 実行中の状態・エラーの文言(en が基準)。言語は呼ぶたびに決める(モジュール読込時にはまだ言語が決まっていないため)
+const STRINGS = {
+    en: {
+        noNodes: "ComfyUI has no native SAM3D Body nodes ({missing}). Update ComfyUI to 0.38 or later",
+        noModel: "No SAM3D Body model found. Put {model} in models/detection/",
+        viewFailed: "Could not get the ComfyUI output: {file} (HTTP {status})",
+        uploadFailed: "Could not send the file to ComfyUI (HTTP {status})",
+        rejected: "ComfyUI did not accept the workflow: {detail}",
+        timeout: "ComfyUI did not finish within {min} min",
+        elapsed: "{msg} ({sec} s)",
+        execError: "ComfyUI execution error: {msg}",
+        unknown: "unknown",
+        noOutput: "ComfyUI finished but produced no 3D file (maybe no person was detected)",
+        handRetry: "Hand refinement failed in ComfyUI, retrying with it turned off…",
+        sendImage: "Sending the image to ComfyUI…",
+        runImage: "Running SAM3D Body… the first run can take tens of seconds to load the model",
+        fetching: "Fetching the result…",
+        sendVideo: "Sending the video to ComfyUI…",
+        runVideo: "Estimating every frame of the video with SAM3D Body… takes longer the more frames there are",
+        // ---- Image タブ UI(3D Pose Editor)
+        loadTip: "Load an image (one pose) or a video (motion)",
+        dropHere: "Drop an image or a video\nor use “Load Image”",
+        tips: "Best results: one person, full body, no hidden hands or feet. Turn on “Mirror” for mirrored images such as selfies.",
+        videoLoaded: "Video loaded. Choose the range and press “Run SAM3D (Video)”",
+        imageLoaded: "Image loaded. Press “Run SAM3D”",
+        cancelTip: "Cancel (stop waiting for the result)",
+        glbTip: "Load SAM3D GLB files (BuildPoseFile → SaveGLB, mesh_style=openpose / body_mesh). Multiple files allowed",
+        optMirror: "Mirror (treat as mirrored)",
+        optMirrorTip: "For mirrored images such as selfies",
+        optHands: "Hands (use SAM3D fingers and wrists)",
+        optHandsTip: "Take finger shapes and wrist directions from the body_mesh hand bones",
+        optFingers: "Fingers (solve fingers)",
+        optYaw: "Face front (turn the body to the front)",
+        optYawTip: "Remove the whole-body yaw relative to the camera",
+        optGround: "Ground (put the feet on the floor)",
+        twistTip: "How much of the wrist twist is moved to the forearm",
+        revertTip: "Go back to the pose before the first apply in the Image tab",
+        videoRange: "Video length: {dur} s → importing {from}–{to} s",
+        videoHint: "Every frame is estimated with SAM3D Body into a BVH and imported as keyframes (an import options dialog opens). Length 0 = to the end. Rough guide: 3 s (90 frames) takes about 20 s on an RTX 4070. The BVH is also saved to ComfyUI's output/3d.",
+        footer: "SAM 3D Body runs on ComfyUI's native nodes (not bundled with this node). Put the model in models/detection/. After applying, fine-tune and save in the Pose tab or with keyframes.",
+        hasResult: "Result ready: {source}",
+        loadPrompt: "Load an image and press “Run SAM3D”",
+        needVrm: "Load a VRM model (with humanoid). GLB/GLTF models are not supported",
+        skipped: "\n(could not estimate: {list})",
+        applied: "Applied to the VRM: {source}{skipped}",
+        modelChanged: "The model has changed, so there is no pose to go back to",
+        reverted: "Went back to the pose before applying",
+        notSamGlb: "{name}: not a SAM3D Body GLB (format=glb, mesh_style openpose or body_mesh)",
+        glbApplied: "Loaded and applied the GLB ({kinds})",
+        meshOnly: "Loaded the body_mesh GLB. The openpose GLB is also needed for the body direction",
+        loadVrmFirst: "Load a VRM model first",
+        noVideoImport: "Video motion cannot be imported from this screen",
+        noVideoNodes: "ComfyUI has no video nodes ({nodes}). Update ComfyUI",
+        doneImage: "SAM3D estimate applied ({sec} s)",
+        aborted: "Stopped (cancel any job left in ComfyUI's queue from ComfyUI)",
+        bvhReceived: "Received the BVH ({sec} s, {file}). Choose the import options",
+        bvhCancelled: "Import cancelled (the BVH is saved in ComfyUI's output/3d/{file})",
+        bvhImported: "Imported the video motion as keyframes (estimate {sec} s, {file})",
+        nodeInfoFailed: "Could not get ComfyUI's node info: {msg}",
+    },
+    ja: {
+        noNodes: "ComfyUI に SAM3D Body のネイティブノードがありません({missing})。ComfyUI 0.38 以降に更新してください",
+        noModel: "SAM3D Body のモデルが見つかりません。models/detection/ に {model} を置いてください",
+        viewFailed: "ComfyUI の出力を取得できません: {file} (HTTP {status})",
+        uploadFailed: "ComfyUI へのファイル送信に失敗しました (HTTP {status})",
+        rejected: "ComfyUI がワークフローを受け付けませんでした: {detail}",
+        timeout: "ComfyUI の実行が {min} 分以内に終わりませんでした",
+        elapsed: "{msg}({sec} 秒)",
+        execError: "ComfyUI の実行エラー: {msg}",
+        unknown: "不明",
+        noOutput: "ComfyUI の実行は終わりましたが 3D ファイルが出力されませんでした(人物が検出されなかった可能性があります)",
+        handRetry: "手の補正(hand refinement)で ComfyUI がエラーになったため、オフにしてやり直します…",
+        sendImage: "画像を ComfyUI に送信中…",
+        runImage: "SAM3D Body を実行中…初回はモデル読み込みで数十秒かかることがあります",
+        fetching: "結果を取得中…",
+        sendVideo: "動画を ComfyUI に送信中…",
+        runVideo: "SAM3D Body で動画の全フレームを推定中…フレーム数に比例して時間がかかります",
+        // ---- Image タブ UI(3D Pose Editor)
+        loadTip: "画像(1 ポーズ)または動画(モーション)を読み込む",
+        dropHere: "画像・動画をドロップ\nまたは「Load Image」",
+        tips: "1人・全身が写り、手足が隠れていない画像・動画が最適です。自撮りなど左右反転した画像は「Mirror」をオンにしてください。",
+        videoLoaded: "動画を読み込みました。取り込む範囲を決めて「Run SAM3D (Video)」を押してください",
+        imageLoaded: "画像を読み込みました。「Run SAM3D」を押してください",
+        cancelTip: "Cancel (結果の待機を中止)",
+        glbTip: "SAM3D の GLB(BuildPoseFile → SaveGLB、mesh_style=openpose / body_mesh)を読み込む。複数選択可",
+        optMirror: "Mirror (鏡像として扱う)",
+        optMirrorTip: "自撮りなど左右反転した画像のとき",
+        optHands: "Hands (SAM3D の指・手首を使う)",
+        optHandsTip: "body_mesh の手の骨から指の形と手首の向きを取り込む",
+        optFingers: "Fingers (指を解く)",
+        optYaw: "Face front (体の向きを正面に)",
+        optYawTip: "カメラに対する体全体のヨーを除去する",
+        optGround: "Ground (足を床に合わせる)",
+        twistTip: "手首のねじれを前腕に分配する割合",
+        revertTip: "Image タブで最初に適用する前のポーズへ戻す",
+        videoRange: "動画の長さ: {dur} 秒 → {from}〜{to} 秒を取り込み",
+        videoHint: "全フレームを SAM3D Body で推定して BVH を作り、キーフレームへ取り込みます(取り込み設定のダイアログが開きます)。長さ 0 = 最後まで。目安: RTX 4070 で 3 秒(90 フレーム)が約 20 秒。BVH は ComfyUI の output/3d にも保存されます。",
+        footer: "SAM 3D Body は ComfyUI 本体のネイティブノードで実行します(このノードには同梱していません)。モデルは models/detection/ に配置してください。適用後は Pose タブやキーフレームでそのまま微調整・保存できます。",
+        hasResult: "結果あり: {source}",
+        loadPrompt: "画像を読み込んで「Run SAM3D」を押してください",
+        needVrm: "VRM モデル(humanoid 付き)を読み込んでください。GLB/GLTF モデルには適用できません",
+        skipped: "\n(推定できず: {list})",
+        applied: "VRM に適用しました: {source}{skipped}",
+        modelChanged: "モデルが変わったため、戻すポーズがありません",
+        reverted: "適用前のポーズに戻しました",
+        notSamGlb: "{name}: SAM3D Body の GLB ではありません(format=glb、mesh_style は openpose か body_mesh)",
+        glbApplied: "GLB を読み込んで適用しました({kinds})",
+        meshOnly: "body_mesh の GLB を読み込みました。体の向きには openpose の GLB も必要です",
+        loadVrmFirst: "先に VRM モデルを読み込んでください",
+        noVideoImport: "この画面からは動画のモーションを取り込めません",
+        noVideoNodes: "ComfyUI に動画用のノードがありません({nodes})。ComfyUI を更新してください",
+        doneImage: "SAM3D 推定・適用完了({sec} 秒)",
+        aborted: "中止しました(ComfyUI のキューに残ったジョブは ComfyUI 側で取り消してください)",
+        bvhReceived: "BVH を受け取りました({sec} 秒、{file})。取り込み設定を選んでください",
+        bvhCancelled: "取り込みを取り消しました(BVH は ComfyUI の output/3d/{file} に保存済み)",
+        bvhImported: "動画のモーションをキーフレームに取り込みました(推定 {sec} 秒、{file})",
+        nodeInfoFailed: "ComfyUI のノード情報を取得できません: {msg}",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 const REQUIRED_NODES = ["SAM3DBody_Loader", "SAM3DBody_Predict", "BuildPoseFile", "SaveGLB"];
 const VIDEO_NODES = ["LoadVideo", "Video Slice", "GetVideoComponents"];
@@ -41,11 +163,11 @@ export async function checkSam3dAvailable() {
     const info = await getJson("/object_info");
     const missing = REQUIRED_NODES.filter(n => !info[n]);
     if (missing.length) {
-        return { ok: false, models: [], message: `ComfyUI に SAM3D Body のネイティブノードがありません(${missing.join(", ")})。ComfyUI 0.38 以降に更新してください` };
+        return { ok: false, models: [], message: tr("noNodes", { missing: missing.join(", ") }) };
     }
     const models = comboOptions(info.SAM3DBody_Loader?.input?.required?.model_file);
     if (!models.length) {
-        return { ok: false, models, message: `SAM3D Body のモデルが見つかりません。models/detection/ に ${PREFERRED_MODEL} を置いてください` };
+        return { ok: false, models, message: tr("noModel", { model: PREFERRED_MODEL }) };
     }
     return { ok: true, models, message: "", videoOk: VIDEO_NODES.every(n => info[n]) };
 }
@@ -108,7 +230,7 @@ function buildVideoWorkflow(videoName, modelFile, prefix, { startSec, durationSe
 async function downloadOutput(o) {
     const q = new URLSearchParams({ filename: o.filename, subfolder: o.subfolder ?? "", type: o.type ?? "output" });
     const res = await fetchApi(`/view?${q}`);
-    if (!res.ok) throw new Error(`ComfyUI の出力を取得できません: ${o.filename} (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(tr("viewFailed", { file: o.filename, status: res.status }));
     return res.arrayBuffer();
 }
 
@@ -118,7 +240,7 @@ async function uploadInput(blob, name, signal) {
     form.append("image", blob, name);
     form.append("overwrite", "true");
     const up = await fetchApi("/upload/image", { method: "POST", body: form, signal });
-    if (!up.ok) throw new Error(`ComfyUI へのファイル送信に失敗しました (HTTP ${up.status})`);
+    if (!up.ok) throw new Error(tr("uploadFailed", { status: up.status }));
     const uploaded = await up.json();
     return uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name;
 }
@@ -135,26 +257,26 @@ async function queueAndWait(workflow, outputIds, runningMsg, onStatus, signal, t
     if (!res.ok || !submitted.prompt_id) {
         const nodeErr = Object.values(submitted.node_errors ?? {})[0]?.errors?.[0];
         const detail = nodeErr ? `${nodeErr.message}: ${nodeErr.details ?? ""}` : (submitted.error?.message ?? `HTTP ${res.status}`);
-        throw new Error(`ComfyUI がワークフローを受け付けませんでした: ${detail}`);
+        throw new Error(tr("rejected", { detail }));
     }
 
     const started = Date.now();
     for (;;) {
         if (signal?.aborted) throw new DOMException("aborted", "AbortError");
         const sec = (Date.now() - started) / 1000;
-        if (sec > timeoutMin * 60) throw new Error(`ComfyUI の実行が ${timeoutMin} 分以内に終わりませんでした`);
-        onStatus(`${runningMsg}(${Math.round(sec)} 秒)`);
+        if (sec > timeoutMin * 60) throw new Error(tr("timeout", { min: timeoutMin }));
+        onStatus(tr("elapsed", { msg: runningMsg, sec: Math.round(sec) }));
         await new Promise(r => setTimeout(r, 1000));
         const hist = await getJson(`/history/${submitted.prompt_id}`);
         const entry = hist[submitted.prompt_id];
         if (!entry) continue;
         if (entry.status?.status_str === "error") {
             const err = entry.status.messages?.find(m => m[0] === "execution_error")?.[1];
-            throw new Error(`ComfyUI の実行エラー: ${String(err?.exception_message ?? "不明")}`);
+            throw new Error(tr("execError", { msg: String(err?.exception_message ?? tr("unknown")) }));
         }
         const outs = outputIds.map(id => entry.outputs?.[id]?.["3d"]?.[0]);
         if (outs.every(Boolean)) return outs;
-        if (entry.status?.completed) throw new Error("ComfyUI の実行は終わりましたが 3D ファイルが出力されませんでした(人物が検出されなかった可能性があります)");
+        if (entry.status?.completed) throw new Error(tr("noOutput"));
     }
 }
 
@@ -165,33 +287,33 @@ async function withHandFallback(run, onStatus) {
         return await run(true);
     } catch (e) {
         if (e?.name === "AbortError" || !/dtype|Half/i.test(String(e?.message))) throw e;
-        onStatus("手の補正(hand refinement)で ComfyUI がエラーになったため、オフにしてやり直します…");
+        onStatus(tr("handRetry"));
         return run(false);
     }
 }
 
 // 画像を ComfyUI に渡して SAM3D Body を実行し、openpose / body_mesh の 2 種類の GLB を受け取る
 export async function runSam3d(imageBlob, imageExt, modelFile, onStatus, signal) {
-    onStatus("画像を ComfyUI に送信中…");
+    onStatus(tr("sendImage"));
     const imageName = await uploadInput(imageBlob, `vrmpose_sam_input.${imageExt || "png"}`, signal);
     const prefix = `3d/vrmpose_sam_${Date.now()}`;
     const [op, mesh] = await withHandFallback(hand => queueAndWait(
         buildWorkflow(imageName, modelFile, prefix, hand), ["6", "7"],
-        "SAM3D Body を実行中…初回はモデル読み込みで数十秒かかることがあります", onStatus, signal), onStatus);
-    onStatus("結果を取得中…");
+        tr("runImage"), onStatus, signal), onStatus);
+    onStatus(tr("fetching"));
     const [openpose, meshBuf] = await Promise.all([downloadOutput(op), downloadOutput(mesh)]);
     return { openpose, mesh: meshBuf };
 }
 
 // 動画を ComfyUI に渡して SAM3D Body を全フレームに実行し、BVH(テキスト)を受け取る。range: { startSec, durationSec }
 export async function runSam3dVideo(videoBlob, videoExt, modelFile, range, onStatus, signal) {
-    onStatus("動画を ComfyUI に送信中…");
+    onStatus(tr("sendVideo"));
     const videoName = await uploadInput(videoBlob, `vrmpose_sam_input.${videoExt || "mp4"}`, signal);
     const prefix = `3d/vrmpose_motion_${Date.now()}`;
     const [bvh] = await withHandFallback(hand => queueAndWait(
         buildVideoWorkflow(videoName, modelFile, prefix, { ...range, handRefine: hand }), ["7"],
-        "SAM3D Body で動画の全フレームを推定中…フレーム数に比例して時間がかかります", onStatus, signal, 60), onStatus);
-    onStatus("結果を取得中…");
+        tr("runVideo"), onStatus, signal, 60), onStatus);
+    onStatus(tr("fetching"));
     return { text: new TextDecoder().decode(await downloadOutput(bvh)), filename: bvh.filename };
 }
 
@@ -278,7 +400,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         style: "display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid #2a2a4a;flex-shrink:0;",
     });
     const loadImgBtn = mkBtn("📂 Load Image", "#2a5a8a");
-    loadImgBtn.title = "画像(1 ポーズ)または動画(モーション)を読み込む";
+    loadImgBtn.title = tr("loadTip");
     const imgInput = el("input", {
         type: "file", accept: "image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime", style: "display:none;",
     });
@@ -291,7 +413,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
     });
     const placeholder = el("div", {
         style: "font-size:11px;color:#556;text-align:center;line-height:1.7;padding:10px;",
-    }, "画像・動画をドロップ\nまたは「Load Image」");
+    }, tr("dropHere"));
     placeholder.style.whiteSpace = "pre-line";
     const preview = el("img", { style: "max-width:100%;max-height:100%;object-fit:contain;display:none;" });
     const vpreview = el("video", { style: "max-width:100%;max-height:100%;object-fit:contain;display:none;" });
@@ -309,7 +431,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
     });
     const tips = el("div", {
         style: "font-size:10px;color:#556;padding:0 10px 10px;line-height:1.6;flex-shrink:0;",
-    }, "1人・全身が写り、手足が隠れていない画像・動画が最適です。自撮りなど左右反転した画像は「Mirror」をオンにしてください。");
+    }, tr("tips"));
     leftEl.append(leftHeader, dropZone, imgInfo, tips);
 
     const isMedia = (f) => f?.type?.startsWith("image/") || f?.type?.startsWith("video/");
@@ -323,8 +445,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         state.videoDuration = 0;
         state.videoStart = 0;
         state.videoLength = 0;
-        setStatus(state.isVideo ? "動画を読み込みました。取り込む範囲を決めて「Run SAM3D (Video)」を押してください"
-                                : "画像を読み込みました。「Run SAM3D」を押してください");
+        setStatus(state.isVideo ? tr("videoLoaded") : tr("imageLoaded"));
         // 別の画像に変えたら、前の画像の SAM3D 結果は無効
         state.sam = null;
         state.hands = null;
@@ -379,7 +500,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
     const runBtn = mkBtn("▶ Run SAM3D", "#3a7a4a");
     runBtn.style.flex = "1";
     const cancelBtn = mkBtn("■", "#6a3a3a");
-    cancelBtn.title = "Cancel (結果の待機を中止)";
+    cancelBtn.title = tr("cancelTip");
     cancelBtn.style.display = "none";
     const statusEl = el("div", {
         style: "font-size:10px;color:#889;padding:4px 0;line-height:1.5;white-space:pre-wrap;word-break:break-word;",
@@ -387,26 +508,26 @@ export function buildImagePosePanel(editor, hooks = {}) {
 
     // 手動 GLB 読み込み(ComfyUI で別途作った openpose / body_mesh の GLB)
     const glbBtn = mkBtn("📂 Load GLB", "#5a5a7a");
-    glbBtn.title = "SAM3D の GLB(BuildPoseFile → SaveGLB、mesh_style=openpose / body_mesh)を読み込む。複数選択可";
+    glbBtn.title = tr("glbTip");
     const glbInput = el("input", { type: "file", accept: ".glb", multiple: "", style: "display:none;" });
     glbBtn.onclick = () => glbInput.click();
     glbInput.addEventListener("change", () => { void loadGlbFiles([...glbInput.files]); glbInput.value = ""; });
 
     // オプション
     const o = state.opts;
-    const [mirrorRow, mirrorChk] = mkCheck("Mirror (鏡像として扱う)", o.mirror, "自撮りなど左右反転した画像のとき");
-    const [handsRow, handsChk] = mkCheck("Hands (SAM3D の指・手首を使う)", o.useHands, "body_mesh の手の骨から指の形と手首の向きを取り込む");
-    const [fingersRow, fingersChk] = mkCheck("Fingers (指を解く)", o.fingers);
-    const [yawRow, yawChk] = mkCheck("Face front (体の向きを正面に)", o.removeYaw, "カメラに対する体全体のヨーを除去する");
-    const [groundRow, groundChk] = mkCheck("Ground (足を床に合わせる)", o.ground);
+    const [mirrorRow, mirrorChk] = mkCheck(tr("optMirror"), o.mirror, tr("optMirrorTip"));
+    const [handsRow, handsChk] = mkCheck(tr("optHands"), o.useHands, tr("optHandsTip"));
+    const [fingersRow, fingersChk] = mkCheck(tr("optFingers"), o.fingers);
+    const [yawRow, yawChk] = mkCheck(tr("optYaw"), o.removeYaw, tr("optYawTip"));
+    const [groundRow, groundChk] = mkCheck(tr("optGround"), o.ground);
     const [headRow, headSl] = mkSlider("Head pitch", -30, 45, 1, o.headPitchDeg, v => `${v}°`);
     const [twistRow, twistSl] = mkSlider("Wrist twist", 0, 1, 0.05, o.twistSplit, v => v.toFixed(2));
-    twistRow.title = "手首のねじれを前腕に分配する割合";
+    twistRow.title = tr("twistTip");
 
     const applyBtn = mkBtn("✔ Apply to VRM", "#4a6a9a");
     applyBtn.style.flex = "1";
     const revertBtn = mkBtn("↶ Revert", "#6a5a3a");
-    revertBtn.title = "Image タブで最初に適用する前のポーズへ戻す";
+    revertBtn.title = tr("revertTip");
 
     const row = (...items) => {
         const r = el("div", { style: "display:flex;align-items:center;gap:5px;padding:2px 0;" });
@@ -433,7 +554,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         if (d > 0) state.videoStart = Math.min(state.videoStart, Math.max(0, d - 0.1));
         vStartIn.value = String(+state.videoStart.toFixed(2));
         vLenIn.value = String(+state.videoLength.toFixed(2));
-        vInfo.textContent = d > 0 ? `動画の長さ: ${d.toFixed(1)} 秒 → ${state.videoStart.toFixed(1)}〜${Math.min(d, state.videoStart + (state.videoLength || d)).toFixed(1)} 秒を取り込み` : "";
+        vInfo.textContent = d > 0 ? tr("videoRange", { dur: d.toFixed(1), from: state.videoStart.toFixed(1), to: Math.min(d, state.videoStart + (state.videoLength || d)).toFixed(1) }) : "";
     }
     const videoOnly = el("div");
     videoOnly.append(
@@ -442,7 +563,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         row(label("Start"), vStartIn, label("s"), label("  Length"), vLenIn, label("s")),
         el("div", {
             style: "font-size:10px;color:#556;line-height:1.6;margin-top:4px;",
-        }, "全フレームを SAM3D Body で推定して BVH を作り、キーフレームへ取り込みます(取り込み設定のダイアログが開きます)。長さ 0 = 最後まで。目安: RTX 4070 で 3 秒(90 フレーム)が約 20 秒。BVH は ComfyUI の output/3d にも保存されます。"),
+        }, tr("videoHint")),
     );
     const imageOnly = el("div");
     imageOnly.append(
@@ -461,7 +582,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         videoOnly,
         el("div", {
             style: "font-size:10px;color:#556;line-height:1.6;margin-top:8px;",
-        }, "SAM 3D Body は ComfyUI 本体のネイティブノードで実行します(このノードには同梱していません)。モデルは models/detection/ に配置してください。適用後は Pose タブやキーフレームでそのまま微調整・保存できます。"),
+        }, tr("footer")),
     );
 
     // ---------------- 動作 ----------------
@@ -481,7 +602,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         revertBtn.disabled = !state.undoPose;
         revertBtn.style.opacity = state.undoPose ? "1" : "0.5";
         if (!busy && !lastMessage) {
-            setStatus(has ? `結果あり: ${state.source}` : "画像を読み込んで「Run SAM3D」を押してください");
+            setStatus(has ? tr("hasResult", { source: state.source }) : tr("loadPrompt"));
         }
     }
     function setBusy(b) {
@@ -507,7 +628,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         if (!state.sam) return false;
         const vrm = editor.getVRM?.();
         if (!vrm?.humanoid) {
-            setStatus("VRM モデル(humanoid 付き)を読み込んでください。GLB/GLTF モデルには適用できません", "error");
+            setStatus(tr("needVrm"), "error");
             return false;
         }
         const opt = readOpts();
@@ -525,8 +646,8 @@ export function buildImagePosePanel(editor, hooks = {}) {
         applySolvedPose(editor, vrm, rig, res.rotations, opt.ground);
         refreshStatus();
         if (!silent) {
-            const sk = res.skipped.length ? `\n(推定できず: ${res.skipped.join(", ")})` : "";
-            setStatus(`VRM に適用しました: ${state.source}${sk}`, "ok");
+            const sk = res.skipped.length ? tr("skipped", { list: res.skipped.join(", ") }) : "";
+            setStatus(tr("applied", { source: state.source, skipped: sk }), "ok");
         }
         return true;
     }
@@ -544,13 +665,13 @@ export function buildImagePosePanel(editor, hooks = {}) {
         if (!state.undoPose) return;
         if (state.undoVrm !== editor.getVRM?.()) {
             state.undoPose = null;
-            setStatus("モデルが変わったため、戻すポーズがありません");
+            setStatus(tr("modelChanged"));
             refreshStatus();
             return;
         }
         editor.importPose(state.undoPose);
         state.undoPose = null;
-        setStatus("適用前のポーズに戻しました");
+        setStatus(tr("reverted"));
         refreshStatus();
     };
 
@@ -562,7 +683,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
         } else if (kind === "mesh") {
             state.hands = parseMeshHands(buf);
         } else {
-            throw new Error(`${name}: SAM3D Body の GLB ではありません(format=glb、mesh_style は openpose か body_mesh)`);
+            throw new Error(tr("notSamGlb", { name }));
         }
         return kind;
     }
@@ -576,9 +697,9 @@ export function buildImagePosePanel(editor, hooks = {}) {
             const kinds = [];
             for (const { name, buf } of bufs) kinds.push(await applyGlbBuffer(buf, name));
             if (state.sam) {
-                if (solveAndApply(true)) setStatus(`GLB を読み込んで適用しました(${kinds.join(" + ")})`, "ok");
+                if (solveAndApply(true)) setStatus(tr("glbApplied", { kinds: kinds.join(" + ") }), "ok");
             } else {
-                setStatus("body_mesh の GLB を読み込みました。体の向きには openpose の GLB も必要です");
+                setStatus(tr("meshOnly"));
             }
         } catch (e) {
             setStatus(String(e.message ?? e), "error");
@@ -589,14 +710,14 @@ export function buildImagePosePanel(editor, hooks = {}) {
     runBtn.onclick = async () => {
         if (busy || !state.imageFile) return;
         if (!editor.getVRM?.()?.humanoid) {
-            setStatus("先に VRM モデルを読み込んでください", "error");
+            setStatus(tr("loadVrmFirst"), "error");
             return;
         }
         const modelFile = modelSel.value;
         if (!modelFile) { await refreshAvailability(); if (!modelSel.value) return; }
         if (state.isVideo) {
-            if (!hooks.importKeyframes) { setStatus("この画面からは動画のモーションを取り込めません", "error"); return; }
-            if (!videoOk) { setStatus(`ComfyUI に動画用のノードがありません(${VIDEO_NODES.join(", ")})。ComfyUI を更新してください`, "error"); return; }
+            if (!hooks.importKeyframes) { setStatus(tr("noVideoImport"), "error"); return; }
+            if (!videoOk) { setStatus(tr("noVideoNodes", { nodes: VIDEO_NODES.join(", ") }), "error"); return; }
         }
         setBusy(true);
         abort = new AbortController();
@@ -609,9 +730,9 @@ export function buildImagePosePanel(editor, hooks = {}) {
             state.sam = parseOpenposeGlb(r.openpose);
             state.source = `SAM3D (${state.imageName})`;
             solveAndApply(true);
-            setStatus(`SAM3D 推定・適用完了(${((performance.now() - t0) / 1000).toFixed(1)} 秒)`, "ok");
+            setStatus(tr("doneImage", { sec: ((performance.now() - t0) / 1000).toFixed(1) }), "ok");
         } catch (e) {
-            if (e?.name === "AbortError") setStatus("中止しました(ComfyUI のキューに残ったジョブは ComfyUI 側で取り消してください)");
+            if (e?.name === "AbortError") setStatus(tr("aborted"));
             else setStatus(String(e.message ?? e), "error");
         } finally {
             abort = null;
@@ -626,12 +747,12 @@ export function buildImagePosePanel(editor, hooks = {}) {
         const range = { startSec: state.videoStart, durationSec: state.videoLength };
         const r = await runSam3dVideo(state.imageFile, ext, modelSel.value, range, msg => setStatus(msg), abort.signal);
         const sec = ((performance.now() - t0) / 1000).toFixed(1);
-        setStatus(`BVH を受け取りました(${sec} 秒、${r.filename})。取り込み設定を選んでください`);
+        setStatus(tr("bvhReceived", { sec, file: r.filename }));
         const opts = await askBvhImportOptions(r.filename, undefined, peekBvh(r.text));
-        if (!opts) { setStatus(`取り込みを取り消しました(BVH は ComfyUI の output/3d/${r.filename} に保存済み)`); return; }
+        if (!opts) { setStatus(tr("bvhCancelled", { file: r.filename })); return; }
         const buf = await bvhTextToVrmaBuffer(editor, r.text, opts);
         hooks.importKeyframes(buf, state.imageName.replace(/\.[^.]+$/, ""));
-        setStatus(`動画のモーションをキーフレームに取り込みました(推定 ${sec} 秒、${r.filename})`, "ok");
+        setStatus(tr("bvhImported", { sec, file: r.filename }), "ok");
     }
 
     let availabilityChecked = false;
@@ -649,7 +770,7 @@ export function buildImagePosePanel(editor, hooks = {}) {
             availabilityChecked = r.ok;
             videoOk = !!r.videoOk;
         } catch (e) {
-            setStatus(`ComfyUI のノード情報を取得できません: ${e.message ?? e}`, "error");
+            setStatus(tr("nodeInfoFailed", { msg: e.message ?? e }), "error");
         }
     }
 

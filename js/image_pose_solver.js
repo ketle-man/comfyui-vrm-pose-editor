@@ -7,6 +7,19 @@
 //   VRM 0.x の正規化ボーンは -Z 向き空間なので、適用時に四元数の x,z を反転する(applySolvedPose)。
 
 import * as THREE from './vendor/three.module.js';
+import { makeT } from './i18n.js';
+
+const STRINGS = {
+    en: {
+        notGlb: 'Not a GLB file',
+        notOpenpose: 'Not an openpose GLB (use BuildPoseFile with format=glb, mesh_style=openpose)',
+    },
+    ja: {
+        notGlb: 'GLB ではありません',
+        notOpenpose: 'openpose 形式の GLB ではありません(BuildPoseFile で format=glb, mesh_style=openpose にしてください)',
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 // ================================================================
 // SAM3D の GLB 解析
@@ -21,7 +34,7 @@ const NAME_TO_MP = {
 
 function readGlbJson(buf) {
     const dv = new DataView(buf);
-    if (buf.byteLength < 20 || dv.getUint32(0, true) !== 0x46546c67) throw new Error("GLB ではありません");
+    if (buf.byteLength < 20 || dv.getUint32(0, true) !== 0x46546c67) throw new Error(tr('notGlb'));
     return JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, dv.getUint32(12, true))));
 }
 
@@ -43,7 +56,7 @@ export function parseOpenposeGlb(buf) {
         if (m && n.translation?.length === 3) out.set(m[1], n.translation);
     }
     if (!out.has("LHip") || !out.has("RHip") || !out.has("LShoulder") || !out.has("RShoulder")) {
-        throw new Error("openpose 形式の GLB ではありません(BuildPoseFile で format=glb, mesh_style=openpose にしてください)");
+        throw new Error(tr('notOpenpose'));
     }
     return out;
 }
