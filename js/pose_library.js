@@ -13,6 +13,22 @@ import * as THREE from './vendor/three.module.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from './vendor/three-vrm.module.js';
 import { VRMAnimationLoaderPlugin, VRMLookAtQuaternionProxy, createVRMAnimationClip } from './vendor/three-vrm-animation.module.js';
+import { makeT } from './i18n.js';
+
+// UI 文言(en が基準)。言語は ComfyUI の設定(Comfy.Locale)に従う(i18n.js の makeT)。呼ぶたびに決める
+const STRINGS = {
+    en: {
+        noThumb: "⚠ No VRM loaded, so thumbnails can't be made",
+        vrmaDirectTip: "Load this VRMA into the editor / node as is (without making keyframes)",
+        vrmaKfTip: "Load this VRMA into the editor's keyframe timeline (Pose track)",
+    },
+    ja: {
+        noThumb: "⚠ VRM 未読込のためサムネイルを生成できません",
+        vrmaDirectTip: "このVRMAをそのまま(キーフレーム化せず)Editor/ノードへ読み込む",
+        vrmaKfTip: "このVRMAをEditorのキーフレームタイムライン(Poseトラック)へ読み込む",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 // ----------------------------------------------------------------
 // エントリポイント
@@ -82,7 +98,7 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
     const noVrmNote = el("span", {
         style: "font-size:10px;color:#c9a560;white-space:nowrap;",
         title: "Load a VRM model (Load MODEL / VRM button) to generate thumbnails",
-    }, "⚠ VRM 未読込のためサムネイルを生成できません");
+    }, tr("noThumb"));
     if (vrmBuffer) noVrmNote.style.display = "none";
     header.append(titleEl, noVrmNote, reloadBtn, closeBtn);
 
@@ -186,13 +202,13 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
         style: "flex:1;padding:5px 8px;background:#2a5a8a;color:#fff;border:none;border-radius:3px;" +
                "cursor:pointer;font-size:11px;font-weight:bold;white-space:nowrap;" +
                (onLoadVrmaRaw ? "" : "display:none;"),
-        title: "このVRMAをそのまま(キーフレーム化せず)Editor/ノードへ読み込む",
+        title: tr("vrmaDirectTip"),
     }, "⬇ Load");
     const vrmaLoadKeyBtn = el("button", {
         style: "flex:1;padding:5px 8px;background:#8a6a2a;color:#fff;border:none;border-radius:3px;" +
                "cursor:pointer;font-size:11px;font-weight:bold;white-space:nowrap;" +
                (onImportVrma ? "" : "display:none;"),
-        title: "このVRMAをEditorのキーフレームタイムライン(Poseトラック)へ読み込む",
+        title: tr("vrmaKfTip"),
     }, "🔑 Load KEY");
     vrmaLoadRow.append(vrmaLoadBtn, vrmaLoadKeyBtn);
 
@@ -377,7 +393,7 @@ function buildModal(editor, vrmBuffer, cvsWrapper, onClose, onImportVrma, onLoad
                     document.body.appendChild(cvsWrapper);
                 }
             } catch (err) {
-                console.warn("[PoseLibrary] プレビューの復元に失敗しました:", err);
+                console.warn("[PoseLibrary] Failed to restore the preview:", err);
             }
         }
 

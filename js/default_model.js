@@ -7,6 +7,20 @@
 // ・モデルは同梱しない。model/ が空ならモデル無しで起動する
 
 import { fetchApi, apiURL } from "./comfy_api.js";
+import { makeT } from "./i18n.js";
+
+// UI 文言(en が基準)。言語は ComfyUI の設定(Comfy.Locale)に従う(i18n.js の makeT)。呼ぶたびに決める
+const STRINGS = {
+    en: {
+        saveFailed: "Could not save the settings (HTTP {status})",
+        listFailed: "Could not get the model list (HTTP {status})",
+    },
+    ja: {
+        saveFailed: "設定を保存できませんでした (HTTP {status})",
+        listFailed: "モデル一覧を取得できませんでした (HTTP {status})",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 export const NONE_MODEL = "__none__";
 const SETTINGS_FILE = "vrm_pose_editor_settings.json";
@@ -31,7 +45,7 @@ export async function saveEditorSettings(patch) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next, null, 2),
     });
-    if (!res.ok) throw new Error(`設定を保存できませんでした (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(tr("saveFailed", { status: res.status }));
     _settingsCache = next;
     return next;
 }
@@ -39,7 +53,7 @@ export async function saveEditorSettings(patch) {
 // { models: [{ name, ext, size }], dir }
 export async function listModels() {
     const res = await fetchApi("/pose_editor/models");
-    if (!res.ok) throw new Error(`モデル一覧を取得できませんでした (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(tr("listFailed", { status: res.status }));
     return res.json();
 }
 

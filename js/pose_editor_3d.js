@@ -4,6 +4,24 @@ import { openLightPoseEditor, importVrmaAsKeyframesFromNode } from './light_edit
 import { resolveDefaultModel } from './default_model.js';
 import { bvhTextToVrmaBuffer, peekBvh } from './bvh_retarget.js';
 import { askBvhImportOptions } from './bvh_import_dialog.js';
+import { makeT } from './i18n.js';
+
+// UI 文言(en が基準)。言語は ComfyUI の設定(Comfy.Locale)に従う(i18n.js の makeT)。呼ぶたびに決める
+const STRINGS = {
+    en: {
+        windOff: "Wind: OFF (adjust in the Light & Pose Editor)",
+        windState: "Wind: {state} (adjust in the Light & Pose Editor)",
+        bgColor: "Background color",
+        savePoseFailed: "Failed to save to poses/: ",
+    },
+    ja: {
+        windOff: "Wind: OFF (詳細はLight & Pose Editor内で調整)",
+        windState: "Wind: {state} (詳細はLight & Pose Editor内で調整)",
+        bgColor: "背景色",
+        savePoseFailed: "poses/ への保存に失敗しました: ",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 // ノードIDごとのモデルバッファキャッシュ（タブ切り替えによる再作成対策）
 // { nodeId: { buffer: ArrayBuffer|null, isDefault: bool, url: string|null } }
@@ -128,12 +146,12 @@ app.registerExtension({
             };
 
             // 風エフェクト(Wind)トグルボタン。詳細パラメータ(強さ・向き・そよぎ)はLight & Pose Editor内で調整する
-            const windBtn = makeSmallButton("🌬 OFF", "#444", "Wind: OFF (詳細はLight & Pose Editor内で調整)");
+            const windBtn = makeSmallButton("🌬 OFF", "#444", tr("windOff"));
             windBtn.onclick = () => {
                 const on = editor.toggleWindEnabled();
                 windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
                 windBtn.style.background = on ? "#2a6a8a" : "#444";
-                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight & Pose Editor内で調整)`;
+                windBtn.title = tr("windState", { state: on ? "ON" : "OFF" });
             };
 
             // 風の発生源マーカー(視線と同様にドラッグ可能な3Dオブジェクトで向きを指定)トグルボタン
@@ -160,7 +178,7 @@ app.registerExtension({
             const bgColorInput = document.createElement("input");
             bgColorInput.type = "color";
             bgColorInput.value = "#e0e0e0";
-            bgColorInput.title = "背景色";
+            bgColorInput.title = tr("bgColor");
             bgColorInput.style.cssText =
                 "width:28px;height:26px;border:none;cursor:pointer;background:none;" +
                 "padding:0;flex-shrink:0;border-radius:3px;";
@@ -605,7 +623,7 @@ app.registerExtension({
                 const on = editor.getWindEnabled();
                 windBtn.textContent = on ? "🌬 ON" : "🌬 OFF";
                 windBtn.style.background = on ? "#2a6a8a" : "#444";
-                windBtn.title = `Wind: ${on ? "ON" : "OFF"} (詳細はLight & Pose Editor内で調整)`;
+                windBtn.title = tr("windState", { state: on ? "ON" : "OFF" });
 
                 const srcOn = editor.getWindSourceEnabled();
                 windSourceBtn.textContent = srcOn ? "🧭 ON" : "🧭 OFF";
@@ -864,7 +882,7 @@ app.registerExtension({
                     saveToPosesBtn.textContent = "✅";
                     setTimeout(() => { saveToPosesBtn.textContent = "💾"; }, 1500);
                 } catch (e) {
-                    alert("poses/ への保存に失敗しました: " + e.message);
+                    alert(tr("savePoseFailed") + e.message);
                 }
             };
 

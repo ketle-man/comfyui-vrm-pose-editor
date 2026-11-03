@@ -17,6 +17,146 @@ import { buildKeyframePanel } from './pose_vrma_export.js';
 import { buildImagePosePanel } from './image_pose.js';
 import { buildAudioTab, buildSettingsTab, generateSpeech, fetchAudioFile, getSelectedAudio, setSelectedAudio, onSelectedAudioChange } from './audio_panel.js';
 import { listModels, loadEditorSettings, saveEditorSettings, modelUrl, NONE_MODEL } from './default_model.js';
+import { makeT } from './i18n.js';
+
+// UI 文言(en が基準)。言語は ComfyUI の設定(Comfy.Locale)に従う(i18n.js の makeT)。呼ぶたびに決める
+const STRINGS = {
+    en: {
+        imageTabTip: "Estimate a pose from an image and apply it to the VRM (SAM 3D Body / ComfyUI)",
+        subEnv: "Environment (ground, wall, wind)",
+        subSettings: "Settings (anti-aliasing, mouse)",
+        shadowCatcherTip: "Shadow Catcher: make the surface transparent and show only shadows",
+        shadowOpacity: "Shadow:",
+        springOnlyTip: "Only has an effect when Spring Bone Physics is ON",
+        windSource: "🧭 Source",
+        windSourceTip: "When ON, drag the orange cone in the preview to set the wind direction (the Direction slider is disabled)",
+        windStrength: "Strength:",
+        windDirection: "Direction:",
+        windGust: "Gust:",
+        ctrlZoom: "🖱 Ctrl+right-drag zoom",
+        ctrlZoomTip1: "OFF: zoom with the mouse wheel / ON: zoom with Ctrl+right-drag on empty space\n",
+        ctrlZoomTip2: "(for setups where wheel zoom doesn't work)",
+        aaBoost: "🖼 Stronger anti-aliasing",
+        aaBoostTip: "Reduces jagged edges when the preview is enlarged (renders at a higher resolution, so it is heavier)",
+        reloadModelsTip: "Reload the model/ folder",
+        loadModelTip: "Load the selected model into this node now",
+        loading: "Loading…",
+        modelAuto: "Auto (model/ is empty)",
+        modelNone: "None (don't load)",
+        modelMissing: "{name} (not found)",
+        modelCount: "{count} file(s) · {dir}",
+        modelSaved: "Saved (used the next time a node is created or the page is loaded)",
+        pickFile: "Choose a file to load",
+        gltfNoLoad: ".gltf can't be loaded here (automatic loading as the default model works)",
+        loaded: "Loaded {name}",
+        loadFailed: "Could not load: {msg}",
+        modelHint: "Put .vrm / .glb / .gltf files in the model/ folder to choose them. The choice is saved and loaded automatically when a node is created or the page is loaded.",
+        audioTabTip: "Audio (manage audio files)",
+        apiTabTip: "API settings (Lemonade etc.)",
+        blinkTip: "Blinks automatically (record ON/OFF and the interval on the 😑 Blink keyframe track)",
+        blinkIntervalTip: "Average blink interval (seconds)",
+        interval: "Interval:",
+        lipSyncTip: "Moves the mouth shapes (aa/ih/ou/ee/oh) along with the text or audio. When stopped the mouth returns to its previous value",
+        lipTextPh: "Text (Japanese / English)",
+        audioSelected: "🎵 Selected: {name}",
+        audioNone: "🎵 Selected: none (choose in the A tab)",
+        playText: "▶ Play from text",
+        playAudio: "🎵 Play the selected audio",
+        needAudio: "Choose an audio file (A tab, or “Create speech from text”).",
+        playFailedPlain: "Could not play.",
+        playing: "Playing: {name}",
+        playFailed: "Could not play: {msg}",
+        createSpeech: "🔊 Create speech from text",
+        createSpeechTip: "Turns the Lip Sync text into speech with Lemonade, saves it to the Audio folder and selects it",
+        needText: "Enter some text.",
+        creating: "Creating the speech…",
+        created: "Created: {name}",
+        createFailed: "Could not create: {msg}",
+        stop: "■ Stop",
+        lipSourceTip: "Source for new Lip track keyframes. OFF = T (the Lip Sync text) / ON = A (the selected audio; the volume sets the mouth opening)",
+        lipSourceA: "Keyframe T/A: A (selected audio)",
+        lipSourceT: "Keyframe T/A: T (text)",
+        previewHint: "🎥 Preview  ·  drag to move the camera  ·  blue dots move bones  ·  yellow dots move lights",
+        savePoseFailed: "Failed to save to poses/: ",
+        lightPosition: "Position  (drag the yellow dot to move in 3D)",
+        noShadow: "This light type has no shadows",
+        noPresets: "No presets\nSave one with 💾",
+        noMatch: "No matching presets",
+        rename: "✏️ Rename",
+        delete: "🗑 Delete",
+        confirmDeletePreset: "Delete the preset “{name}”?",
+        presetNamePrompt: "💾 Enter a preset name",
+        presetNameEx: "e.g. Evening backlight",
+    },
+    ja: {
+        imageTabTip: "画像からポーズを推定して VRM に適用 (SAM 3D Body / ComfyUI)",
+        subEnv: "Environment (地面・壁・風)",
+        subSettings: "Settings (アンチエイリアス・マウス)",
+        shadowCatcherTip: "Shadow Catcher: 面を透明にして影だけ表示",
+        shadowOpacity: "影濃度:",
+        springOnlyTip: "Spring Bone Physics がONの時のみ効果があります",
+        windSource: "🧭 発生源",
+        windSourceTip: "ONにするとプレビュー内のオレンジのコーンをドラッグして風向きを指定できます(「向き」スライダーは無効化されます)",
+        windStrength: "強さ:",
+        windDirection: "向き:",
+        windGust: "そよぎ:",
+        ctrlZoom: "🖱 Ctrl+右ドラッグでズーム",
+        ctrlZoomTip1: "OFF: マウスホイールでズーム / ON: 何もない場所でCtrl+右ドラッグでズーム\n",
+        ctrlZoomTip2: "(マウスホイールズームが機能しない環境向け)",
+        aaBoost: "🖼 アンチエイリアス強化",
+        aaBoostTip: "プレビュー拡大表示時の輪郭のギザギザを抑えます（解像度を上げるため描画負荷が増えます）",
+        reloadModelsTip: "model/ フォルダを再読み込み",
+        loadModelTip: "選択中のモデルを今このノードに読み込む",
+        loading: "読み込み中…",
+        modelAuto: "Auto (model/ が空)",
+        modelNone: "None (読み込まない)",
+        modelMissing: "{name} (見つかりません)",
+        modelCount: "{count} 件 · {dir}",
+        modelSaved: "保存しました(次にノードを作成・ページを読み込んだときに使われます)",
+        pickFile: "読み込むファイルを選んでください",
+        gltfNoLoad: ".gltf は Load できません(既定モデルとしての自動読み込みは可能です)",
+        loaded: "{name} を読み込みました",
+        loadFailed: "読み込みに失敗しました: {msg}",
+        modelHint: "model/ フォルダに .vrm / .glb / .gltf を置くと選べます。選択は保存され、ノード作成時・ページ読み込み時に自動で読み込まれます。",
+        audioTabTip: "Audio（音声ファイルの管理）",
+        apiTabTip: "API設定（Lemonade など）",
+        blinkTip: "自動で瞬きさせます(キーフレームの 😑 Blink トラックで ON/OFF・間隔を記録できます)",
+        blinkIntervalTip: "瞬きの平均間隔(秒)",
+        interval: "間隔:",
+        lipSyncTip: "テキストまたは音声の再生に合わせて口形(aa/ih/ou/ee/oh)を動かします。停止すると口は元の値に戻ります",
+        lipTextPh: "テキスト（日本語・英語）",
+        audioSelected: "🎵 選択中: {name}",
+        audioNone: "🎵 選択中: なし（A タブで選択）",
+        playText: "▶ テキストで再生",
+        playAudio: "🎵 選択中の音声で再生",
+        needAudio: "音声を選択してください（A タブ、または「テキストから音声を作成」）。",
+        playFailedPlain: "再生できませんでした。",
+        playing: "再生中: {name}",
+        playFailed: "再生できませんでした: {msg}",
+        createSpeech: "🔊 テキストから音声を作成",
+        createSpeechTip: "Lip Sync 欄のテキストを Lemonade で音声にし、Audio フォルダへ保存して選択します",
+        needText: "テキストを入力してください。",
+        creating: "音声を作成中…",
+        created: "作成しました: {name}",
+        createFailed: "作成できませんでした: {msg}",
+        stop: "■ 停止",
+        lipSourceTip: "Lip トラックのキーフレーム追加の音源。OFF=T（Lip Sync 欄のテキスト）/ ON=A（選択中の音声。音量で口の開きを決める）",
+        lipSourceA: "キーフレーム T/A: A（選択中の音声）",
+        lipSourceT: "キーフレーム T/A: T（テキスト）",
+        previewHint: "🎥 Preview  ·  ドラッグでカメラ操作  ·  青球でボーン操作  ·  黄球でライト移動",
+        savePoseFailed: "poses/ への保存に失敗しました: ",
+        lightPosition: "Position  (黄球をドラッグで3D移動)",
+        noShadow: "このライトタイプはシャドウ非対応",
+        noPresets: "プリセットがありません\n💾 で保存してください",
+        noMatch: "一致するプリセットがありません",
+        rename: "✏️ 名前変更",
+        delete: "🗑 削除",
+        confirmDeletePreset: "プリセット「{name}」を削除しますか？",
+        presetNamePrompt: "💾 プリセット名を入力",
+        presetNameEx: "例: 夕方の逆光",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 // initialTab: "light"(既定) | "pose" | "image" — モーダルを開いた直後に表示するメインタブ
 // (ノード側のLight/Poseボタンがそれぞれ対応するタブを直接指定して開くために使う)
@@ -125,7 +265,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                 });
             }
         } catch (err) {
-            console.warn("[light_editor] プレビューの復元に失敗しました:", err);
+            console.warn("[light_editor] Failed to restore the preview:", err);
         }
 
         resizeObserver?.disconnect();
@@ -158,7 +298,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const lightTabBtn = mkMainTabBtn("💡 Light");
     const poseTabBtn  = mkMainTabBtn("🕺 pose");
     const imageTabBtn = mkMainTabBtn("🖼 Image");
-    imageTabBtn.title = "画像からポーズを推定して VRM に適用 (SAM 3D Body / ComfyUI)";
+    imageTabBtn.title = tr("imageTabTip");
     mainTabBar.append(lightTabBtn, poseTabBtn, imageTabBtn);
 
     // ---- Point Size (ボーンハンドルの球サイズ倍率) ----
@@ -212,8 +352,8 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                "border-right:1px solid #2a2a4a;background:#12121c;",
     });
     const subTabL = mkSubTabBtn("L", "Lights");
-    const subTabE = mkSubTabBtn("E", "Environment (地面・壁・風)");
-    const subTabS = mkSubTabBtn("S", "Settings (アンチエイリアス・マウス)");
+    const subTabE = mkSubTabBtn("E", tr("subEnv"));
+    const subTabS = mkSubTabBtn("S", tr("subSettings"));
     subTabStrip.append(subTabL, subTabE, subTabS);
 
     const subTabContent = el("div", {
@@ -268,7 +408,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const groundTileNum = mkNumInput(0.1, 50, 0.1, 1, n => editor.setGroundTexRepeat(n));
     const groundSCBtn = mkToggleBtn("🕶 SC", editor.getGroundShadowCatcher());
     groundSCBtn.style.cssText += "padding:3px 7px;font-size:10px;";
-    groundSCBtn.title = "Shadow Catcher: 面を透明にして影だけ表示";
+    groundSCBtn.title = tr("shadowCatcherTip");
     groundSCBtn.onclick = () => applyToggle(groundSCBtn, "🕶 SC", editor.toggleGroundShadowCatcher());
     const groundSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setGroundShadowOpacity(v));
 
@@ -278,7 +418,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         sliderRow("Y:", groundYSl, groundYVl),
         fieldRow("Color:", row2(groundColorPick, groundTexBtn)),
         fieldRow("", row2(groundTexClear, lbl("Tile:"), groundTileNum)),
-        fieldRow("", row2(groundSCBtn, lbl("影濃度:"), groundSCOpNum)),
+        fieldRow("", row2(groundSCBtn, lbl(tr("shadowOpacity")), groundSCOpNum)),
     );
 
     // Wall
@@ -310,7 +450,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const wallTileNum = mkNumInput(0.1, 50, 0.1, 1, n => editor.setBgWallTexRepeat(n));
     const wallSCBtn = mkToggleBtn("🕶 SC", editor.getBgWallShadowCatcher());
     wallSCBtn.style.cssText += "padding:3px 7px;font-size:10px;";
-    wallSCBtn.title = "Shadow Catcher: 面を透明にして影だけ表示";
+    wallSCBtn.title = tr("shadowCatcherTip");
     wallSCBtn.onclick = () => applyToggle(wallSCBtn, "🕶 SC", editor.toggleBgWallShadowCatcher());
     const wallSCOpNum = mkNumInput(0.01, 1, 0.05, 0.5, v => editor.setBgWallShadowOpacity(v));
 
@@ -320,7 +460,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         sliderRow("Z:", bgZSl, bgZVl),
         fieldRow("Color:", row2(wallColorPick, wallTexBtn)),
         fieldRow("", row2(wallTexClear, lbl("Tile:"), wallTileNum)),
-        fieldRow("", row2(wallSCBtn, lbl("影濃度:"), wallSCOpNum)),
+        fieldRow("", row2(wallSCBtn, lbl(tr("shadowOpacity")), wallSCOpNum)),
     );
 
     // Shadow quality
@@ -338,7 +478,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
     // Wind
     const windBtn2 = mkToggleBtn("🌬 Wind", editor.getWindEnabled());
-    windBtn2.title = "Spring Bone Physics がONの時のみ効果があります";
+    windBtn2.title = tr("springOnlyTip");
     windBtn2.onclick = () => applyToggle(windBtn2, "🌬 Wind", editor.toggleWindEnabled());
     const [windStrSl, windStrVl] = mkSl(0, 5, 0.05, editor.getWindStrength(), v => editor.setWindStrength(v));
     const [windDirSl, windDirVl] = mkSl(0, 360, 1, editor.getWindDirection(),
@@ -350,11 +490,11 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         windDirSl.style.opacity = disabled ? "0.4" : "1";
         windDirVl.style.opacity = disabled ? "0.4" : "1";
     }
-    const windSrcBtn = mkToggleBtn("🧭 発生源", editor.getWindSourceEnabled());
-    windSrcBtn.title = "ONにするとプレビュー内のオレンジのコーンをドラッグして風向きを指定できます(「向き」スライダーは無効化されます)";
+    const windSrcBtn = mkToggleBtn(tr("windSource"), editor.getWindSourceEnabled());
+    windSrcBtn.title = tr("windSourceTip");
     windSrcBtn.onclick = () => {
         const on = editor.toggleWindSourceEnabled();
-        applyToggle(windSrcBtn, "🧭 発生源", on);
+        applyToggle(windSrcBtn, tr("windSource"), on);
         _syncWindDirDisabled(on);
     };
     _syncWindDirDisabled(editor.getWindSourceEnabled());
@@ -362,28 +502,28 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     eBody.append(
         sectionTitle("Wind"),
         fieldRow("On:", windBtn2),
-        sliderRow("強さ:", windStrSl, windStrVl),
-        fieldRow("向き:", windSrcBtn),
+        sliderRow(tr("windStrength"), windStrSl, windStrVl),
+        fieldRow(tr("windDirection"), windSrcBtn),
         sliderRow("", windDirSl, windDirVl),
-        sliderRow("そよぎ:", windGustSl, windGustVl),
+        sliderRow(tr("windGust"), windGustSl, windGustVl),
     );
 
     // ---- S: Settings (AA / Mouse zoom mode) ----
     const sBody = el("div", { style: "display:none;flex-direction:column;gap:8px;padding:10px;overflow-x:hidden;overflow-y:auto;flex:1;box-sizing:border-box;" });
 
-    const zoomModeBtn = mkToggleBtn("🖱 Ctrl+右ドラッグでズーム", editor.getZoomMode() === "ctrlDrag");
-    zoomModeBtn.title = "OFF: マウスホイールでズーム / ON: 何もない場所でCtrl+右ドラッグでズーム\n" +
-                         "(マウスホイールズームが機能しない環境向け)";
+    const zoomModeBtn = mkToggleBtn(tr("ctrlZoom"), editor.getZoomMode() === "ctrlDrag");
+    zoomModeBtn.title = tr("ctrlZoomTip1") +
+                         tr("ctrlZoomTip2");
     zoomModeBtn.style.cssText += "white-space:normal;text-align:left;";
     zoomModeBtn.onclick = () => {
         const next = editor.getZoomMode() === "wheel" ? "ctrlDrag" : "wheel";
         editor.setZoomMode(next);
-        applyToggle(zoomModeBtn, "🖱 Ctrl+右ドラッグでズーム", next === "ctrlDrag");
+        applyToggle(zoomModeBtn, tr("ctrlZoom"), next === "ctrlDrag");
     };
 
-    const AA_LABEL = "🖼 アンチエイリアス強化";
+    const AA_LABEL = tr("aaBoost");
     const aaBtn = mkToggleBtn(AA_LABEL, editor.getSuperSample?.() ?? false);
-    aaBtn.title = "プレビュー拡大表示時の輪郭のギザギザを抑えます（解像度を上げるため描画負荷が増えます）";
+    aaBtn.title = tr("aaBoostTip");
     aaBtn.style.cssText += "white-space:normal;text-align:left;";
     aaBtn.onclick = () => {
         const next = !(editor.getSuperSample?.() ?? false);
@@ -398,27 +538,27 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     });
     defModelSel.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
     const defModelRefresh = mkBtn("↺", "#2a4a7a");
-    defModelRefresh.title = "model/ フォルダを再読み込み";
+    defModelRefresh.title = tr("reloadModelsTip");
     defModelRefresh.style.padding = "3px 8px";
     const defModelLoadBtn = mkBtn("Load", "#7a5a9a");
-    defModelLoadBtn.title = "選択中のモデルを今このノードに読み込む";
+    defModelLoadBtn.title = tr("loadModelTip");
     const defModelInfo = el("div", { style: "font-size:10px;color:#667;line-height:1.5;word-break:break-all;" });
 
     async function refreshDefaultModelList() {
-        defModelInfo.textContent = "読み込み中…";
+        defModelInfo.textContent = tr("loading");
         try {
             const [list, settings] = await Promise.all([listModels(), loadEditorSettings()]);
             const opts = [
-                el("option", { value: "" }, list.models.length ? `Auto (${list.models[0].name})` : "Auto (model/ が空)"),
+                el("option", { value: "" }, list.models.length ? `Auto (${list.models[0].name})` : tr("modelAuto")),
                 ...list.models.map(m => el("option", { value: m.name }, `${m.name}  (${(m.size / 1024 / 1024).toFixed(1)} MB)`)),
-                el("option", { value: NONE_MODEL }, "None (読み込まない)"),
+                el("option", { value: NONE_MODEL }, tr("modelNone")),
             ];
             defModelSel.replaceChildren(...opts);
             const cur = settings.defaultModel ?? "";
             const missing = cur && cur !== NONE_MODEL && !list.models.some(m => m.name === cur);
-            if (missing) defModelSel.prepend(el("option", { value: cur }, `${cur} (見つかりません)`));
+            if (missing) defModelSel.prepend(el("option", { value: cur }, tr("modelMissing", { name: cur })));
             defModelSel.value = cur;
-            defModelInfo.textContent = `${list.models.length} 件 · ${list.dir}`;
+            defModelInfo.textContent = tr("modelCount", { count: list.models.length, dir: list.dir });
             defModelInfo.title = list.dir;
         } catch (e) {
             defModelInfo.textContent = String(e.message ?? e);
@@ -427,7 +567,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     defModelSel.addEventListener("change", async () => {
         try {
             await saveEditorSettings({ defaultModel: defModelSel.value });
-            defModelInfo.textContent = "保存しました(次にノードを作成・ページを読み込んだときに使われます)";
+            defModelInfo.textContent = tr("modelSaved");
         } catch (e) {
             defModelInfo.textContent = String(e.message ?? e);
         }
@@ -436,12 +576,12 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     defModelLoadBtn.onclick = async () => {
         const name = defModelSel.value;
         if (!name || name === NONE_MODEL) {
-            defModelInfo.textContent = "読み込むファイルを選んでください";
+            defModelInfo.textContent = tr("pickFile");
             return;
         }
         if (/\.gltf$/i.test(name)) {
             // .gltf は外部の .bin / テクスチャを相対パスで参照するため File 経由では読めない
-            defModelInfo.textContent = ".gltf は Load できません(既定モデルとしての自動読み込みは可能です)";
+            defModelInfo.textContent = tr("gltfNoLoad");
             return;
         }
         try {
@@ -449,9 +589,9 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const blob = await res.blob();
             nodeActions?.loadVrmFile?.(new File([blob], name));
-            defModelInfo.textContent = `${name} を読み込みました`;
+            defModelInfo.textContent = tr("loaded", { name });
         } catch (e) {
-            defModelInfo.textContent = `読み込みに失敗しました: ${e.message ?? e}`;
+            defModelInfo.textContent = tr("loadFailed", { msg: e.message ?? e });
         }
     };
     const defModelRow = el("div", { style: "display:flex;gap:4px;align-items:center;" });
@@ -473,7 +613,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             defModelLoadBtn,
             defModelInfo,
             el("div", { style: "font-size:10px;color:#556;line-height:1.5;" },
-                "model/ フォルダに .vrm / .glb / .gltf を置くと選べます。選択は保存され、ノード作成時・ページ読み込み時に自動で読み込まれます。"),
+                tr("modelHint")),
         );
     }
 
@@ -500,8 +640,8 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const poseSubTabK = mkSubTabBtn("K", "Shape Keys");
     const poseSubTabC = mkSubTabBtn("C", "Camera");
     // A: 音声ファイル(作成・選択・削除) / S: API 設定(Lemonade など)
-    const poseSubTabA = mkSubTabBtn("A", "Audio（音声ファイルの管理）");
-    const poseSubTabS = mkSubTabBtn("S", "API設定（Lemonade など）");
+    const poseSubTabA = mkSubTabBtn("A", tr("audioTabTip"));
+    const poseSubTabS = mkSubTabBtn("S", tr("apiTabTip"));
     poseSubTabStrip.append(poseSubTabK, poseSubTabC, poseSubTabA, poseSubTabS);
     const audioTab = buildAudioTab();
     const apiSettingsTab = buildSettingsTab();
@@ -535,10 +675,10 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
                    "border-bottom:1px solid #2a2a4a;",
         });
         const toggle = mkToggleBtn("😑 Auto Blink", blink.enabled);
-        toggle.title = "自動で瞬きさせます(キーフレームの 😑 Blink トラックで ON/OFF・間隔を記録できます)";
+        toggle.title = tr("blinkTip");
         const [intSl, intVl] = mkSl(0.5, 10, 0.5, blink.interval,
             v => editor.setAutoBlink?.({ interval: v }), v => v.toFixed(1) + "s");
-        intSl.title = "瞬きの平均間隔(秒)";
+        intSl.title = tr("blinkIntervalTip");
         const syncDisabled = (on) => {
             intSl.disabled = !on;
             intSl.style.opacity = on ? "1" : "0.4";
@@ -551,7 +691,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             syncDisabled(on);
         };
         syncDisabled(blink.enabled);
-        wrap.append(toggle, sliderRow("間隔:", intSl, intVl));
+        wrap.append(toggle, sliderRow(tr("interval"), intSl, intVl));
         return wrap;
     }
 
@@ -572,7 +712,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         const title = el("button", {
             style: "all:unset;cursor:pointer;font-size:11px;color:#aaa;user-select:none;",
         }, (_lipRowOpen ? "▾" : "▸") + " 👄 Lip Sync");
-        title.title = "テキストまたは音声の再生に合わせて口形(aa/ih/ou/ee/oh)を動かします。停止すると口は元の値に戻ります";
+        title.title = tr("lipSyncTip");
         const applyOpen = () => {
             body.style.display = _lipRowOpen ? "flex" : "none";
             title.textContent = (_lipRowOpen ? "▾" : "▸") + " 👄 Lip Sync";
@@ -580,7 +720,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         title.onclick = () => { _lipRowOpen = !_lipRowOpen; applyOpen(); };
         applyOpen();
         const ta = el("textarea", {
-            rows: "2", placeholder: "テキスト（日本語・英語）",
+            rows: "2", placeholder: tr("lipTextPh"),
             style: "background:#111;border:1px solid #444;color:#ddd;padding:3px 7px;border-radius:4px;" +
                    "font-size:12px;resize:vertical;box-sizing:border-box;width:100%;",
         });
@@ -589,57 +729,57 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
         // 選択中の音声(A タブと共有)。行を作り直すときは前の購読を解除する
         const selLabel = el("div", { style: "font-size:11px;color:#8fd;word-break:break-all;" });
         const renderSel = (name) => {
-            selLabel.textContent = name ? `🎵 選択中: ${name}` : "🎵 選択中: なし（A タブで選択）";
+            selLabel.textContent = name ? tr("audioSelected", { name }) : tr("audioNone");
         };
         renderSel(getSelectedAudio());
         if (_lipRowUnsub) _lipRowUnsub();
         _lipRowUnsub = onSelectedAudioChange(renderSel);
         const status = el("div", { style: "font-size:11px;color:#888;word-break:break-all;" });
         const btns = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;" });
-        const btnText = mkBtn("▶ テキストで再生", "#3a6a1a");
+        const btnText = mkBtn(tr("playText"), "#3a6a1a");
         btnText.onclick = () => editor.playLipText?.();
-        const btnAudio = mkBtn("🎵 選択中の音声で再生", "#3a6a1a");
+        const btnAudio = mkBtn(tr("playAudio"), "#3a6a1a");
         btnAudio.onclick = async () => {
             const name = getSelectedAudio();
-            if (!name) { status.textContent = "音声を選択してください（A タブ、または「テキストから音声を作成」）。"; return; }
+            if (!name) { status.textContent = tr("needAudio"); return; }
             try {
                 const file = await fetchAudioFile(name);
                 const ok = await editor.playLipAudio?.(file);
-                status.textContent = ok === false ? "再生できませんでした。" : `再生中: ${name}`;
+                status.textContent = ok === false ? tr("playFailedPlain") : tr("playing", { name });
             } catch (e) {
-                status.textContent = `再生できませんでした: ${e.message}`;
+                status.textContent = tr("playFailed", { msg: e.message });
             }
         };
-        const btnGen = mkBtn("🔊 テキストから音声を作成", "#2a6a8a");
-        btnGen.title = "Lip Sync 欄のテキストを Lemonade で音声にし、Audio フォルダへ保存して選択します";
+        const btnGen = mkBtn(tr("createSpeech"), "#2a6a8a");
+        btnGen.title = tr("createSpeechTip");
         btnGen.onclick = async () => {
             const text = ta.value.trim();
-            if (!text) { status.textContent = "テキストを入力してください。"; return; }
+            if (!text) { status.textContent = tr("needText"); return; }
             btnGen.disabled = true;
-            status.textContent = "音声を作成中…";
+            status.textContent = tr("creating");
             try {
                 const name = await generateSpeech(text);
                 setSelectedAudio(name);
-                status.textContent = `作成しました: ${name}`;
+                status.textContent = tr("created", { name });
             } catch (e) {
-                status.textContent = `作成できませんでした: ${e.message}`;
+                status.textContent = tr("createFailed", { msg: e.message });
             } finally {
                 btnGen.disabled = false;
             }
         };
-        const btnStop = mkBtn("■ 停止", "#6a2a2a");
+        const btnStop = mkBtn(tr("stop"), "#6a2a2a");
         btnStop.onclick = () => editor.stopLipSync?.();
         btns.append(btnText, btnGen, btnAudio, btnStop);
         // キーフレームの音源 T/A: OFF = T(テキスト) / ON = A(選択中の音声)。状態はエディタ側に持つので行を作り直しても戻らない
         const keyLabel = el("label", {
             style: "display:flex;align-items:center;gap:5px;font-size:11px;color:#ccc;cursor:pointer;user-select:none;",
         });
-        keyLabel.title = "Lip トラックのキーフレーム追加の音源。OFF=T（Lip Sync 欄のテキスト）/ ON=A（選択中の音声。音量で口の開きを決める）";
+        keyLabel.title = tr("lipSourceTip");
         const keyCheck = el("input", { type: "checkbox" });
         keyCheck.checked = !!state.keyAudio;
         const keyText = el("span", {});
         const renderKey = () => {
-            keyText.textContent = keyCheck.checked ? "キーフレーム T/A: A（選択中の音声）" : "キーフレーム T/A: T（テキスト）";
+            keyText.textContent = keyCheck.checked ? tr("lipSourceA") : tr("lipSourceT");
         };
         renderKey();
         keyCheck.addEventListener("change", () => { editor.setLipKeyAudio?.(keyCheck.checked); renderKey(); });
@@ -769,7 +909,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
     const previewHeader = el("div", {
         style: "font-size:10px;color:#556;padding:5px 10px;flex-shrink:0;" +
                "border-bottom:1px solid #1a1a2a;background:#13131e;",
-    }, "🎥 Preview  ·  ドラッグでカメラ操作  ·  青球でボーン操作  ·  黄球でライト移動");
+    }, tr("previewHint"));
 
     // Container that will hold cvsWrapper
     const previewWrap = el("div", {
@@ -974,7 +1114,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             poseSaveBtn.textContent = "✅ Save";
             setTimeout(() => { poseSaveBtn.textContent = "💾 Save"; }, 1500);
         } catch (e) {
-            alert("poses/ への保存に失敗しました: " + e.message);
+            alert(tr("savePoseFailed") + e.message);
         }
     };
 
@@ -1305,7 +1445,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
 
         // Position
         if (cfg.type !== "ambient") {
-            sec("Position  (黄球をドラッグで3D移動)");
+            sec(tr("lightPosition"));
             ["x","y","z"].forEach(axis => {
                 const [sl, vl] = mkSl(-20, 20, 0.1, cfg.position[axis], v => {
                     cfg.position = { ...cfg.position, [axis]: v };
@@ -1368,7 +1508,7 @@ function buildModal(editor, cvsWrapper, vrmBuffer, getShapeKeys, onClose, initia
             propBody.appendChild(lbl);
         } else {
             propBody.appendChild(el("div", { style: "font-size:11px;color:#556;padding:2px 0;" },
-                "このライトタイプはシャドウ非対応"));
+                tr("noShadow")));
         }
     }
 
@@ -1585,8 +1725,8 @@ function buildLibraryPanel(editor, uiRefs, refreshList, showProps) {
             const empty = el("div", {
                 style: "font-size:11px;color:#444;text-align:center;padding:20px 8px;",
             }, allPresets.length === 0
-                ? "プリセットがありません\n💾 で保存してください"
-                : "一致するプリセットがありません");
+                ? tr("noPresets")
+                : tr("noMatch"));
             listArea.appendChild(empty);
             return;
         }
@@ -1661,9 +1801,9 @@ function buildLibraryPanel(editor, uiRefs, refreshList, showProps) {
         };
 
         menu.append(
-            menuItem("✏️ 名前変更", () => showRenameDlg(preset)),
-            menuItem("🗑 削除",     () => {
-                if (!confirm(`プリセット「${preset.name}」を削除しますか？`)) return;
+            menuItem(tr("rename"), () => showRenameDlg(preset)),
+            menuItem(tr("delete"),     () => {
+                if (!confirm(tr("confirmDeletePreset", { name: preset.name }))) return;
                 deletePreset(preset.id);
             })
         );
@@ -1685,7 +1825,7 @@ function buildLibraryPanel(editor, uiRefs, refreshList, showProps) {
             style: "background:#1e1e3a;border-radius:8px;padding:16px;min-width:280px;" +
                    "box-shadow:0 6px 24px rgba(0,0,0,0.7);font-family:sans-serif;",
         });
-        const title = el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, "✏️ 名前変更");
+        const title = el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, tr("rename"));
         const input = el("input", {
             type: "text",
             style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #555;" +
@@ -1729,9 +1869,9 @@ function buildLibraryPanel(editor, uiRefs, refreshList, showProps) {
             style: "background:#1e1e3a;border-radius:8px;padding:16px;min-width:280px;" +
                    "box-shadow:0 6px 24px rgba(0,0,0,0.7);font-family:sans-serif;",
         });
-        const title = el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, "💾 プリセット名を入力");
+        const title = el("div", { style: "font-size:13px;font-weight:bold;color:#e0e0ff;margin-bottom:10px;" }, tr("presetNamePrompt"));
         const input = el("input", {
-            type: "text", placeholder: "例: 夕方の逆光",
+            type: "text", placeholder: tr("presetNameEx"),
             style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #555;" +
                    "color:#ddd;padding:6px 10px;border-radius:4px;font-size:13px;",
         });

@@ -3,6 +3,138 @@
 // 「選択中の音声」は A タブと Lip Sync 行で共有する。音声ファイルは <output>/vrm_pose_editor/Audio に置かれる。
 import { fetchApi } from "./comfy_api.js";
 import { getLipLevels, setLipLevels, LIP_LEVEL_DEFAULTS } from "./lip_sync.js";
+import { makeT } from "./i18n.js";
+
+// UI 文言(en が基準)。言語は ComfyUI の設定(Comfy.Locale)に従う(i18n.js の makeT)。呼ぶたびに決める
+const STRINGS = {
+    en: {
+        refreshTip: "Refresh the list",
+        selectBtn: "✓ Select",
+        selectTip: "Use the checked file as the Lip Sync audio",
+        playBtn: "▶ Play",
+        playTip: "Preview the checked file",
+        deleteBtn: "🗑 Delete",
+        deleteTip: "Delete all checked audio files",
+        checkAll: "All",
+        checkAllTip: "Check / uncheck every row",
+        checkOne: "Check the audio file to {action}.",
+        checkOnlyOne: "Check only one file to {action} (now {count}).",
+        selectedName: "Selected: {name}",
+        selectedNone: "Selected: none",
+        playing: "Playing: {name}",
+        playFailed: "Could not play: {msg}",
+        confirmDelete: "Delete {count} audio file(s)?\n\n{list}",
+        deleteFailed: "Some files could not be deleted: {list}",
+        deleted: "Deleted {count} file(s).",
+        actSelect: "select",
+        selectedDone: "Selected: {name}",
+        actPlay: "play",
+        checkToDelete: "Check the audio files to delete.",
+        loading: "Loading…",
+        rowCheckTip: "Include in the action",
+        noFiles: "No audio files. Create one with “Create speech from text” in the Lip Sync section.",
+        fileCount: "{count} file(s) · {dir}",
+        listFailed: "Could not load the list: {msg}",
+        apiTitle: "API settings",
+        lemonadeTitle: "Lemonade (speech / Kokoro)",
+        voiceJa: " (Japanese)",
+        voiceEn: " (English)",
+        voicevoxTitle: "VOICEVOX (speech)",
+        refreshSpeakers: "Refresh speakers",
+        refreshSpeakersTip: "Get the speaker list from VOICEVOX",
+        engineLemonade: "Lemonade (Kokoro)",
+        save: "Save",
+        saveTip: "Save the API settings",
+        test: "Test connection",
+        testTip: "Connect to the selected engine",
+        savedAt: "Saved to: output/vrm_pose_editor/api_settings.json (ComfyUI's output folder)",
+        voiceLabel: "Voice (default voice)",
+        speakerLabel: "Speaker (default voice)",
+        lipLevelTitle: "Mouth shape (shape key) levels",
+        reset: "Default",
+        resetTip: "Reset to the default ({value})",
+        lipTextLabel: "Play from text (T): mouth opening",
+        lipTextHint: "0–1. Higher opens the mouth wider. Keyframe T uses the same value",
+        lipAudioLabel: "Play the selected audio (A): volume multiplier",
+        lipAudioHint: "0–3. Higher opens the mouth even for quiet voices (capped at 1). Keyframe A uses the same value",
+        engineLabel: "Engine",
+        speakersLoaded: "Got {count} speaker(s).",
+        speakersFailed: "Could not get the speaker list: {msg}",
+        speakersLoading: "Getting the speaker list…",
+        saveFailed: "Could not save: {msg}",
+        settingsLoadFailed: "Could not load the settings: {msg}",
+        saving: "Saving…",
+        saved: "Saved.",
+        testing: "Testing the connection…",
+        testOk: "Connected ({status})",
+        testFailed: "Could not connect: {error}",
+        testError: "Connection test failed: {msg}",
+    },
+    ja: {
+        refreshTip: "一覧を更新",
+        selectBtn: "✓ 選択",
+        selectTip: "チェックした 1 件を Lip Sync の音声に選ぶ",
+        playBtn: "▶ 再生",
+        playTip: "チェックした 1 件を試聴する",
+        deleteBtn: "🗑 削除",
+        deleteTip: "チェックしたすべての音声を削除する",
+        checkAll: "全選択",
+        checkAllTip: "すべての行をチェック / 解除",
+        checkOne: "{action}する音声にチェックを入れてください。",
+        checkOnlyOne: "{action}は 1 件だけチェックしてください（現在 {count} 件）。",
+        selectedName: "選択中: {name}",
+        selectedNone: "選択中: なし",
+        playing: "再生中: {name}",
+        playFailed: "再生できませんでした: {msg}",
+        confirmDelete: "{count} 件の音声ファイルを削除しますか？\n\n{list}",
+        deleteFailed: "削除できなかった音声があります: {list}",
+        deleted: "{count} 件を削除しました。",
+        actSelect: "選択",
+        selectedDone: "選択しました: {name}",
+        actPlay: "再生",
+        checkToDelete: "削除する音声にチェックを入れてください。",
+        loading: "読み込み中…",
+        rowCheckTip: "操作の対象にする",
+        noFiles: "音声ファイルがありません。Lip Sync 欄の「テキストから音声を作成」で作れます。",
+        fileCount: "{count} 件 · {dir}",
+        listFailed: "一覧を読み込めませんでした: {msg}",
+        apiTitle: "API 設定",
+        lemonadeTitle: "Lemonade（音声作成 / Kokoro）",
+        voiceJa: "（日本語）",
+        voiceEn: "（英語）",
+        voicevoxTitle: "VOICEVOX（音声作成）",
+        refreshSpeakers: "話者を更新",
+        refreshSpeakersTip: "VOICEVOX から話者一覧を取得する",
+        engineLemonade: "Lemonade（Kokoro）",
+        save: "保存",
+        saveTip: "API 設定を保存する",
+        test: "接続テスト",
+        testTip: "選択中のエンジンに接続する",
+        savedAt: "保存先: output/vrm_pose_editor/api_settings.json（ComfyUI の output フォルダ）",
+        voiceLabel: "Voice（既定の声）",
+        speakerLabel: "話者（既定の声）",
+        lipLevelTitle: "口形（シェイプキー）のレベル",
+        reset: "既定",
+        resetTip: "既定値（{value}）に戻す",
+        lipTextLabel: "テキストで再生（T）: 口の開き",
+        lipTextHint: "0〜1。大きいほど口が大きく開く。キーフレームの T も同じ値を使う",
+        lipAudioLabel: "選択中の音声で再生（A）: 音量の倍率",
+        lipAudioHint: "0〜3。大きいほど小さい声でも口が開く（結果は 1 で頭打ち）。キーフレームの A も同じ値を使う",
+        engineLabel: "使用するエンジン",
+        speakersLoaded: "話者 {count} 件を取得しました。",
+        speakersFailed: "話者一覧を取得できませんでした: {msg}",
+        speakersLoading: "話者一覧を取得中…",
+        saveFailed: "保存できませんでした: {msg}",
+        settingsLoadFailed: "設定を読み込めませんでした: {msg}",
+        saving: "保存中…",
+        saved: "保存しました。",
+        testing: "接続テスト中…",
+        testOk: "接続OK（{status}）",
+        testFailed: "接続できませんでした: {error}",
+        testError: "接続テストに失敗: {msg}",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 // ---- 選択中の音声(A タブ・Lip Sync 行で共有) ----
 let _selected = null;
@@ -81,16 +213,16 @@ export function buildAudioTab() {
     const head = el("div", "display:flex;align-items:center;gap:6px;padding:7px 10px;" +
                            "border-bottom:1px solid #2a2a4a;flex-shrink:0;");
     const title = el("span", "font-size:12px;font-weight:bold;color:#aaa;flex:1;", "Audio");
-    const refreshBtn = smallBtn("↻", "#333344", "一覧を更新");
+    const refreshBtn = smallBtn("↻", "#333344", tr("refreshTip"));
     head.append(title, refreshBtn);
 
     // 共通ツールバー: 選択・再生・削除・全選択
     const toolbar = el("div", "display:flex;align-items:center;gap:6px;padding:6px 10px;flex-wrap:wrap;" +
                               "border-bottom:1px solid #2a2a4a;flex-shrink:0;");
-    const selectBtn = smallBtn("✓ 選択", "#3a6a1a", "チェックした 1 件を Lip Sync の音声に選ぶ");
-    const playBtn = smallBtn("▶ 再生", "#2a6a8a", "チェックした 1 件を試聴する");
-    const deleteBtn = smallBtn("🗑 削除", "#6a2a2a", "チェックしたすべての音声を削除する");
-    const allBtn = smallBtn("全選択", "#333344", "すべての行をチェック / 解除");
+    const selectBtn = smallBtn(tr("selectBtn"), "#3a6a1a", tr("selectTip"));
+    const playBtn = smallBtn(tr("playBtn"), "#2a6a8a", tr("playTip"));
+    const deleteBtn = smallBtn(tr("deleteBtn"), "#6a2a2a", tr("deleteTip"));
+    const allBtn = smallBtn(tr("checkAll"), "#333344", tr("checkAllTip"));
     toolbar.append(selectBtn, playBtn, deleteBtn, allBtn);
 
     const selLabel = el("div", "font-size:11px;color:#8fd;padding:6px 10px;border-bottom:1px solid #2a2a4a;" +
@@ -124,15 +256,15 @@ export function buildAudioTab() {
         const names = checkedNames();
         if (names.length !== 1) {
             status.textContent = names.length === 0
-                ? `${actionLabel}する音声にチェックを入れてください。`
-                : `${actionLabel}は 1 件だけチェックしてください（現在 ${names.length} 件）。`;
+                ? tr("checkOne", { action: actionLabel })
+                : tr("checkOnlyOne", { action: actionLabel, count: names.length });
             return null;
         }
         return names[0];
     }
 
     function renderSelected(name) {
-        selLabel.textContent = name ? `選択中: ${name}` : "選択中: なし";
+        selLabel.textContent = name ? tr("selectedName", { name }) : tr("selectedNone");
         rows.forEach(({ row }, n) => {
             row.style.background = n === name ? "#1f3a2a" : "#1c1c2c";
         });
@@ -144,14 +276,14 @@ export function buildAudioTab() {
             if (previewAudio) previewAudio.pause();
             previewAudio = new Audio(URL.createObjectURL(file));
             await previewAudio.play();
-            status.textContent = `再生中: ${name}`;
+            status.textContent = tr("playing", { name });
         } catch (e) {
-            status.textContent = `再生できませんでした: ${e.message}`;
+            status.textContent = tr("playFailed", { msg: e.message });
         }
     }
 
     async function deleteNames(names) {
-        if (!confirm(`${names.length} 件の音声ファイルを削除しますか？\n\n${names.join("\n")}`)) return;
+        if (!confirm(tr("confirmDelete", { count: names.length, list: names.join("\n") }))) return;
         let failed = [];
         for (const name of names) {
             try {
@@ -168,27 +300,27 @@ export function buildAudioTab() {
         }
         await refresh();
         status.textContent = failed.length
-            ? `削除できなかった音声があります: ${failed.join(", ")}`
-            : `${names.length} 件を削除しました。`;
+            ? tr("deleteFailed", { list: failed.join(", ") })
+            : tr("deleted", { count: names.length });
     }
 
     selectBtn.onclick = () => {
-        const name = singleChecked("選択");
+        const name = singleChecked(tr("actSelect"));
         if (!name) return;
         setSelectedAudio(name);
         // 選択が決まったらチェックは外す(選択中はハイライトで分かるため)
         rows.forEach(({ check }) => { check.checked = false; });
         updateToolbar();
-        status.textContent = `選択しました: ${name}`;
+        status.textContent = tr("selectedDone", { name });
     };
     playBtn.onclick = () => {
-        const name = singleChecked("再生");
+        const name = singleChecked(tr("actPlay"));
         if (name) playName(name);
     };
     deleteBtn.onclick = () => {
         const names = checkedNames();
         if (names.length === 0) {
-            status.textContent = "削除する音声にチェックを入れてください。";
+            status.textContent = tr("checkToDelete");
             return;
         }
         deleteNames(names);
@@ -200,7 +332,7 @@ export function buildAudioTab() {
     };
 
     async function refresh() {
-        status.textContent = "読み込み中…";
+        status.textContent = tr("loading");
         try {
             const res = await fetchApi("/pose_editor/audio/list");
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -214,7 +346,7 @@ export function buildAudioTab() {
                 const check = document.createElement("input");
                 check.type = "checkbox";
                 check.style.cssText = "flex-shrink:0;cursor:pointer;";
-                check.title = "操作の対象にする";
+                check.title = tr("rowCheckTip");
                 check.onchange = updateToolbar;
                 const nameEl = el("div", "flex:1;min-width:0;font-size:11px;color:#ddd;overflow:hidden;" +
                                          "text-overflow:ellipsis;white-space:nowrap;cursor:pointer;", f.name);
@@ -228,10 +360,10 @@ export function buildAudioTab() {
             renderSelected(getSelectedAudio());
             updateToolbar();
             status.textContent = files.length === 0
-                ? "音声ファイルがありません。Lip Sync 欄の「テキストから音声を作成」で作れます。"
-                : `${files.length} 件 · ${data.dir}`;
+                ? tr("noFiles")
+                : tr("fileCount", { count: files.length, dir: data.dir });
         } catch (e) {
-            status.textContent = `一覧を読み込めませんでした: ${e.message}`;
+            status.textContent = tr("listFailed", { msg: e.message });
         }
     }
 
@@ -251,11 +383,11 @@ export function buildSettingsTab() {
 
     const head = el("div", "display:flex;align-items:center;gap:6px;padding:7px 10px;" +
                            "border-bottom:1px solid #2a2a4a;flex-shrink:0;");
-    head.append(el("span", "font-size:12px;font-weight:bold;color:#aaa;flex:1;", "API 設定"));
+    head.append(el("span", "font-size:12px;font-weight:bold;color:#aaa;flex:1;", tr("apiTitle")));
 
     const body = el("div", "flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;");
 
-    const sectionTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;", "Lemonade（音声作成 / Kokoro）");
+    const sectionTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;", tr("lemonadeTitle"));
     const inputStyle = "width:100%;box-sizing:border-box;background:#111;border:1px solid #444;color:#ddd;" +
                        "padding:4px 7px;border-radius:4px;font-size:12px;";
     const baseUrl = el("input", inputStyle);
@@ -271,7 +403,7 @@ export function buildSettingsTab() {
         voice.replaceChildren(...names.map(v => {
             const opt = document.createElement("option");
             opt.value = v;
-            opt.textContent = v + (v.startsWith("j") ? "（日本語）" : v.startsWith("a") || v.startsWith("b") ? "（英語）" : "");
+            opt.textContent = v + (v.startsWith("j") ? tr("voiceJa") : v.startsWith("a") || v.startsWith("b") ? tr("voiceEn") : "");
             return opt;
         }));
         voice.value = current || VOICES[0];
@@ -285,7 +417,7 @@ export function buildSettingsTab() {
     };
 
     // VOICEVOX: 話者一覧はエンジンから取得する(/pose_editor/tts/speakers)
-    const vvSectionTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;", "VOICEVOX（音声作成）");
+    const vvSectionTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;", tr("voicevoxTitle"));
     const vvBaseUrl = el("input", inputStyle);
     vvBaseUrl.placeholder = "http://127.0.0.1:50021";
     const vvSpeaker = el("select", inputStyle);
@@ -301,10 +433,10 @@ export function buildSettingsTab() {
         }));
         if (list.length) vvSpeaker.value = current || list[0].id;
     };
-    const reloadBtn = smallBtn("話者を更新", "#333344", "VOICEVOX から話者一覧を取得する");
+    const reloadBtn = smallBtn(tr("refreshSpeakers"), "#333344", tr("refreshSpeakersTip"));
 
     const engine = el("select", inputStyle);
-    for (const [value, label] of [["lemonade", "Lemonade（Kokoro）"], ["voicevox", "VOICEVOX"]]) {
+    for (const [value, label] of [["lemonade", tr("engineLemonade")], ["voicevox", "VOICEVOX"]]) {
         const opt = document.createElement("option");
         opt.value = value;
         opt.textContent = label;
@@ -312,19 +444,19 @@ export function buildSettingsTab() {
     }
 
     const btnRow = el("div", "display:flex;gap:6px;flex-wrap:wrap;");
-    const saveBtn = smallBtn("保存", "#3a6a1a", "API 設定を保存する");
-    const testBtn = smallBtn("接続テスト", "#333344", "選択中のエンジンに接続する");
+    const saveBtn = smallBtn(tr("save"), "#3a6a1a", tr("saveTip"));
+    const testBtn = smallBtn(tr("test"), "#333344", tr("testTip"));
     btnRow.append(saveBtn, testBtn);
 
     const status = el("div", "font-size:11px;color:#888;white-space:pre-wrap;word-break:break-all;");
     const note = el("div", "font-size:10px;color:#666;",
-                    "保存先: output/vrm_pose_editor/api_settings.json（ComfyUI の output フォルダ）");
+                    tr("savedAt"));
 
     const lemonadeBox = el("div", "display:flex;flex-direction:column;gap:8px;");
     lemonadeBox.append(sectionTitle, field("Base URL", baseUrl), field("Model", model),
-                       field("Voice（既定の声）", voice));
+                       field(tr("voiceLabel"), voice));
     const voicevoxBox = el("div", "display:flex;flex-direction:column;gap:8px;");
-    voicevoxBox.append(vvSectionTitle, field("Base URL", vvBaseUrl), field("話者（既定の声）", vvSpeaker), reloadBtn);
+    voicevoxBox.append(vvSectionTitle, field("Base URL", vvBaseUrl), field(tr("speakerLabel"), vvSpeaker), reloadBtn);
     const updateEngineVisibility = () => {
         lemonadeBox.style.display = engine.value === "lemonade" ? "flex" : "none";
         voicevoxBox.style.display = engine.value === "voicevox" ? "flex" : "none";
@@ -333,7 +465,7 @@ export function buildSettingsTab() {
 
     // 口形（シェイプキー aa/ih/ou/ee/oh）の開きレベル。変更はすぐ反映され、このブラウザに保存される
     const lipTitle = el("div", "font-size:11px;font-weight:bold;color:#8fd;margin-top:6px;border-top:1px solid #2a2a4a;padding-top:10px;",
-                        "口形（シェイプキー）のレベル");
+                        tr("lipLevelTitle"));
     const levelRow = (label, hint, key, min, max, step, digits) => {
         const wrap = el("div", "display:flex;flex-direction:column;gap:3px;");
         const value = el("span", "color:#8fd;");
@@ -344,7 +476,7 @@ export function buildSettingsTab() {
         const render = () => { value.textContent = Number(range.value).toFixed(digits); };
         render();
         range.oninput = () => { setLipLevels({ [key]: Number(range.value) }); render(); };
-        const resetBtn = smallBtn("既定", "#333344", `既定値（${LIP_LEVEL_DEFAULTS[key]}）に戻す`);
+        const resetBtn = smallBtn(tr("reset"), "#333344", tr("resetTip", { value: LIP_LEVEL_DEFAULTS[key] }));
         resetBtn.onclick = () => { range.value = LIP_LEVEL_DEFAULTS[key]; range.oninput(); };
         const top = el("div", "display:flex;align-items:center;gap:6px;font-size:11px;color:#aaa;");
         const labelEl = el("span", "flex:1;", label);
@@ -355,11 +487,11 @@ export function buildSettingsTab() {
     const levelBox = el("div", "display:flex;flex-direction:column;gap:8px;");
     levelBox.append(
         lipTitle,
-        levelRow("テキストで再生（T）: 口の開き", "0〜1。大きいほど口が大きく開く。キーフレームの T も同じ値を使う", "text", 0, 1, 0.05, 2),
-        levelRow("選択中の音声で再生（A）: 音量の倍率", "0〜3。大きいほど小さい声でも口が開く（結果は 1 で頭打ち）。キーフレームの A も同じ値を使う", "audio", 0, 3, 0.1, 1),
+        levelRow(tr("lipTextLabel"), tr("lipTextHint"), "text", 0, 1, 0.05, 2),
+        levelRow(tr("lipAudioLabel"), tr("lipAudioHint"), "audio", 0, 3, 0.1, 1),
     );
 
-    body.append(field("使用するエンジン", engine), lemonadeBox, voicevoxBox, btnRow, status, levelBox, note);
+    body.append(field(tr("engineLabel"), engine), lemonadeBox, voicevoxBox, btnRow, status, levelBox, note);
     root.append(head, body);
 
     function fill(settings) {
@@ -380,14 +512,14 @@ export function buildSettingsTab() {
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
             setSpeakerOptions(data.speakers, vvSpeaker.value || vvSpeakerId);
-            status.textContent = `話者 ${data.speakers.length} 件を取得しました。`;
+            status.textContent = tr("speakersLoaded", { count: data.speakers.length });
         } catch (e) {
-            status.textContent = `話者一覧を取得できませんでした: ${e.message}`;
+            status.textContent = tr("speakersFailed", { msg: e.message });
         }
     }
     reloadBtn.onclick = async () => {
         // URL を変更した直後でも取得できるよう、先に VOICEVOX の接続先だけ保存する
-        status.textContent = "話者一覧を取得中…";
+        status.textContent = tr("speakersLoading");
         try {
             const res = await fetchApi("/pose_editor/tts/settings", {
                 method: "POST",
@@ -397,7 +529,7 @@ export function buildSettingsTab() {
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         } catch (e) {
-            status.textContent = `保存できませんでした: ${e.message}`;
+            status.textContent = tr("saveFailed", { msg: e.message });
             return;
         }
         await loadSpeakers();
@@ -412,12 +544,12 @@ export function buildSettingsTab() {
             status.textContent = "";
             if (data.settings.engine === "voicevox") await loadSpeakers();
         } catch (e) {
-            status.textContent = `設定を読み込めませんでした: ${e.message}`;
+            status.textContent = tr("settingsLoadFailed", { msg: e.message });
         }
     }
 
     saveBtn.onclick = async () => {
-        status.textContent = "保存中…";
+        status.textContent = tr("saving");
         try {
             const res = await fetchApi("/pose_editor/tts/settings", {
                 method: "POST",
@@ -434,22 +566,22 @@ export function buildSettingsTab() {
             const options = [...vvSpeaker.options].map(o => ({ id: o.value, name: o.textContent }));
             fill(data.settings);
             setSpeakerOptions(options, keep);
-            status.textContent = "保存しました。";
+            status.textContent = tr("saved");
         } catch (e) {
-            status.textContent = `保存できませんでした: ${e.message}`;
+            status.textContent = tr("saveFailed", { msg: e.message });
         }
     };
 
     testBtn.onclick = async () => {
-        status.textContent = "接続テスト中…";
+        status.textContent = tr("testing");
         try {
             const res = await fetchApi("/pose_editor/tts/health");
             const data = await res.json();
             status.textContent = data.ok
-                ? `接続OK（${data.status}）`
-                : `接続できませんでした: ${data.error}`;
+                ? tr("testOk", { status: data.status })
+                : tr("testFailed", { error: data.error });
         } catch (e) {
-            status.textContent = `接続テストに失敗: ${e.message}`;
+            status.textContent = tr("testError", { msg: e.message });
         }
     };
 

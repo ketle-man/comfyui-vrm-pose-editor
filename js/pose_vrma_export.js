@@ -3,6 +3,140 @@ import { fetchApi } from './comfy_api.js';
 import { fetchAudioFile, getSelectedAudio } from './audio_panel.js';
 import { analyzeAudioFile } from './lip_sync.js';
 import { planTrackStretch, stretchFrame } from './keyframe_stretch.js';
+import { makeT } from './i18n.js';
+
+// UI 文言(en が基準)。言語は ComfyUI の設定(Comfy.Locale)に従う(i18n.js の makeT)。呼ぶたびに決める
+const STRINGS = {
+    en: {
+        trackSelTip: "Choose the track to edit",
+        fromLibTip: "Pick from the pose library and add / overwrite at the current frame",
+        moveModeTip: "While ON, drag markers (of the selected track) on the timeline to move them",
+        deleteModeTip: "While ON, click / drag markers (of the selected track) on the timeline to delete them",
+        stretchTip: "Stretch or shrink the spacing of keyframes in a range to make motion slower / faster (time stretch)",
+        toStartTip: "Go to frame 0",
+        prevFrameTip: "Back 1 frame",
+        nextFrameTip: "Forward 1 frame",
+        monitorTip1: "While ON, preview from a free third-person view unaffected by timeline keys",
+        monitorTip2: "(camera position / switch keyframes can't be recorded meanwhile)",
+        newTip: "Clear the whole timeline and start new",
+        projectTip: "Save / load the timeline as a project",
+        webmTip: "Download the whole timeline (pose, camera, shape keys) as a WebM video",
+        mp4Tip: "Download the whole timeline as an MP4 video (converted with ffmpeg on the server; needs imageio-ffmpeg)",
+        gifTip: "Download the whole timeline as a transparent GIF (takes a while with many frames)",
+        saveOutputTip: "When ON, WebM / MP4 / GIF are saved to ComfyUI's output/vrm_pose_editor/ instead of being downloaded",
+        addPoseTip: "Add / overwrite the current pose (with shape keys) as a keyframe at the current frame",
+        delPoseTip: "Delete the pose keyframe at the current frame",
+        addCamTip: "Add / overwrite {name}'s position as a keyframe at the current frame",
+        delCamTip: "Delete {name}'s position keyframe at the current frame",
+        addCutTip: "Add / overwrite a switch (cut) to the active camera as a keyframe at the current frame",
+        delCutTip: "Delete the camera switch keyframe at the current frame",
+        addLightTip: "Add / overwrite the current light settings as a keyframe at the current frame",
+        delLightTip: "Delete the light keyframe at the current frame",
+        addWindTip: "Add / overwrite the current Wind settings as a keyframe at the current frame",
+        delWindTip: "Delete the Wind keyframe at the current frame",
+        addLookTip: "Add / overwrite the current Look at Target (ON/OFF, target, marker position) as a keyframe at the current frame",
+        delLookTip: "Delete the Look at Target keyframe at the current frame",
+        addBlinkTip: "Add / overwrite the current auto blink (ON/OFF, interval) as a keyframe at the current frame",
+        delBlinkTip: "Delete the auto blink keyframe at the current frame",
+        addLipTip: "Add / overwrite a keyframe that speaks the Lip Sync text from the current frame (empty closes the mouth)",
+        delLipTip: "Delete the Lip keyframe at the current frame",
+        lipAnalyzeFailed: "Could not analyze the Lip audio: {name}",
+        lipNoAudio: "Lip: no audio for A (choose an audio file in the A tab)",
+        stTarget: "Target",
+        stAllTracks: "All tracks",
+        stSelTrack: "Selected track only ({track})",
+        stRange: "Range (frames)",
+        stWhole: "Whole",
+        stWholeTip: "0 – last keyframe",
+        stStart: "Start",
+        stEnd: "– End",
+        stNewLength: "New length",
+        stLength: "Length",
+        stFramesEq: "frames  =",
+        stHint: "Above 100% is slower, below is faster.",
+        stShiftAfter: "Also shift the keys after the range",
+        stLipNote: "Lip audio and auto blink run in real time, so only their start moves (speech speed doesn't change).",
+        stEndAfterStart: "End must be after start",
+        stOverlap: "This passes the next key (frame {next}). Make the length {max} or less, or turn on “Also shift the keys after the range”",
+        stSummary: "{count} key(s) in range: {s}–{e} → {s2}–{e2}",
+        stDropWarn: "\n{count} key(s) will be thinned out because shrinking makes them share a frame",
+        stUndo: "↶ Undo the last stretch",
+        stUndoTip: "Restore the state before the last stretch (only if nothing was edited since)",
+        stUndone: "Undid the stretch",
+        stCantUndo: "Can't undo (edited after the stretch)",
+        stDropped: "({count} thinned out)",
+        confirmNew: "Delete every keyframe (pose, camera, light, Wind) and start new. Unsaved changes will be lost.",
+        projectNamePrompt: "💾 Enter a project name",
+        vrmaReload1: "Delete all existing pose keyframes and reload the pose keyframes from this .vrma.",
+        vrmaReload2: "Camera, light and Wind keyframes stay. Unsaved changes will be lost.",
+        projectNameEx: "e.g. Scene 1",
+    },
+    ja: {
+        trackSelTip: "編集するトラックを選択",
+        fromLibTip: "ポーズライブラリから選んで現在フレームに追加/上書き",
+        moveModeTip: "ONの間はタイムライン上の(選択中トラックの)マーカーをドラッグして移動できます",
+        deleteModeTip: "ONの間はタイムライン上の(選択中トラックの)マーカーをクリック/ドラッグして削除できます",
+        stretchTip: "範囲内のキーフレームの間隔を伸縮して、動きを速く/遅くします(タイムストレッチ)",
+        toStartTip: "フレーム0へ",
+        prevFrameTip: "1フレーム戻る",
+        nextFrameTip: "1フレーム進む",
+        monitorTip1: "ONの間はタイムラインのキーの影響を受けない自由な第三者視点でプレビューできます",
+        monitorTip2: "(この間はカメラの位置・切替キーフレームを記録できません)",
+        newTip: "現在のタイムラインをすべてクリアして新規作成",
+        projectTip: "タイムラインをプロジェクトとして保存/読込",
+        webmTip: "タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード",
+        mp4Tip: "タイムライン全体をMP4動画としてダウンロード(サーバー側でffmpeg変換、要imageio-ffmpeg)",
+        gifTip: "タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)",
+        saveOutputTip: "ONにすると WebM / MP4 / GIF をダウンロードせず、ComfyUI の output/vrm_pose_editor/ に保存します",
+        addPoseTip: "現在フレームに、今のポーズ(シェイプキー含む)をキーフレームとして追加/上書き",
+        delPoseTip: "現在フレームのポーズキーフレームを削除",
+        addCamTip: "現在フレームに{name}の位置をキーフレームとして追加/上書き",
+        delCamTip: "現在フレームの{name}の位置キーフレームを削除",
+        addCutTip: "現在フレームに、今アクティブなカメラへの切替(カット)をキーフレームとして追加/上書き",
+        delCutTip: "現在フレームのカメラ切替キーフレームを削除",
+        addLightTip: "現在フレームに、今のライト設定をキーフレームとして追加/上書き",
+        delLightTip: "現在フレームのライトキーフレームを削除",
+        addWindTip: "現在フレームに、今のWind設定をキーフレームとして追加/上書き",
+        delWindTip: "現在フレームのWindキーフレームを削除",
+        addLookTip: "現在フレームに、今のLook at Target(ON/OFF・対象・マーカー座標)をキーフレームとして追加/上書き",
+        delLookTip: "現在フレームのLook at Targetキーフレームを削除",
+        addBlinkTip: "現在フレームに、今の自動瞬き(ON/OFF・間隔)をキーフレームとして追加/上書き",
+        delBlinkTip: "現在フレームの自動瞬きキーフレームを削除",
+        addLipTip: "現在フレームから、Lip Sync欄のテキストを話すキーフレームを追加/上書き(空欄だと口を閉じる)",
+        delLipTip: "現在フレームのLipキーフレームを削除",
+        lipAnalyzeFailed: "Lip 音声を解析できませんでした: {name}",
+        lipNoAudio: "Lip: A の音声がありません（A タブで音声を選択してください）",
+        stTarget: "対象",
+        stAllTracks: "すべてのトラック",
+        stSelTrack: "選択中のトラックのみ({track})",
+        stRange: "範囲(フレーム)",
+        stWhole: "全体",
+        stWholeTip: "0 〜 最後のキーフレーム",
+        stStart: "開始",
+        stEnd: "〜 終了",
+        stNewLength: "新しい長さ",
+        stLength: "長さ",
+        stFramesEq: "フレーム  =",
+        stHint: "100% より大きいとゆっくり、小さいと速くなります。",
+        stShiftAfter: "範囲より後ろのキーも一緒にずらす",
+        stLipNote: "Lip の音声と自動瞬きは実時間で動くため、開始位置だけが動きます(話す速さは変わりません)。",
+        stEndAfterStart: "終了は開始より後ろにしてください",
+        stOverlap: "後ろのキー(フレーム {next})を追い越します。長さを {max} 以下にするか、「後ろのキーも一緒にずらす」をオンにしてください",
+        stSummary: "範囲内のキー {count} 個: {s}〜{e} → {s2}〜{e2}",
+        stDropWarn: "\n縮めると同じフレームに重なるため {count} 個を間引きます",
+        stUndo: "↶ 直前のストレッチを戻す",
+        stUndoTip: "直前のストレッチの前の状態に戻す(その後に別の編集をしていない場合のみ)",
+        stUndone: "ストレッチを元に戻しました",
+        stCantUndo: "元に戻せません(ストレッチの後に編集されています)",
+        stDropped: "({count} 個を間引き)",
+        confirmNew: "現在のキーフレーム(ポーズ・カメラ・ライト・Wind)をすべて削除して新規作成します。保存していない変更は失われます。",
+        projectNamePrompt: "💾 プロジェクト名を入力",
+        vrmaReload1: "既存のポーズキーフレームをすべて削除して、この.vrmaからポーズKF列を読み込み直します。",
+        vrmaReload2: "カメラ・ライト・Windのキーフレームはそのまま残ります。保存していない変更は失われます。",
+        projectNameEx: "例: シーン1",
+    },
+};
+const tr = (key, vars) => makeT(STRINGS)(key, vars);
 
 /**
  * VRMA Keyframe Panel (フレームベース)
@@ -61,22 +195,22 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     trackSelect.style.cssText =
         "background:#222236;color:#ddd;border:1px solid #444;border-radius:4px;" +
         "padding:4px 6px;font-size:11px;font-weight:bold;cursor:pointer;";
-    trackSelect.title = "編集するトラックを選択";
+    trackSelect.title = tr("trackSelTip");
     trackSelect.addEventListener("wheel", e => e.stopPropagation(), { passive: true });
 
     const addBtn = mkBtn("✚ Add/Update KF", "#4a7a4a", "");
     const delBtn = mkBtn("− Delete KF", "#5a3a3a", "");
-    const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", "ポーズライブラリから選んで現在フレームに追加/上書き");
-    const moveBtn = mkToggle("🔀 Move", "ONの間はタイムライン上の(選択中トラックの)マーカーをドラッグして移動できます");
-    const deleteModeBtn = mkToggle("🗑 Delete Mode", "ONの間はタイムライン上の(選択中トラックの)マーカーをクリック/ドラッグして削除できます");
-    const stretchBtn = mkBtn("⏱ Stretch", "#333344","範囲内のキーフレームの間隔を伸縮して、動きを速く/遅くします(タイムストレッチ)");
+    const addFromLibBtn = mkBtn("📚 + From Library", "#4a4a8a", tr("fromLibTip"));
+    const moveBtn = mkToggle("🔀 Move", tr("moveModeTip"));
+    const deleteModeBtn = mkToggle("🗑 Delete Mode", tr("deleteModeTip"));
+    const stretchBtn = mkBtn("⏱ Stretch", "#333344",tr("stretchTip"));
 
-    const gotoStartBtn = mkBtn("⏮", "#333344", "フレーム0へ");
-    const prevBtn = mkBtn("❮", "#333344", "1フレーム戻る");
+    const gotoStartBtn = mkBtn("⏮", "#333344", tr("toStartTip"));
+    const prevBtn = mkBtn("❮", "#333344", tr("prevFrameTip"));
     const frameInput = mkNumInput(0, 100000, 1, 0);
     const slashLbl = el("span", { style: "font-size:11px;color:#666;" }, "/");
     const totalInput = mkNumInput(1, 100000, 1, 60);
-    const nextBtn = mkBtn("❯", "#333344", "1フレーム進む");
+    const nextBtn = mkBtn("❯", "#333344", tr("nextFrameTip"));
 
     // ---- モニター(第三者自由視点)トグル(要件: タイムライン上右端) ----
     // ONの間はタイムラインのカメラ関連キーフレーム(Cam Switch・カメラ位置トラック)の影響を
@@ -85,8 +219,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     // モニターのON/OFFで能動的に再同期してもらうためのフック(setOnCameraStateChangedで登録)。
     let onCameraStateChanged = null;
     const monitorBtn = mkToggle("🖥 Monitor",
-        "ONの間はタイムラインのキーの影響を受けない自由な第三者視点でプレビューできます" +
-        "(この間はカメラの位置・切替キーフレームを記録できません)");
+        tr("monitorTip1") +
+        tr("monitorTip2"));
     monitorBtn.onclick = () => {
         const turningOn = !editor.isMonitorMode?.();
         editor.setMonitorMode?.(turningOn);
@@ -150,8 +284,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     });
     const fpsLbl = el("span", { style: "font-size:10px;color:#888;" }, "FPS:");
     const fpsInput = mkNumInput(1, 60, 1, 24);
-    const newBtn = mkBtn("🆕 New", "#5a4a3a", "現在のタイムラインをすべてクリアして新規作成");
-    const projBtn = mkBtn("💾 Proj", "#4a4a8a", "タイムラインをプロジェクトとして保存/読込");
+    const newBtn = mkBtn("🆕 New", "#5a4a3a", tr("newTip"));
+    const projBtn = mkBtn("💾 Proj", "#4a4a8a", tr("projectTip"));
     const rpBtn = mkBtn("RP", "#6c757d", "Reset Pose");
     const rcBtn = mkBtn("RC", "#5a7a5a", "Reset Camera");
     const statusMsg = el("span", { style: "flex:1;font-size:11px;color:#888;min-width:80px;" }, "0 keyframes");
@@ -210,9 +344,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             captureBtn.style.background = "#4a90d9";
         }, 1500);
     };
-    const webmBtn = mkBtn("🎬 WebM", "#444","タイムライン全体(ポーズ・カメラ・シェイプキー)をWebM動画としてダウンロード");
-    const mp4Btn = mkBtn("🎥 MP4", "#444","タイムライン全体をMP4動画としてダウンロード(サーバー側でffmpeg変換、要imageio-ffmpeg)");
-    const gifBtn = mkBtn("🎞️ GIF", "#444","タイムライン全体を透過GIFとしてダウンロード(フレーム数が多いと時間がかかります)");
+    const webmBtn = mkBtn("🎬 WebM", "#444",tr("webmTip"));
+    const mp4Btn = mkBtn("🎥 MP4", "#444",tr("mp4Tip"));
+    const gifBtn = mkBtn("🎞️ GIF", "#444",tr("gifTip"));
     // WebM/MP4/GIF をダウンロードせず ComfyUI の output フォルダ(output/vrm_pose_editor/)へ保存するオプション。
     // 状態は ComfyUI のユーザーデータ(default_model.js の設定ファイル)に保存し、次回以降も引き継ぐ
     const saveOutputChk = el("input", { type: "checkbox" });
@@ -222,7 +356,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     const saveOutputCtrl = el("div", { style: "display:flex;flex-direction:column;width:100%;" });
     const saveOutputLabel = el("label", {
         style: "display:flex;align-items:center;gap:6px;font-size:11px;color:#bbb;cursor:pointer;",
-        title: "ONにすると WebM / MP4 / GIF をダウンロードせず、ComfyUI の output/vrm_pose_editor/ に保存します",
+        title: tr("saveOutputTip"),
     });
     saveOutputLabel.append(saveOutputChk, document.createTextNode("Save to ComfyUI output"));
     saveOutputCtrl.append(saveOutputLabel, saveOutputStatus);
@@ -606,9 +740,9 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                 clearValue: kf => { delete kf.bones; delete kf.shapeKeys; delete kf.label; },
                 color: "#ffdd44", optionLabel: "🕺 Pose",
                 addLabel: "✚ Add/Update", addColor: "#4a7a4a",
-                addTitle: "現在フレームに、今のポーズ(シェイプキー含む)をキーフレームとして追加/上書き",
+                addTitle: tr("addPoseTip"),
                 delLabel: "− Delete",
-                delTitle: "現在フレームのポーズキーフレームを削除",
+                delTitle: tr("delPoseTip"),
                 capture: () => captureAtCurrentFrame(), delete: () => deleteAtCurrentFrame(),
             },
         };
@@ -617,59 +751,59 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
                 ...cameraTrackAccessors(c.id), isCameraTrack: true, cameraId: c.id, color: c.color,
                 optionLabel: (c.isActive ? "🎥 " : "📷 ") + c.name,
                 addLabel: "📷 +", addColor: "#3a6a8a",
-                addTitle: `現在フレームに${c.name}の位置をキーフレームとして追加/上書き`,
+                addTitle: tr("addCamTip", { name: c.name }),
                 delLabel: "📷 −",
-                delTitle: `現在フレームの${c.name}の位置キーフレームを削除`,
+                delTitle: tr("delCamTip", { name: c.name }),
                 capture: () => captureCameraTrackAtCurrentFrame(c.id), delete: () => deleteCameraTrackAtCurrentFrame(c.id),
             };
         });
         tracks.cameraSwitch = {
             ...fieldAccessors("cameraId"), color: "#66ddff", optionLabel: "🎬 Cam Switch",
             addLabel: "🎬 +", addColor: "#2a6a8a",
-            addTitle: "現在フレームに、今アクティブなカメラへの切替(カット)をキーフレームとして追加/上書き",
+            addTitle: tr("addCutTip"),
             delLabel: "🎬 −",
-            delTitle: "現在フレームのカメラ切替キーフレームを削除",
+            delTitle: tr("delCutTip"),
             capture: () => captureCameraSwitchAtCurrentFrame(), delete: () => deleteCameraSwitchAtCurrentFrame(),
         };
         tracks.light = {
             ...fieldAccessors("light"), color: "#ff9f40", optionLabel: "💡 Light",
             addLabel: "💡 +", addColor: "#8a6a2a",
-            addTitle: "現在フレームに、今のライト設定をキーフレームとして追加/上書き",
+            addTitle: tr("addLightTip"),
             delLabel: "💡 −",
-            delTitle: "現在フレームのライトキーフレームを削除",
+            delTitle: tr("delLightTip"),
             capture: () => captureLightAtCurrentFrame(), delete: () => deleteLightAtCurrentFrame(),
         };
         tracks.wind = {
             ...fieldAccessors("wind"), color: "#33ccff", optionLabel: "🌬 Wind",
             addLabel: "🌬 +", addColor: "#2a6a8a",
-            addTitle: "現在フレームに、今のWind設定をキーフレームとして追加/上書き",
+            addTitle: tr("addWindTip"),
             delLabel: "🌬 −",
-            delTitle: "現在フレームのWindキーフレームを削除",
+            delTitle: tr("delWindTip"),
             capture: () => captureWindAtCurrentFrame(), delete: () => deleteWindAtCurrentFrame(),
         };
         tracks.eyes = {
             // マーカー本体と同じシアン系の色に揃える(pose_editor_core.jsのlookAtHelperMesh参照)
             ...fieldAccessors("lookAt"), color: "#00d0d0", optionLabel: "👀 Eyes",
             addLabel: "👀 +", addColor: "#1a7a7a",
-            addTitle: "現在フレームに、今のLook at Target(ON/OFF・対象・マーカー座標)をキーフレームとして追加/上書き",
+            addTitle: tr("addLookTip"),
             delLabel: "👀 −",
-            delTitle: "現在フレームのLook at Targetキーフレームを削除",
+            delTitle: tr("delLookTip"),
             capture: () => captureLookAtAtCurrentFrame(), delete: () => deleteLookAtAtCurrentFrame(),
         };
         tracks.blink = {
             ...fieldAccessors("blink"), color: "#c58cff", optionLabel: "😑 Blink",
             addLabel: "😑 +", addColor: "#5a3a8a",
-            addTitle: "現在フレームに、今の自動瞬き(ON/OFF・間隔)をキーフレームとして追加/上書き",
+            addTitle: tr("addBlinkTip"),
             delLabel: "😑 −",
-            delTitle: "現在フレームの自動瞬きキーフレームを削除",
+            delTitle: tr("delBlinkTip"),
             capture: () => captureBlinkAtCurrentFrame(), delete: () => deleteBlinkAtCurrentFrame(),
         };
         tracks.lip = {
             ...fieldAccessors("lip"), color: "#ff7eb6", optionLabel: "👄 Lip",
             addLabel: "👄 +", addColor: "#8a2a5a",
-            addTitle: "現在フレームから、Lip Sync欄のテキストを話すキーフレームを追加/上書き(空欄だと口を閉じる)",
+            addTitle: tr("addLipTip"),
             delLabel: "👄 −",
-            delTitle: "現在フレームのLipキーフレームを削除",
+            delTitle: tr("delLipTip"),
             capture: () => captureLipAtCurrentFrame(), delete: () => deleteLipAtCurrentFrame(),
         };
         return tracks;
@@ -997,7 +1131,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         }).catch(e => {
             console.warn("[PoseEditor3D] Lip audio analysis failed:", name, e);
             _lipAudioCache.delete(name);
-            statusMsg.textContent = `Lip 音声を解析できませんでした: ${name}`;
+            statusMsg.textContent = tr("lipAnalyzeFailed", { name });
         });
         return null;
     }
@@ -1009,7 +1143,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         if (lip.keyAudio) {
             const name = getSelectedAudio();
             if (!name) {
-                statusMsg.textContent = "Lip: A の音声がありません（A タブで音声を選択してください）";
+                statusMsg.textContent = tr("lipNoAudio");
                 return;
             }
             entry.audio = name;
@@ -1431,28 +1565,28 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         };
 
         // 対象
-        heading("対象");
+        heading(tr("stTarget"));
         const allRadio = el("input", { type: "radio", name: "kfStretchScope" });
         const oneRadio = el("input", { type: "radio", name: "kfStretchScope" });
         allRadio.checked = true;
         const lbl = (input, text) => { const l = el("label", { style: "display:flex;align-items:center;gap:4px;cursor:pointer;color:#ddd;" }); l.append(input, text); return l; };
-        rowOf(lbl(allRadio, "すべてのトラック"), lbl(oneRadio, `選択中のトラックのみ(${TRACKS[selectedTrack].optionLabel})`));
+        rowOf(lbl(allRadio, tr("stAllTracks")), lbl(oneRadio, tr("stSelTrack", { track: TRACKS[selectedTrack].optionLabel })));
         const targetKeys = () => allRadio.checked ? Object.keys(TRACKS) : [selectedTrack];
         const targetFrames = () => [...new Set(targetKeys().flatMap(trackFrames))].sort((a, b) => a - b);
 
         // 範囲
-        heading("範囲(フレーム)");
+        heading(tr("stRange"));
         const lastKey = () => { const f = targetFrames(); return f.length ? f[f.length - 1] : totalFrames; };
         const startIn = num(0), endIn = num(lastKey());
-        const wholeBtn = mkBtn("全体", "#444", "0 〜 最後のキーフレーム");
+        const wholeBtn = mkBtn(tr("stWhole"), "#444", tr("stWholeTip"));
         wholeBtn.style.padding = "3px 8px";
-        rowOf("開始", startIn, "〜 終了", endIn, wholeBtn);
+        rowOf(tr("stStart"), startIn, tr("stEnd"), endIn, wholeBtn);
 
         // 新しい長さ(フレーム数と倍率は連動)
-        heading("新しい長さ");
+        heading(tr("stNewLength"));
         const lenIn = num(lastKey());
         const pctIn = num(100);
-        rowOf("長さ", lenIn, "フレーム  =", pctIn, "%");
+        rowOf(tr("stLength"), lenIn, tr("stFramesEq"), pctIn, "%");
         const presetRow = rowOf();
         for (const p of [50, 75, 150, 200]) {
             const b = mkBtn(`${p}%`, "#33334a");
@@ -1460,17 +1594,17 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             b.onclick = () => { pctIn.value = String(p); syncFromPct(); };
             presetRow.appendChild(b);
         }
-        hint("100% より大きいとゆっくり、小さいと速くなります。");
+        hint(tr("stHint"));
 
         const shiftChk = el("input", { type: "checkbox" });
         shiftChk.checked = true;
         const shiftRow = el("label", { style: "display:flex;align-items:center;gap:6px;margin:10px 0 0;cursor:pointer;color:#ddd;" });
-        shiftRow.append(shiftChk, "範囲より後ろのキーも一緒にずらす");
+        shiftRow.append(shiftChk, tr("stShiftAfter"));
         box.appendChild(shiftRow);
 
         const summary = el("div", { style: "margin-top:10px;padding:6px 8px;background:#151528;border-radius:4px;line-height:1.6;color:#bbc;" });
         box.appendChild(summary);
-        hint("Lip の音声と自動瞬きは実時間で動くため、開始位置だけが動きます(話す速さは変わりません)。");
+        hint(tr("stLipNote"));
 
         const readRange = () => {
             const start = Math.max(0, parseInt(startIn.value, 10) || 0);
@@ -1493,7 +1627,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         function refreshSummary() {
             const r = readRange();
             if (r.end <= r.start) {
-                summary.textContent = "終了は開始より後ろにしてください";
+                summary.textContent = tr("stEndAfterStart");
                 summary.style.color = "#e88";
                 okBtn.disabled = true; okBtn.style.opacity = "0.5";
                 return;
@@ -1501,7 +1635,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             // 後ろをずらさないときは、伸ばした先が範囲の後ろのキーを追い越すと動きの順番が入れ替わるので止める
             const next = r.shiftAfter ? undefined : targetFrames().find(f => f > r.end);
             if (next !== undefined && r.start + r.newLength >= next) {
-                summary.textContent = `後ろのキー(フレーム ${next})を追い越します。長さを ${next - r.start - 1} 以下にするか、「後ろのキーも一緒にずらす」をオンにしてください`;
+                summary.textContent = tr("stOverlap", { next, max: next - r.start - 1 });
                 summary.style.color = "#e88";
                 okBtn.disabled = true; okBtn.style.opacity = "0.5";
                 return;
@@ -1514,8 +1648,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             }
             const newEnd = r.start + r.newLength;
             summary.style.color = "#bbc";
-            summary.textContent = `範囲内のキー ${inRange} 個: ${r.start}〜${r.end} → ${r.start}〜${newEnd}` +
-                (dropped ? `\n縮めると同じフレームに重なるため ${dropped} 個を間引きます` : "");
+            summary.textContent = tr("stSummary", { count: inRange, s: r.start, e: r.end, s2: r.start, e2: newEnd }) +
+                (dropped ? tr("stDropWarn", { count: dropped }) : "");
             summary.style.whiteSpace = "pre-line";
             okBtn.disabled = false; okBtn.style.opacity = "1";
         }
@@ -1529,7 +1663,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
 
         const btnRow = el("div", { style: "display:flex;gap:6px;justify-content:flex-end;align-items:center;margin-top:14px;" });
         const canUndo = !!lastStretch && lastStretch.afterSig === timelineSig();
-        const undoBtn = mkBtn("↶ 直前のストレッチを戻す", "#6a5a3a", "直前のストレッチの前の状態に戻す(その後に別の編集をしていない場合のみ)");
+        const undoBtn = mkBtn(tr("stUndo"), "#6a5a3a", tr("stUndoTip"));
         undoBtn.style.cssText += "font-size:11px;padding:5px 9px;margin-right:auto;";
         undoBtn.style.display = canUndo ? "" : "none";
         const cancelBtn = mkBtn("Cancel", "#444");
@@ -1543,7 +1677,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         cancelBtn.onclick = close;
         undoBtn.onclick = () => {
             close();
-            statusMsg.textContent = undoStretch() ? "ストレッチを元に戻しました" : "元に戻せません(ストレッチの後に編集されています)";
+            statusMsg.textContent = undoStretch() ? tr("stUndone") : tr("stCantUndo");
         };
         okBtn.onclick = () => {
             const r = readRange();
@@ -1551,7 +1685,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             close();
             const dropped = applyStretch(r, targetKeys());
             updateStatus();
-            statusMsg.textContent += `  ⏱ ${r.start}〜${r.end} → ${r.start}〜${r.start + r.newLength}` + (dropped ? `(${dropped} 個を間引き)` : "");
+            statusMsg.textContent += `  ⏱ ${r.start}〜${r.end} → ${r.start}〜${r.start + r.newLength}` + (dropped ? tr("stDropped", { count: dropped }) : "");
         };
         btnRow.append(undoBtn, cancelBtn, okBtn);
         box.appendChild(btnRow);
@@ -1863,7 +1997,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
     newBtn.onclick = () => {
         showOverlayDialog({
             title: "🆕 New Timeline",
-            message: "現在のキーフレーム(ポーズ・カメラ・ライト・Wind)をすべて削除して新規作成します。保存していない変更は失われます。",
+            message: tr("confirmNew"),
             okLabel: "Clear",
             okBg: "#8a3a3a",
             onOk: () => {
@@ -1940,7 +2074,7 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
         const saveBtn2 = mkBtn("💾 Save Current as New Project", "#2a5a3a");
         saveBtn2.onclick = () => {
             showOverlayDialog({
-                title: "💾 プロジェクト名を入力",
+                title: tr("projectNamePrompt"),
                 showInput: true,
                 okLabel: "Save",
                 okBg: "#2a5a3a",
@@ -2076,8 +2210,8 @@ export function buildKeyframePanel(editor, getVrmBuffer, getShapeKeys, onShapeKe
             const proceed = await new Promise(resolve => {
                 showOverlayDialog({
                     title: "⬇ Import VRMA as Keyframes",
-                    message: "既存のポーズキーフレームをすべて削除して、この.vrmaからポーズKF列を読み込み直します。" +
-                             "カメラ・ライト・Windのキーフレームはそのまま残ります。保存していない変更は失われます。",
+                    message: tr("vrmaReload1") +
+                             tr("vrmaReload2"),
                     okLabel: "Import", okBg: "#2a5a8a",
                     onOk: () => resolve(true),
                     onCancel: () => resolve(false),
@@ -2241,7 +2375,7 @@ function showOverlayDialog({ title, message, showInput = false, inputValue = "",
     let input = null;
     if (showInput) {
         input = el("input", {
-            type: "text", value: inputValue, placeholder: "例: シーン1",
+            type: "text", value: inputValue, placeholder: tr("projectNameEx"),
             style: "width:100%;box-sizing:border-box;background:#111;border:1px solid #555;" +
                    "color:#ddd;padding:6px 10px;border-radius:4px;font-size:13px;",
         });
