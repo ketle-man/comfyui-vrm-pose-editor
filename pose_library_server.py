@@ -38,6 +38,35 @@ _META_FILE = _STORE_DIR / "metadata.json"
 _THUMB_DIR = _STORE_DIR / "thumbnails"
 _THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
+_DRIVE_REL_RE = re.compile(r"^[A-Za-z]:(?![/\\])")  # ドライブ相対(C:foo)
+
+
+def _safe_poses_path(value):
+    """クライアントから受け取ったパス(poses/ 内の絶対パス、または poses/ 起点の相対パス)を、
+    ファイルシステムに触れない文字列処理だけで検査し、poses/ 配下のときだけ Path を返す。
+
+    Windows では UNC パス(\\\\host\\share)は resolve() した時点で相手ホストへ
+    Windows アカウントの資格情報付きで接続してしまうため、resolve() より前に
+    文字列のまま拒否する。"""
+    s = str(value or "")
+    if not s or "\x00" in s:
+        return None
+    if s.startswith(("\\\\", "//")) or _DRIVE_REL_RE.match(s):  # UNC・ドライブ相対
+        return None
+    p = Path(os.path.normpath(s))
+    if ".." in p.parts:
+        return None
+    if not p.is_absolute():
+        if p.drive or p.root:  # ルート相対(\foo)・ドライブのみ(C:)など
+            return None
+        p = POSES_DIR / p
+    try:
+        p.relative_to(POSES_DIR)                      # 文字列上の検査(解決しない)
+        p.resolve().relative_to(POSES_DIR.resolve())  # 多層防御(シンボリックリンク等)
+        return p
+    except (ValueError, OSError):
+        return None
+
 
 # ----------------------------------------------------------------
 # メタデータ管理
@@ -107,10 +136,8 @@ async def list_poses(request):
     """
     subdir = request.rel_url.query.get("subdir", "")
     if subdir:
-        target = POSES_DIR / subdir
-        try:
-            target.resolve().relative_to(POSES_DIR.resolve())
-        except ValueError:
+        target = _safe_poses_path(subdir)
+        if target is None:
             return web.json_response({"error": "access denied"}, status=403)
     else:
         target = POSES_DIR
@@ -240,10 +267,8 @@ async def get_pose_content(request):
     filepath = request.rel_url.query.get("path", "")
     if not filepath:
         return web.json_response({"error": "path required"}, status=400)
-    p = Path(filepath)
-    try:
-        p.resolve().relative_to(POSES_DIR.resolve())
-    except ValueError:
+    p = _safe_poses_path(filepath)
+    if p is None:
         return web.json_response({"error": "access denied"}, status=403)
     if not p.exists():
         return web.json_response({"error": "file not found"}, status=404)
@@ -264,10 +289,8 @@ async def get_vrma_content(request):
     filepath = request.rel_url.query.get("path", "")
     if not filepath:
         return web.json_response({"error": "path required"}, status=400)
-    p = Path(filepath)
-    try:
-        p.resolve().relative_to(POSES_DIR.resolve())
-    except ValueError:
+    p = _safe_poses_path(filepath)
+    if p is None:
         return web.json_response({"error": "access denied"}, status=403)
     if not p.exists():
         return web.json_response({"error": "file not found"}, status=404)
@@ -300,10 +323,8 @@ async def save_pose(request):
 
     subdir = body.get("subdir", "")
     if subdir:
-        save_dir = POSES_DIR / subdir
-        try:
-            save_dir.resolve().relative_to(POSES_DIR.resolve())
-        except ValueError:
+        save_dir = _safe_poses_path(subdir)
+        if save_dir is None:
             return web.json_response({"error": "access denied"}, status=403)
         save_dir.mkdir(parents=True, exist_ok=True)
     else:
@@ -346,10 +367,8 @@ async def save_vrma(request):
 
     subdir = body.get("subdir", "")
     if subdir:
-        save_dir = POSES_DIR / subdir
-        try:
-            save_dir.resolve().relative_to(POSES_DIR.resolve())
-        except ValueError:
+        save_dir = _safe_poses_path(subdir)
+        if save_dir is None:
             return web.json_response({"error": "access denied"}, status=403)
         save_dir.mkdir(parents=True, exist_ok=True)
     else:
@@ -381,16 +400,14 @@ async def rename_pose(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 
-    old_path = Path(body.get("path", ""))
     new_stem = body.get("new_name", "").strip()
 
     if not new_stem:
         return web.json_response({"error": "new_name required"}, status=400)
 
-    # セキュリティ: poses/ 配下のみ
-    try:
-        old_path.resolve().relative_to(POSES_DIR.resolve())
-    except ValueError:
+    # セキュリティ: poses/ 配下のみ(UNC・「..」等は resolve() の前に文字列のまま拒否)
+    old_path = _safe_poses_path(body.get("path", ""))
+    if old_path is None:
         return web.json_response({"error": "access denied"}, status=403)
 
     if not old_path.exists():
